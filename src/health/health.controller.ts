@@ -1,11 +1,14 @@
 import { Controller, Get } from '@nestjs/common';
+import { ApiOperation, ApiTags } from '@nestjs/swagger';
 import { PrismaService } from '../prisma/prisma.service';
 
+@ApiTags('Health')
 @Controller('health')
 export class HealthController {
   constructor(private readonly prisma: PrismaService) {}
 
   @Get()
+  @ApiOperation({ summary: 'API health check (public)', description: 'Returns the overall API status and database connectivity. `status` is `OK` when healthy, `DEGRADED` when the database is unreachable.' })
   async check() {
     let dbStatus: 'healthy' | 'unhealthy' = 'healthy';
     let dbTimestamp = new Date().toISOString();

@@ -41,6 +41,7 @@
     "@nestjs/jwt": "^11.0.2",
     "@nestjs/passport": "^11.0.5",
     "@nestjs/platform-express": "^11.1.19",
+    "@nestjs/swagger": "^11.4.1",
     "@nestjs/throttler": "^6.5.0",
     "@paralleldrive/cuid2": "^3.3.0",
     "@prisma/client": "^6.0.0",
