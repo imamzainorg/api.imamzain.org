@@ -70,25 +70,6 @@ export class EmailService {
     );
   }
 
-  confirmContactToVisitor(record: any): Promise<boolean> {
-    const html = `
-      <div dir="rtl" style="font-family: Arial, sans-serif; margin-bottom: 20px;">
-        <p>السلام عليكم ورحمة الله وبركاته،</p>
-        <p>شكراً لتواصلكم مع موقع الإمام زين العابدين (عليه السلام). لقد استلمنا رسالتكم وسيتواصل معكم فريقنا في أقرب وقت ممكن.</p>
-      </div>
-      <div style="font-family: Arial, sans-serif;">
-        <p>Thank you for reaching out to ImamZain.org. We have received your message and our team will get back to you as soon as possible.</p>
-        <p>With warm regards,<br/>ImamZain.org Team</p>
-      </div>
-    `;
-    return this.send(
-      record.email,
-      'We received your message — ImamZain.org',
-      html,
-      process.env.EMAIL_TO ?? 'info@imamzain.org',
-    );
-  }
-
   notifyProxyVisit(record: any): Promise<boolean> {
     const html = `
       <h2>New Proxy Visit Request</h2>

@@ -133,7 +133,6 @@ export class FormsService {
     } catch {}
 
     this.emailService.notifyContactSubmission(record).catch(() => {});
-    this.emailService.confirmContactToVisitor(record).catch(() => {});
 
     return { message: 'Contact submission received', data: record };
   }

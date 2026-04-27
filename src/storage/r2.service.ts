@@ -1,7 +1,7 @@
 import { BadRequestException, Injectable } from '@nestjs/common';
 import { S3Client, PutObjectCommand, DeleteObjectCommand } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
-import { createId } from '@paralleldrive/cuid2';
+import { randomUUID } from 'crypto';
 
 function slugifyFilename(filename: string): string {
   return filename
@@ -41,7 +41,7 @@ export class R2Service {
       throw new BadRequestException('Only image MIME types are allowed');
     }
 
-    const key = `media/${createId()}-${slugifyFilename(filename)}`;
+    const key = `media/${randomUUID()}-${slugifyFilename(filename)}`;
 
     const command = new PutObjectCommand({
       Bucket: this.bucket,

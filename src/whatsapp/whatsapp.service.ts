@@ -1,5 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import * as twilio from 'twilio';
+import twilio = require('twilio');
 
 const E164_REGEX = /^\+[1-9]\d{1,14}$/;
 
