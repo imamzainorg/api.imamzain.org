@@ -42,22 +42,70 @@ describe('PostCategoriesService', () => {
   afterEach(() => jest.clearAllMocks());
 
   describe('findAll', () => {
-    it('returns all non-deleted categories', async () => {
+    it('filters translations by lang when Accept-Language is set', async () => {
+      const category = { ...baseCategory, post_category_translations: [{ lang: 'ar', title: 'فئة', slug: 'fia' }] };
+      prisma.post_categories.findMany.mockResolvedValue([category]);
+
+      const result = await service.findAll('ar');
+
+      expect(prisma.post_categories.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          include: { post_category_translations: { where: { lang: 'ar' } } },
+        }),
+      );
+      expect(result.data[0].post_category_translations[0].lang).toBe('ar');
+    });
+
+    it('returns all translations when no lang specified', async () => {
       prisma.post_categories.findMany.mockResolvedValue([baseCategory]);
 
-      const result = await service.findAll(null);
+      await service.findAll(null);
 
-      expect(result.data).toHaveLength(1);
+      expect(prisma.post_categories.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          include: { post_category_translations: true },
+        }),
+      );
+    });
+
+    it('only queries non-deleted categories', async () => {
+      prisma.post_categories.findMany.mockResolvedValue([]);
+
+      await service.findAll(null);
+
+      expect(prisma.post_categories.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({ where: { deleted_at: null } }),
+      );
     });
   });
 
   describe('findOne', () => {
-    it('returns category by id', async () => {
+    it('returns category by id with lang-filtered translations', async () => {
+      const category = { ...baseCategory, post_category_translations: [{ lang: 'en', title: 'Category', slug: 'cat' }] };
+      prisma.post_categories.findFirst.mockResolvedValue(category);
+
+      const result = await service.findOne('cat-1', 'en');
+
+      expect(prisma.post_categories.findFirst).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: 'cat-1', deleted_at: null },
+          include: { post_category_translations: { where: { lang: 'en' } } },
+        }),
+      );
+      expect(result.data.id).toBe('cat-1');
+      expect(result.data.post_category_translations[0].lang).toBe('en');
+    });
+
+    it('returns all translations when no lang specified', async () => {
       prisma.post_categories.findFirst.mockResolvedValue(baseCategory);
 
-      const result = await service.findOne('cat-1', null);
+      await service.findOne('cat-1', null);
 
-      expect(result.data.id).toBe('cat-1');
+      expect(prisma.post_categories.findFirst).toHaveBeenCalledWith(
+        expect.objectContaining({
+          include: { post_category_translations: true },
+        }),
+      );
     });
 
     it('throws NotFoundException when not found', async () => {

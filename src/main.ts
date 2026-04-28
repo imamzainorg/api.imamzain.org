@@ -1,7 +1,7 @@
-import 'reflect-metadata';
-import * as Sentry from '@sentry/node';
+import "reflect-metadata";
+import * as Sentry from "@sentry/node";
 
-if (process.env.NODE_ENV === 'production' && process.env.SENTRY_DSN) {
+if (process.env.NODE_ENV === "production" && process.env.SENTRY_DSN) {
   Sentry.init({
     dsn: process.env.SENTRY_DSN,
     environment: process.env.NODE_ENV,
@@ -9,32 +9,32 @@ if (process.env.NODE_ENV === 'production' && process.env.SENTRY_DSN) {
   });
 }
 
-import { NestFactory } from '@nestjs/core';
-import { ValidationPipe } from '@nestjs/common';
-import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
-import { Logger } from 'nestjs-pino';
-import helmet from 'helmet';
-import { AppModule } from './app.module';
-import { AllExceptionsFilter } from './common/filters/all-exceptions.filter';
-import { ResponseInterceptor } from './common/interceptors/response.interceptor';
+import { NestFactory } from "@nestjs/core";
+import { ValidationPipe } from "@nestjs/common";
+import { DocumentBuilder, SwaggerModule } from "@nestjs/swagger";
+import { Logger } from "nestjs-pino";
+import helmet from "helmet";
+import { AppModule } from "./app.module";
+import { AllExceptionsFilter } from "./common/filters/all-exceptions.filter";
+import { ResponseInterceptor } from "./common/interceptors/response.interceptor";
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule, { bufferLogs: true });
 
   app.useLogger(app.get(Logger));
 
-  app.setGlobalPrefix('api/v1');
+  app.setGlobalPrefix("api/v1");
 
   app.use(
     helmet({
       contentSecurityPolicy: {
         directives: {
           defaultSrc: ["'self'"],
-          scriptSrc: ["'self'", 'https://cdn.jsdelivr.net'],
+          scriptSrc: ["'self'", "https://cdn.jsdelivr.net"],
           styleSrc: ["'self'", "'unsafe-inline'"],
-          imgSrc: ["'self'", 'data:', 'https:'],
+          imgSrc: ["'self'", "data:", "https:"],
           connectSrc: ["'self'"],
-          fontSrc: ["'self'", 'https:'],
+          fontSrc: ["'self'", "https:"],
           objectSrc: ["'none'"],
           frameSrc: ["'none'"],
         },
@@ -42,21 +42,26 @@ async function bootstrap() {
     }),
   );
 
-  app.use(require('compression')());
+  app.use(require("compression")());
 
   const allowedOriginsEnv = process.env.ALLOWED_ORIGINS;
-  const isProduction = process.env.NODE_ENV === 'production';
+  const isProduction = process.env.NODE_ENV === "production";
 
   app.enableCors({
-    origin: isProduction && allowedOriginsEnv
-      ? allowedOriginsEnv.split(',').map((o) => o.trim())
-      : true,
+    origin:
+      isProduction && allowedOriginsEnv
+        ? allowedOriginsEnv.split(",").map((o) => o.trim())
+        : true,
     credentials: true,
     optionsSuccessStatus: 200,
   });
 
   app.useGlobalPipes(
-    new ValidationPipe({ whitelist: true, forbidNonWhitelisted: true, transform: true }),
+    new ValidationPipe({
+      whitelist: true,
+      forbidNonWhitelisted: true,
+      transform: true,
+    }),
   );
 
   app.useGlobalFilters(new AllExceptionsFilter());
@@ -64,33 +69,38 @@ async function bootstrap() {
 
   // ── OpenAPI / Scalar docs ─────────────────────────────────────────────────
   const swaggerConfig = new DocumentBuilder()
-    .setTitle('ImamZain API')
+    .setTitle("imamzain.org API")
     .setDescription(
-      'REST API for ImamZain.org — Islamic content management, digital library, gallery, forms, and contest.\n\n' +
-      '**Authentication:** Protected endpoints require a Bearer JWT. Obtain one via `POST /api/v1/auth/login`.\n\n' +
-      '**Language:** Send `Accept-Language: ar` (or any supported ISO 639-1 code) to receive translated content. ' +
-      'Falls back to the default translation when the requested language is unavailable.',
+      "REST API for imamzain.org — Islamic content management, digital library, gallery, forms, and contest.\n\n" +
+        "**Authentication:** Protected endpoints require a Bearer JWT. Obtain one via `POST /api/v1/auth/login`.\n\n" +
+        "**Language:** Send `Accept-Language: ar` (or any supported ISO 639-1 code) to receive translated content. " +
+        "Falls back to the default translation when the requested language is unavailable.",
     )
-    .setVersion('1.0.0')
+    .setVersion("1.0.0")
     .addBearerAuth(
-      { type: 'http', scheme: 'bearer', bearerFormat: 'JWT', description: 'Paste the JWT returned by /auth/login' },
-      'jwt',
+      {
+        type: "http",
+        scheme: "bearer",
+        bearerFormat: "JWT",
+        description: "Paste the JWT returned by /auth/login",
+      },
+      "jwt",
     )
     .build();
 
   const document = SwaggerModule.createDocument(app, swaggerConfig);
 
-  app.use('/openapi.json', (_req: any, res: any) => {
-    res.setHeader('Content-Type', 'application/json');
+  app.use("/openapi.json", (_req: any, res: any) => {
+    res.setHeader("Content-Type", "application/json");
     res.send(JSON.stringify(document));
   });
 
-  app.use('/docs', (_req: any, res: any) => {
-    res.setHeader('Content-Type', 'text/html');
+  app.use("/docs", (_req: any, res: any) => {
+    res.setHeader("Content-Type", "text/html");
     res.send(`<!doctype html>
 <html>
   <head>
-    <title>ImamZain API Reference</title>
+    <title>imamzain.org API Reference</title>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
   </head>
@@ -110,12 +120,21 @@ async function bootstrap() {
   await app.listen(port);
 
   const logger = app.get(Logger);
-  logger.log(`Server running on port ${port}`, 'Bootstrap');
-  logger.log(`Environment: ${process.env.NODE_ENV ?? 'development'}`, 'Bootstrap');
-  logger.log(`Health: http://localhost:${port}/api/v1/health`, 'Bootstrap');
-  logger.log(`API Docs: http://localhost:${port}/docs`, 'Bootstrap');
-  logger.log(`R2 Bucket: ${process.env.R2_BUCKET ?? 'not configured'}`, 'Bootstrap');
-  logger.log(`Sentry: ${process.env.SENTRY_DSN && isProduction ? 'enabled' : 'disabled'}`, 'Bootstrap');
+  logger.log(`Server running on port ${port}`, "Bootstrap");
+  logger.log(
+    `Environment: ${process.env.NODE_ENV ?? "development"}`,
+    "Bootstrap",
+  );
+  logger.log(`Health: http://localhost:${port}/api/v1/health`, "Bootstrap");
+  logger.log(`API Docs: http://localhost:${port}/docs`, "Bootstrap");
+  logger.log(
+    `R2 Bucket: ${process.env.R2_BUCKET ?? "not configured"}`,
+    "Bootstrap",
+  );
+  logger.log(
+    `Sentry: ${process.env.SENTRY_DSN && isProduction ? "enabled" : "disabled"}`,
+    "Bootstrap",
+  );
 }
 
 bootstrap();

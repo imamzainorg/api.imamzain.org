@@ -9,8 +9,14 @@ export class RolesService {
   async findAll(lang: string | null) {
     const roles = await this.prisma.roles.findMany({
       include: {
-        role_translations: true,
-        role_permissions: { include: { permissions: true } },
+        role_translations: lang ? { where: { lang } } : true,
+        role_permissions: {
+          include: {
+            permissions: {
+              include: { permission_translations: lang ? { where: { lang } } : true },
+            },
+          },
+        },
       },
     });
     return { message: 'Roles fetched', data: roles };
@@ -20,8 +26,14 @@ export class RolesService {
     const role = await this.prisma.roles.findUnique({
       where: { id },
       include: {
-        role_translations: true,
-        role_permissions: { include: { permissions: true } },
+        role_translations: lang ? { where: { lang } } : true,
+        role_permissions: {
+          include: {
+            permissions: {
+              include: { permission_translations: lang ? { where: { lang } } : true },
+            },
+          },
+        },
       },
     });
     if (!role) throw new NotFoundException('Role not found');
@@ -179,7 +191,7 @@ export class RolesService {
 
   async findAllPermissions(lang: string | null) {
     const permissions = await this.prisma.permissions.findMany({
-      include: { permission_translations: true },
+      include: { permission_translations: lang ? { where: { lang } } : true },
     });
     return { message: 'Permissions fetched', data: permissions };
   }

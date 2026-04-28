@@ -52,23 +52,63 @@ describe('RolesService', () => {
   afterEach(() => jest.clearAllMocks());
 
   describe('findAll', () => {
-    it('returns all roles', async () => {
-      prisma.roles.findMany.mockResolvedValue([baseRole]);
+    it('filters role and permission translations by lang when Accept-Language is set', async () => {
+      const role = { ...baseRole, role_translations: [{ lang: 'ar', title: 'مدير' }], role_permissions: [] };
+      prisma.roles.findMany.mockResolvedValue([role]);
 
       const result = await service.findAll('ar');
 
-      expect(result.data).toHaveLength(1);
-      expect(result.data[0].name).toBe('Admin');
+      expect(prisma.roles.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          include: expect.objectContaining({
+            role_translations: { where: { lang: 'ar' } },
+          }),
+        }),
+      );
+      expect(result.data[0].role_translations[0].lang).toBe('ar');
+    });
+
+    it('returns all translations when no lang specified', async () => {
+      prisma.roles.findMany.mockResolvedValue([baseRole]);
+
+      await service.findAll(null);
+
+      expect(prisma.roles.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          include: expect.objectContaining({ role_translations: true }),
+        }),
+      );
     });
   });
 
   describe('findOne', () => {
-    it('returns role by id', async () => {
+    it('filters translations by lang and returns role', async () => {
+      const role = { ...baseRole, role_translations: [{ lang: 'en', title: 'Admin' }], role_permissions: [] };
+      prisma.roles.findUnique.mockResolvedValue(role);
+
+      const result = await service.findOne('role-1', 'en');
+
+      expect(prisma.roles.findUnique).toHaveBeenCalledWith(
+        expect.objectContaining({
+          include: expect.objectContaining({
+            role_translations: { where: { lang: 'en' } },
+          }),
+        }),
+      );
+      expect(result.data.id).toBe('role-1');
+      expect(result.data.role_translations[0].lang).toBe('en');
+    });
+
+    it('returns all translations when no lang specified', async () => {
       prisma.roles.findUnique.mockResolvedValue(baseRole);
 
-      const result = await service.findOne('role-1', null);
+      await service.findOne('role-1', null);
 
-      expect(result.data.id).toBe('role-1');
+      expect(prisma.roles.findUnique).toHaveBeenCalledWith(
+        expect.objectContaining({
+          include: expect.objectContaining({ role_translations: true }),
+        }),
+      );
     });
 
     it('throws NotFoundException when not found', async () => {
@@ -201,12 +241,30 @@ describe('RolesService', () => {
   });
 
   describe('findAllPermissions', () => {
-    it('returns all permissions', async () => {
+    it('filters permission translations by lang when Accept-Language is set', async () => {
+      const perm = { id: 'p1', name: 'users:read', permission_translations: [{ lang: 'ar', title: 'عرض المستخدمين' }] };
+      prisma.permissions.findMany.mockResolvedValue([perm]);
+
+      const result = await service.findAllPermissions('ar');
+
+      expect(prisma.permissions.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          include: { permission_translations: { where: { lang: 'ar' } } },
+        }),
+      );
+      expect(result.data[0].permission_translations[0].lang).toBe('ar');
+    });
+
+    it('returns all translations when no lang specified', async () => {
       prisma.permissions.findMany.mockResolvedValue([{ id: 'p1', name: 'users:read' }]);
 
-      const result = await service.findAllPermissions(null);
+      await service.findAllPermissions(null);
 
-      expect(result.data).toHaveLength(1);
+      expect(prisma.permissions.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          include: { permission_translations: true },
+        }),
+      );
     });
   });
 });

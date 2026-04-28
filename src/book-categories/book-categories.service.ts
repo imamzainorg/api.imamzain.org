@@ -9,7 +9,7 @@ export class BookCategoriesService {
   async findAll(lang: string | null) {
     const categories = await this.prisma.book_categories.findMany({
       where: { deleted_at: null },
-      include: { book_category_translations: true },
+      include: { book_category_translations: lang ? { where: { lang } } : true },
     });
     return { message: 'Categories fetched', data: categories };
   }
@@ -17,7 +17,7 @@ export class BookCategoriesService {
   async findOne(id: string, lang: string | null) {
     const category = await this.prisma.book_categories.findFirst({
       where: { id, deleted_at: null },
-      include: { book_category_translations: true },
+      include: { book_category_translations: lang ? { where: { lang } } : true },
     });
     if (!category) throw new NotFoundException('Category not found');
     return { message: 'Category fetched', data: category };

@@ -9,7 +9,7 @@ export class AcademicPaperCategoriesService {
   async findAll(lang: string | null) {
     const categories = await this.prisma.academic_paper_categories.findMany({
       where: { deleted_at: null },
-      include: { academic_paper_category_translations: true },
+      include: { academic_paper_category_translations: lang ? { where: { lang } } : true },
     });
     return { message: 'Categories fetched', data: categories };
   }
@@ -17,7 +17,7 @@ export class AcademicPaperCategoriesService {
   async findOne(id: string, lang: string | null) {
     const category = await this.prisma.academic_paper_categories.findFirst({
       where: { id, deleted_at: null },
-      include: { academic_paper_category_translations: true },
+      include: { academic_paper_category_translations: lang ? { where: { lang } } : true },
     });
     if (!category) throw new NotFoundException('Category not found');
     return { message: 'Category fetched', data: category };
