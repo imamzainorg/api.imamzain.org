@@ -25,7 +25,22 @@ async function bootstrap() {
 
   app.setGlobalPrefix('api/v1');
 
-  app.use(helmet());
+  app.use(
+    helmet({
+      contentSecurityPolicy: {
+        directives: {
+          defaultSrc: ["'self'"],
+          scriptSrc: ["'self'", 'https://cdn.jsdelivr.net'],
+          styleSrc: ["'self'", "'unsafe-inline'"],
+          imgSrc: ["'self'", 'data:', 'https:'],
+          connectSrc: ["'self'"],
+          fontSrc: ["'self'", 'https:'],
+          objectSrc: ["'none'"],
+          frameSrc: ["'none'"],
+        },
+      },
+    }),
+  );
 
   app.use(require('compression')());
 
