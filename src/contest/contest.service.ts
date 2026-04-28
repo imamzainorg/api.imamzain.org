@@ -1,6 +1,6 @@
-import { Injectable } from '@nestjs/common';
+import { ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
-import { SubmitContestDto } from './dto/contest.dto';
+import { StartContestDto, SubmitContestDto } from './dto/contest.dto';
 
 @Injectable()
 export class ContestService {
@@ -15,7 +15,38 @@ export class ContestService {
     return { message: 'Questions fetched', data: questions };
   }
 
-  async submit(dto: SubmitContestDto, ip: string, userAgent: string) {
+  async start(dto: StartContestDto, ip: string, userAgent: string) {
+    const rows: any[] = await this.prisma.$queryRaw`
+      INSERT INTO qutuf_sajjadiya_contest_answers (name, email, started_at, submitted_at, ip, user_agent)
+      VALUES (
+        ${dto.name ?? null},
+        ${dto.contact ?? null},
+        NOW(),
+        NULL,
+        ${ip},
+        ${userAgent}
+      )
+      RETURNING id
+    `;
+
+    return { message: 'Contest started', data: { attempt_id: rows[0].id } };
+  }
+
+  async submit(dto: SubmitContestDto) {
+    const attempts: any[] = await this.prisma.$queryRaw`
+      SELECT id, final_score
+      FROM qutuf_sajjadiya_contest_answers
+      WHERE id = ${dto.attempt_id}::uuid
+    `;
+
+    if (!attempts.length) {
+      throw new NotFoundException('Attempt not found');
+    }
+
+    if (attempts[0].final_score !== null) {
+      throw new ConflictException('This attempt has already been submitted');
+    }
+
     const questions: any[] = await this.prisma.$queryRaw`
       SELECT id, correct_answer FROM qutuf_sajjadiya_contest_questions
     `;
@@ -24,35 +55,32 @@ export class ContestService {
 
     let finalScore = 0;
     for (const answer of dto.answers) {
-      const correctAnswer = questionMap.get(answer.question_id);
+      const correctAnswer = questionMap.get(String(answer.question_id));
       if (correctAnswer && answer.answer === correctAnswer) {
         finalScore++;
       }
     }
 
-    const rows: any[] = await this.prisma.$queryRaw`
-      INSERT INTO qutuf_sajjadiya_contest_answers (name, email, started_at, ip, user_agent, final_score)
-      VALUES (${dto.name ?? null}, ${dto.email ?? null}, ${dto.started_at ? new Date(dto.started_at) : null}, ${ip}, ${userAgent}, ${finalScore})
-      RETURNING id
+    await this.prisma.$queryRaw`
+      UPDATE qutuf_sajjadiya_contest_answers
+      SET final_score = ${finalScore}, submitted_at = NOW()
+      WHERE id = ${dto.attempt_id}::uuid
     `;
-
-    const submissionId = rows[0]?.id ?? null;
 
     try {
       await this.prisma.audit_logs.create({
         data: {
-          user_id: null,
           action: 'CONTEST_SUBMITTED',
           resource_type: 'contest_answer',
-          resource_id: null,
-          changes: { method: 'POST', path: '/api/v1/contest/submit', final_score: finalScore },
+          changes: { final_score: finalScore, total_questions: questions.length },
         },
       });
     } catch {}
 
     return {
+      success: true,
       message: 'Contest submitted',
-      data: { id: submissionId, final_score: finalScore, total_questions: questions.length },
+      data: { final_score: finalScore, total_questions: questions.length },
     };
   }
 }

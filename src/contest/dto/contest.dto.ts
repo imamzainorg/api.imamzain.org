@@ -1,9 +1,28 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
-import { ArrayMinSize, IsArray, IsEmail, IsIn, IsISO8601, IsOptional, IsString, MaxLength, ValidateNested } from 'class-validator';
+import { ArrayMinSize, IsArray, IsIn, IsOptional, IsString, IsUUID, MaxLength, ValidateNested } from 'class-validator';
+
+export class StartContestDto {
+  @ApiPropertyOptional({ example: 'Ahmad Hassan Al-Karbalayi', maxLength: 150 })
+  @IsOptional()
+  @IsString()
+  @MaxLength(150)
+  name?: string;
+
+  @ApiPropertyOptional({ example: '+9647001234567', description: 'Phone number or email address provided by the contestant' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(200)
+  contact?: string;
+
+  @ApiPropertyOptional({ enum: ['phone', 'email'], example: 'phone', description: 'Type of contact provided' })
+  @IsOptional()
+  @IsIn(['phone', 'email'])
+  contactType?: 'phone' | 'email';
+}
 
 export class SubmitAnswerDto {
-  @ApiProperty({ example: '1', description: 'Question ID as returned by GET /api/v1/contest/questions' })
+  @ApiProperty({ example: '1', description: 'Question ID as returned by GET /questions' })
   @IsString()
   question_id: string;
 
@@ -13,16 +32,9 @@ export class SubmitAnswerDto {
 }
 
 export class SubmitContestDto {
-  @ApiPropertyOptional({ example: 'Ahmad Hassan', maxLength: 100 })
-  @IsOptional()
-  @IsString()
-  @MaxLength(100)
-  name?: string;
-
-  @ApiPropertyOptional({ example: 'contestant@example.com', format: 'email' })
-  @IsOptional()
-  @IsEmail()
-  email?: string;
+  @ApiProperty({ example: 'xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx', description: 'Attempt ID received from POST /start' })
+  @IsUUID()
+  attempt_id: string;
 
   @ApiProperty({ type: [SubmitAnswerDto], description: 'One entry per question; unanswered questions score 0' })
   @IsArray()
@@ -30,9 +42,4 @@ export class SubmitContestDto {
   @Type(() => SubmitAnswerDto)
   @ArrayMinSize(1)
   answers: SubmitAnswerDto[];
-
-  @ApiPropertyOptional({ example: '2025-01-15T10:00:00Z', description: 'ISO 8601 timestamp when the contestant started the quiz' })
-  @IsOptional()
-  @IsISO8601()
-  started_at?: string;
 }

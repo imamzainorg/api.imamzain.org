@@ -1,10 +1,13 @@
+import { ConflictException, NotFoundException } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
 import { ContestService } from './contest.service';
 import { PrismaService } from '../prisma/prisma.service';
 
+const ATTEMPT_ID = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee';
+
 const mockQuestions = [
-  { id: 1, question: 'Who is the 4th Imam?', option_a: 'Ali', option_b: 'Hassan', option_c: 'Zain', option_d: 'Baqir', correct_answer: 'c' },
-  { id: 2, question: 'How many surahs are in the Quran?', option_a: '112', option_b: '113', option_c: '114', option_d: '115', correct_answer: 'c' },
+  { id: '1', question: 'Who is the 4th Imam?', option_a: 'Ali', option_b: 'Hassan', option_c: 'Zain', option_d: 'Baqir', correct_answer: 'C' },
+  { id: '2', question: 'How many surahs are in the Quran?', option_a: '112', option_b: '113', option_c: '114', option_d: '115', correct_answer: 'C' },
 ];
 
 describe('ContestService', () => {
@@ -43,94 +46,104 @@ describe('ContestService', () => {
     });
   });
 
+  describe('start', () => {
+    it('returns attempt_id on success', async () => {
+      prisma.$queryRaw.mockResolvedValue([{ id: ATTEMPT_ID }]);
+
+      const result = await service.start({ name: 'Ahmad', contact: '+9647001234567', contactType: 'phone' }, '127.0.0.1', 'TestAgent');
+
+      expect(result.data.attempt_id).toBe(ATTEMPT_ID);
+    });
+
+    it('works with no contact info provided', async () => {
+      prisma.$queryRaw.mockResolvedValue([{ id: ATTEMPT_ID }]);
+
+      const result = await service.start({}, '127.0.0.1', 'TestAgent');
+
+      expect(result.data.attempt_id).toBe(ATTEMPT_ID);
+    });
+  });
+
   describe('submit', () => {
+    const validAttempt = [{ id: ATTEMPT_ID, final_score: null }];
+
+    it('throws NotFoundException when attempt does not exist', async () => {
+      prisma.$queryRaw.mockResolvedValueOnce([]);
+
+      await expect(service.submit({ attempt_id: ATTEMPT_ID, answers: [] })).rejects.toThrow(NotFoundException);
+    });
+
+    it('throws ConflictException when attempt already submitted', async () => {
+      prisma.$queryRaw.mockResolvedValueOnce([{ id: ATTEMPT_ID, final_score: 3 }]);
+
+      await expect(service.submit({ attempt_id: ATTEMPT_ID, answers: [] })).rejects.toThrow(ConflictException);
+    });
+
     it('calculates correct score', async () => {
       prisma.$queryRaw
+        .mockResolvedValueOnce(validAttempt)
         .mockResolvedValueOnce(mockQuestions)
-        .mockResolvedValueOnce([{ id: 'submission-1' }]);
+        .mockResolvedValueOnce([]);
 
-      const result = await service.submit(
-        {
-          answers: [
-            { question_id: '1', answer: 'c' },
-            { question_id: '2', answer: 'a' },
-          ],
-          name: 'Test User',
-          email: 'test@example.com',
-        },
-        '127.0.0.1',
-        'TestAgent',
-      );
+      const result = await service.submit({
+        attempt_id: ATTEMPT_ID,
+        answers: [
+          { question_id: '1', answer: 'C' },
+          { question_id: '2', answer: 'A' },
+        ],
+      });
 
       expect(result.data.final_score).toBe(1);
       expect(result.data.total_questions).toBe(2);
+      expect(result.success).toBe(true);
     });
 
-    it('returns score of 0 when all answers are wrong', async () => {
+    it('returns 0 when all answers are wrong', async () => {
       prisma.$queryRaw
+        .mockResolvedValueOnce(validAttempt)
         .mockResolvedValueOnce(mockQuestions)
-        .mockResolvedValueOnce([{ id: 'sub-2' }]);
+        .mockResolvedValueOnce([]);
 
-      const result = await service.submit(
-        {
-          answers: [
-            { question_id: '1', answer: 'a' },
-            { question_id: '2', answer: 'a' },
-          ],
-        },
-        '127.0.0.1',
-        'agent',
-      );
+      const result = await service.submit({
+        attempt_id: ATTEMPT_ID,
+        answers: [
+          { question_id: '1', answer: 'A' },
+          { question_id: '2', answer: 'A' },
+        ],
+      });
 
       expect(result.data.final_score).toBe(0);
     });
 
     it('returns perfect score when all answers are correct', async () => {
       prisma.$queryRaw
+        .mockResolvedValueOnce(validAttempt)
         .mockResolvedValueOnce(mockQuestions)
-        .mockResolvedValueOnce([{ id: 'sub-3' }]);
+        .mockResolvedValueOnce([]);
 
-      const result = await service.submit(
-        {
-          answers: [
-            { question_id: '1', answer: 'c' },
-            { question_id: '2', answer: 'c' },
-          ],
-        },
-        '127.0.0.1',
-        'agent',
-      );
+      const result = await service.submit({
+        attempt_id: ATTEMPT_ID,
+        answers: [
+          { question_id: '1', answer: 'C' },
+          { question_id: '2', answer: 'C' },
+        ],
+      });
 
       expect(result.data.final_score).toBe(2);
-      expect(result.data.total_questions).toBe(2);
     });
 
     it('ignores answers for unknown question IDs', async () => {
       prisma.$queryRaw
+        .mockResolvedValueOnce(validAttempt)
         .mockResolvedValueOnce(mockQuestions)
-        .mockResolvedValueOnce([{ id: 'sub-4' }]);
+        .mockResolvedValueOnce([]);
 
-      const result = await service.submit(
-        {
-          answers: [
-            { question_id: '999', answer: 'c' },
-          ],
-        },
-        '127.0.0.1',
-        'agent',
-      );
+      const result = await service.submit({
+        attempt_id: ATTEMPT_ID,
+        answers: [{ question_id: '999', answer: 'C' }],
+      });
 
       expect(result.data.final_score).toBe(0);
-    });
-
-    it('returns the submission id from the DB', async () => {
-      prisma.$queryRaw
-        .mockResolvedValueOnce(mockQuestions)
-        .mockResolvedValueOnce([{ id: 'sub-uuid-123' }]);
-
-      const result = await service.submit({ answers: [] }, '127.0.0.1', 'agent');
-
-      expect(result.data.id).toBe('sub-uuid-123');
     });
   });
 });
