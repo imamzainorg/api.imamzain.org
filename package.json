@@ -10,31 +10,16 @@
     "prisma:pull": "prisma db pull",
     "prisma:generate": "prisma generate",
     "prisma:studio": "prisma studio",
-    "prisma:seed": "ts-node --project tsconfig.json prisma/seed.ts",
+    "prisma:seed": "ts-node -P tsconfig.base.json prisma/seed.ts",
     "type-check": "tsc --noEmit",
-    "test": "jest",
-    "test:watch": "jest --watch",
-    "test:cov": "jest --coverage"
+    "test": "jest --config jest.config.js",
+    "test:watch": "jest --watch --config jest.config.js",
+    "test:cov": "jest --coverage --config jest.config.js",
+    "test:integration": "jest --config jest.integration.config.js --runInBand",
+    "test:all": "npm run test && npm run test:integration"
   },
   "prisma": {
     "seed": "ts-node --project tsconfig.json prisma/seed.ts"
-  },
-  "jest": {
-    "moduleFileExtensions": [
-      "js",
-      "json",
-      "ts"
-    ],
-    "rootDir": "src",
-    "testRegex": ".*\\.spec\\.ts$",
-    "transform": {
-      "^.+\\.(t|j)s$": "ts-jest"
-    },
-    "collectCoverageFrom": [
-      "**/*.(t|j)s"
-    ],
-    "coverageDirectory": "../coverage",
-    "testEnvironment": "node"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.600.0",
