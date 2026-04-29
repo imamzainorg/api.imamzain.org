@@ -426,15 +426,17 @@ model users {
   user_roles           user_roles[]
 }
 
-model qutuf_sajjadiya_contest_answers {
-  id           String    @id(map: "contest_entries_pkey") @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  name         String?
-  email        String?
-  started_at   DateTime? @db.Timestamptz(6)
-  submitted_at DateTime? @default(now()) @db.Timestamptz(6)
-  ip           String?
-  user_agent   String?
-  final_score  Int?
+model qutuf_sajjadiya_contest_attempts {
+  id                           String                            @id(map: "contest_entries_pkey") @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name                         String?
+  phone                        String?
+  email                        String?
+  started_at                   DateTime?                         @db.Timestamptz(6)
+  submitted_at                 DateTime?                         @default(now()) @db.Timestamptz(6)
+  ip                           String?
+  user_agent                   String?
+  final_score                  Int?
+  qutufSajjadiyaContestAnswers qutuf_sajjadiya_contest_answers[]
 }
 
 model qutuf_sajjadiya_contest_questions {
@@ -445,6 +447,18 @@ model qutuf_sajjadiya_contest_questions {
   option_c       String
   option_d       String
   correct_answer String
+}
+
+model qutuf_sajjadiya_contest_answers {
+  id          String  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  attempt_id  String  @db.Uuid
+  question_id String
+  selected    String
+  is_correct  Boolean
+
+  attempt qutuf_sajjadiya_contest_attempts @relation(fields: [attempt_id], references: [id])
+
+  @@unique([attempt_id, question_id])
 }
 
 enum contact_status {
