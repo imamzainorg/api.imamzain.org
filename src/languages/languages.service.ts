@@ -1,20 +1,26 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
-import { IsBoolean, IsOptional, IsString, MaxLength, MinLength } from 'class-validator';
-import { PrismaService } from '../prisma/prisma.service';
+import { Injectable, NotFoundException } from "@nestjs/common";
+import {
+  IsBoolean,
+  IsOptional,
+  IsString,
+  MaxLength,
+  MinLength,
+} from "class-validator";
+import { PrismaService } from "../prisma/prisma.service";
 
 export class CreateLanguageDto {
   @IsString()
   @MinLength(2)
   @MaxLength(10)
-  code: string;
+  code!: string;
 
   @IsString()
   @MinLength(1)
-  name: string;
+  name!: string;
 
   @IsString()
   @MinLength(1)
-  native_name: string;
+  native_name!: string;
 
   @IsOptional()
   @IsBoolean()
@@ -44,7 +50,7 @@ export class LanguagesService {
     if (!includeInactive) where.is_active = true;
 
     const languages = await this.prisma.languages.findMany({ where });
-    return { message: 'Languages fetched', data: languages };
+    return { message: "Languages fetched", data: languages };
   }
 
   async create(dto: CreateLanguageDto, actorId: string) {
@@ -61,20 +67,26 @@ export class LanguagesService {
       await this.prisma.audit_logs.create({
         data: {
           user_id: actorId,
-          action: 'LANGUAGE_CREATED',
-          resource_type: 'language',
+          action: "LANGUAGE_CREATED",
+          resource_type: "language",
           resource_id: null,
-          changes: { method: 'POST', path: '/api/v1/languages', code: language.code },
+          changes: {
+            method: "POST",
+            path: "/api/v1/languages",
+            code: language.code,
+          },
         },
       });
     } catch {}
 
-    return { message: 'Language created', data: language };
+    return { message: "Language created", data: language };
   }
 
   async update(code: string, dto: UpdateLanguageDto, actorId: string) {
-    const existing = await this.prisma.languages.findFirst({ where: { code, deleted_at: null } });
-    if (!existing) throw new NotFoundException('Language not found');
+    const existing = await this.prisma.languages.findFirst({
+      where: { code, deleted_at: null },
+    });
+    if (!existing) throw new NotFoundException("Language not found");
 
     const updated = await this.prisma.languages.update({
       where: { code },
@@ -85,35 +97,44 @@ export class LanguagesService {
       await this.prisma.audit_logs.create({
         data: {
           user_id: actorId,
-          action: 'LANGUAGE_UPDATED',
-          resource_type: 'language',
+          action: "LANGUAGE_UPDATED",
+          resource_type: "language",
           resource_id: null,
-          changes: { method: 'PATCH', path: `/api/v1/languages/${code}`, code },
+          changes: { method: "PATCH", path: `/api/v1/languages/${code}`, code },
         },
       });
     } catch {}
 
-    return { message: 'Language updated', data: updated };
+    return { message: "Language updated", data: updated };
   }
 
   async softDelete(code: string, actorId: string) {
-    const existing = await this.prisma.languages.findFirst({ where: { code, deleted_at: null } });
-    if (!existing) throw new NotFoundException('Language not found');
+    const existing = await this.prisma.languages.findFirst({
+      where: { code, deleted_at: null },
+    });
+    if (!existing) throw new NotFoundException("Language not found");
 
-    await this.prisma.languages.update({ where: { code }, data: { deleted_at: new Date() } });
+    await this.prisma.languages.update({
+      where: { code },
+      data: { deleted_at: new Date() },
+    });
 
     try {
       await this.prisma.audit_logs.create({
         data: {
           user_id: actorId,
-          action: 'LANGUAGE_DELETED',
-          resource_type: 'language',
+          action: "LANGUAGE_DELETED",
+          resource_type: "language",
           resource_id: null,
-          changes: { method: 'DELETE', path: `/api/v1/languages/${code}`, code },
+          changes: {
+            method: "DELETE",
+            path: `/api/v1/languages/${code}`,
+            code,
+          },
         },
       });
     } catch {}
 
-    return { message: 'Language deleted', data: null };
+    return { message: "Language deleted", data: null };
   }
 }

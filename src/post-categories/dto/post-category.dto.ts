@@ -1,5 +1,5 @@
-import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { Type } from 'class-transformer';
+import { ApiProperty, ApiPropertyOptional } from "@nestjs/swagger";
+import { Type } from "class-transformer";
 import {
   ArrayMinSize,
   IsArray,
@@ -9,25 +9,28 @@ import {
   Matches,
   MinLength,
   ValidateNested,
-} from 'class-validator';
+} from "class-validator";
 
 export class PostCategoryTranslationDto {
-  @ApiProperty({ example: 'ar', minLength: 2, maxLength: 2 })
+  @ApiProperty({ example: "ar", minLength: 2, maxLength: 2 })
   @IsString()
   @Length(2, 2)
-  lang: string;
+  lang!: string;
 
-  @ApiProperty({ example: 'الأخبار والمستجدات' })
+  @ApiProperty({ example: "الأخبار والمستجدات" })
   @IsString()
   @MinLength(1)
-  title: string;
+  title!: string;
 
-  @ApiProperty({ example: 'al-akhbar', description: 'Lowercase letters, numbers and hyphens only' })
+  @ApiProperty({
+    example: "al-akhbar",
+    description: "Lowercase letters, numbers and hyphens only",
+  })
   @IsString()
   @Matches(/^[a-z0-9]+(?:-[a-z0-9]+)*$/)
-  slug: string;
+  slug!: string;
 
-  @ApiPropertyOptional({ example: 'آخر الأخبار المتعلقة بالموقع' })
+  @ApiPropertyOptional({ example: "آخر الأخبار المتعلقة بالموقع" })
   @IsOptional()
   @IsString()
   description?: string;
@@ -39,7 +42,7 @@ export class CreatePostCategoryDto {
   @ValidateNested({ each: true })
   @Type(() => PostCategoryTranslationDto)
   @ArrayMinSize(1)
-  translations: PostCategoryTranslationDto[];
+  translations!: PostCategoryTranslationDto[];
 }
 
 export class UpdatePostCategoryDto {

@@ -4,7 +4,7 @@
   "description": "REST API for ImamZain.org",
   "private": true,
   "scripts": {
-    "build": "tsc -p tsconfig.json",
+    "build": "tsc -p tsconfig.build.json",
     "start": "node dist/src/main.js",
     "dev": "ts-node-dev --respawn --transpile-only src/main.ts",
     "prisma:pull": "prisma db pull",

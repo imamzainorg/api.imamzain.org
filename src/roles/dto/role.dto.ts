@@ -1,5 +1,5 @@
-import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { Type } from 'class-transformer';
+import { ApiProperty, ApiPropertyOptional } from "@nestjs/swagger";
+import { Type } from "class-transformer";
 import {
   ArrayMinSize,
   IsArray,
@@ -10,42 +10,47 @@ import {
   MaxLength,
   MinLength,
   ValidateNested,
-} from 'class-validator';
+} from "class-validator";
 
 export class RoleTranslationDto {
-  @ApiProperty({ example: 'ar', minLength: 2, maxLength: 2, description: 'ISO 639-1 language code' })
+  @ApiProperty({
+    example: "ar",
+    minLength: 2,
+    maxLength: 2,
+    description: "ISO 639-1 language code",
+  })
   @IsString()
   @Length(2, 2)
-  lang: string;
+  lang!: string;
 
-  @ApiProperty({ example: 'مدير النظام' })
+  @ApiProperty({ example: "مدير النظام" })
   @IsString()
   @MinLength(1)
-  title: string;
+  title!: string;
 
-  @ApiPropertyOptional({ example: 'يملك صلاحيات كاملة على النظام' })
+  @ApiPropertyOptional({ example: "يملك صلاحيات كاملة على النظام" })
   @IsOptional()
   @IsString()
   description?: string;
 }
 
 export class CreateRoleDto {
-  @ApiProperty({ example: 'admin', minLength: 2, maxLength: 50 })
+  @ApiProperty({ example: "admin", minLength: 2, maxLength: 50 })
   @IsString()
   @MinLength(2)
   @MaxLength(50)
-  name: string;
+  name!: string;
 
   @ApiProperty({ type: [RoleTranslationDto] })
   @IsArray()
   @ValidateNested({ each: true })
   @Type(() => RoleTranslationDto)
   @ArrayMinSize(1)
-  translations: RoleTranslationDto[];
+  translations!: RoleTranslationDto[];
 }
 
 export class UpdateRoleDto {
-  @ApiPropertyOptional({ example: 'super-admin' })
+  @ApiPropertyOptional({ example: "super-admin" })
   @IsOptional()
   @IsString()
   @MinLength(2)
@@ -61,7 +66,10 @@ export class UpdateRoleDto {
 }
 
 export class AssignPermissionDto {
-  @ApiProperty({ example: 'a1b2c3d4-e5f6-7890-abcd-ef1234567890', format: 'uuid' })
+  @ApiProperty({
+    example: "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+    format: "uuid",
+  })
   @IsUUID()
-  permissionId: string;
+  permissionId!: string;
 }

@@ -14,7 +14,7 @@ export class StartContestDto {
   @ApiProperty({ example: "Ahmad Hassan Al-Karbalayi", maxLength: 150 })
   @IsString()
   @MaxLength(150)
-  name: string;
+  name!: string;
 
   @ApiProperty({
     example: "+9647801234567",
@@ -22,7 +22,7 @@ export class StartContestDto {
   })
   @IsString()
   @MaxLength(200)
-  contact: string;
+  contact!: string;
 
   @ApiProperty({
     enum: ["phone", "email"],
@@ -30,7 +30,7 @@ export class StartContestDto {
     description: "Type of contact provided",
   })
   @IsIn(["phone", "email"])
-  contactType: "phone" | "email";
+  contactType!: "phone" | "email";
 }
 
 export class SubmitAnswerDto {
@@ -39,7 +39,7 @@ export class SubmitAnswerDto {
     description: "Question ID as returned by GET /questions",
   })
   @IsString()
-  question_id: string;
+  question_id!: string;
 
   @ApiProperty({
     enum: ["A", "B", "C", "D"],
@@ -47,7 +47,7 @@ export class SubmitAnswerDto {
     description: "Selected option (uppercase)",
   })
   @IsIn(["A", "B", "C", "D"])
-  answer: string;
+  answer!: string;
 }
 
 export class SubmitContestDto {
@@ -56,7 +56,7 @@ export class SubmitContestDto {
     description: "Attempt ID received from POST /start",
   })
   @IsUUID()
-  attempt_id: string;
+  attempt_id!: string;
 
   @ApiProperty({
     type: [SubmitAnswerDto],
@@ -66,5 +66,5 @@ export class SubmitContestDto {
   @ValidateNested({ each: true })
   @Type(() => SubmitAnswerDto)
   @ArrayMinSize(1)
-  answers: SubmitAnswerDto[];
+  answers!: SubmitAnswerDto[];
 }
