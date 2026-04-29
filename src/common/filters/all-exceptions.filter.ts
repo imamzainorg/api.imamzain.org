@@ -4,55 +4,54 @@ import {
   ExceptionFilter,
   HttpException,
   HttpStatus,
-} from '@nestjs/common';
-import { Request, Response } from 'express';
-import * as Sentry from '@sentry/node';
+} from "@nestjs/common";
+import { SentryExceptionCaptured } from "@sentry/nestjs";
+import { Request, Response } from "express";
+import * as Sentry from "@sentry/node";
 
 @Catch()
 export class AllExceptionsFilter implements ExceptionFilter {
+  @SentryExceptionCaptured()
   catch(exception: unknown, host: ArgumentsHost) {
     const ctx = host.switchToHttp();
     const response = ctx.getResponse<Response>();
     const request = ctx.getRequest<Request>();
 
     let status = HttpStatus.INTERNAL_SERVER_ERROR;
-    let message = 'Internal server error';
+    let message = "Internal server error";
     let errors: string[] | undefined;
 
     if (exception instanceof HttpException) {
       status = exception.getStatus();
       const body = exception.getResponse();
 
-      if (typeof body === 'string') {
+      if (typeof body === "string") {
         message = body;
-      } else if (typeof body === 'object' && body !== null) {
+      } else if (typeof body === "object" && body !== null) {
         const bodyObj = body as Record<string, any>;
         if (Array.isArray(bodyObj.message)) {
           errors = bodyObj.message;
-          message = 'Validation failed';
+          message = "Validation failed";
         } else {
-          message = bodyObj.message ?? bodyObj.error ?? 'Error';
+          message = bodyObj.message ?? bodyObj.error ?? "Error";
         }
       }
     } else {
       const code = (exception as any)?.code;
 
-      if (code === 'P2002') {
+      if (code === "P2002") {
         status = HttpStatus.CONFLICT;
-        message = 'A record with that value already exists';
-      } else if (code === 'P2025') {
+        message = "A record with that value already exists";
+      } else if (code === "P2025") {
         status = HttpStatus.NOT_FOUND;
-        message = 'Record not found';
+        message = "Record not found";
       } else {
         status = HttpStatus.INTERNAL_SERVER_ERROR;
-        message = 'Internal server error';
+        message = "Internal server error";
 
-        console.error('[AllExceptionsFilter]', exception);
+        console.error("[AllExceptionsFilter]", exception);
 
-        if (
-          process.env.NODE_ENV === 'production' &&
-          process.env.SENTRY_DSN
-        ) {
+        if (process.env.NODE_ENV === "production" && process.env.SENTRY_DSN) {
           Sentry.captureException(exception);
         }
       }
