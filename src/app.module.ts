@@ -23,6 +23,7 @@ import { AcademicPaperCategoriesModule } from "./academic-paper-categories/acade
 import { NewsletterModule } from "./newsletter/newsletter.module";
 import { FormsModule } from "./forms/forms.module";
 import { ContestModule } from "./contest/contest.module";
+import { AuditLogsModule } from "./audit-logs/audit-logs.module";
 import { HealthController } from "./health/health.controller";
 import { LanguageMiddleware } from "./common/middleware/language.middleware";
 import { SentryModule } from "@sentry/nestjs/setup";
@@ -81,6 +82,7 @@ import { SentryModule } from "@sentry/nestjs/setup";
     NewsletterModule,
     FormsModule,
     ContestModule,
+    AuditLogsModule,
   ],
   controllers: [HealthController],
 })

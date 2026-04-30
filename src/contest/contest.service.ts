@@ -10,6 +10,30 @@ import { StartContestDto, SubmitContestDto } from "./dto/contest.dto";
 export class ContestService {
   constructor(private readonly prisma: PrismaService) {}
 
+  async findAllAttempts(page: number, limit: number, submitted?: boolean) {
+    const skip = (page - 1) * limit;
+
+    const where: any = {};
+    if (submitted === true) where.submitted_at = { not: null };
+    if (submitted === false) where.submitted_at = null;
+
+    const [items, total] = await Promise.all([
+      this.prisma.qutuf_sajjadiya_contest_attempts.findMany({
+        where,
+        orderBy: { started_at: 'desc' },
+        skip,
+        take: limit,
+        select: { id: true, name: true, phone: true, email: true, started_at: true, submitted_at: true, ip: true, user_agent: true, final_score: true },
+      }),
+      this.prisma.qutuf_sajjadiya_contest_attempts.count({ where }),
+    ]);
+
+    return {
+      message: 'Attempts fetched',
+      data: { items, pagination: { page, limit, total, pages: Math.ceil(total / limit) } },
+    };
+  }
+
   async listQuestions() {
     const questions: any[] = await this.prisma.$queryRaw`
       SELECT id, question, option_a, option_b, option_c, option_d

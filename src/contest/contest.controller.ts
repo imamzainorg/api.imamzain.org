@@ -1,7 +1,11 @@
-import { Body, Controller, Get, HttpCode, Post, Req } from '@nestjs/common';
-import { ApiOperation, ApiTags } from '@nestjs/swagger';
+import { Body, Controller, Get, HttpCode, Post, Query, Req, UseGuards } from '@nestjs/common';
+import { ApiBearerAuth, ApiOperation, ApiQuery, ApiTags } from '@nestjs/swagger';
 import { Throttle } from '@nestjs/throttler';
 import { Request } from 'express';
+import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { RequirePermission } from '../common/decorators/require-permission.decorator';
+import { PaginationDto } from '../common/dto/pagination.dto';
+import { PermissionGuard } from '../common/guards/permission.guard';
 import { ContestService } from './contest.service';
 import { StartContestDto, SubmitContestDto } from './dto/contest.dto';
 
@@ -9,6 +13,20 @@ import { StartContestDto, SubmitContestDto } from './dto/contest.dto';
 @Controller('forms/qutuf-sajjadiya-contest')
 export class ContestController {
   constructor(private readonly contestService: ContestService) {}
+
+  @Get('attempts')
+  @UseGuards(JwtAuthGuard, PermissionGuard)
+  @ApiBearerAuth('jwt')
+  @RequirePermission('contest:read')
+  @ApiOperation({
+    summary: 'List contest attempts with scores (admin)',
+    description: 'Requires permission: `contest:read`. Returns paginated list of all contest attempts.',
+  })
+  @ApiQuery({ name: 'submitted', required: false, enum: ['true', 'false'], description: 'Filter by submission status' })
+  findAllAttempts(@Query() pagination: PaginationDto, @Query('submitted') submitted?: string) {
+    const submittedBool = submitted === 'true' ? true : submitted === 'false' ? false : undefined;
+    return this.contestService.findAllAttempts(pagination.page ?? 1, pagination.limit ?? 20, submittedBool);
+  }
 
   @Get('questions')
   @ApiOperation({
