@@ -3,3 +3,9 @@ dist/
 .env
 *.env.local
 *.tsbuildinfo
+.env.test
+
+# JS files accidentally emitted into the source tree.
+# noEmit:true in tsconfig.base.json is the real guard; this is the safety net.
+src/**/*.js
+test/**/*.js
