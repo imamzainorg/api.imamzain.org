@@ -1,13 +1,17 @@
 import {
   ConflictException,
   Injectable,
+  Logger,
   NotFoundException,
 } from "@nestjs/common";
+import { Prisma } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
 import { StartContestDto, SubmitContestDto } from "./dto/contest.dto";
 
 @Injectable()
 export class ContestService {
+  private readonly logger = new Logger(ContestService.name);
+
   constructor(private readonly prisma: PrismaService) {}
 
   async findAllAttempts(page: number, limit: number, submitted?: boolean) {
@@ -20,17 +24,30 @@ export class ContestService {
     const [items, total] = await Promise.all([
       this.prisma.qutuf_sajjadiya_contest_attempts.findMany({
         where,
-        orderBy: { started_at: 'desc' },
+        orderBy: { started_at: "desc" },
         skip,
         take: limit,
-        select: { id: true, name: true, phone: true, email: true, started_at: true, submitted_at: true, ip: true, user_agent: true, final_score: true },
+        select: {
+          id: true,
+          name: true,
+          phone: true,
+          email: true,
+          started_at: true,
+          submitted_at: true,
+          ip: true,
+          user_agent: true,
+          final_score: true,
+        },
       }),
       this.prisma.qutuf_sajjadiya_contest_attempts.count({ where }),
     ]);
 
     return {
-      message: 'Attempts fetched',
-      data: { items, pagination: { page, limit, total, pages: Math.ceil(total / limit) } },
+      message: "Attempts fetched",
+      data: {
+        items,
+        pagination: { page, limit, total, pages: Math.ceil(total / limit) },
+      },
     };
   }
 
@@ -47,20 +64,30 @@ export class ContestService {
     const phone = dto.contactType === "phone" ? dto.contact : null;
     const email = dto.contactType === "email" ? dto.contact : null;
 
-    const rows: any[] = await this.prisma.$queryRaw`
-    INSERT INTO qutuf_sajjadiya_contest_attempts
-    (name, phone, email, started_at, submitted_at, ip, user_agent)
-    VALUES (
-      ${dto.name},
-      ${phone},
-      ${email},
-      NOW(),
-      NULL,
-      ${ip},
-      ${userAgent}
-    )
-    RETURNING id
-  `;
+    let rows: any[];
+    try {
+      rows = await this.prisma.$queryRaw`
+      INSERT INTO qutuf_sajjadiya_contest_attempts
+      (name, phone, email, started_at, submitted_at, ip, user_agent)
+      VALUES (
+        ${dto.name},
+        ${phone},
+        ${email},
+        NOW(),
+        NULL,
+        ${ip},
+        ${userAgent}
+      )
+      RETURNING id
+    `;
+    } catch (err: any) {
+      if (err?.code === "P2010" && err?.meta?.code === "23505") {
+        throw new ConflictException(
+          "لقد شاركتَ في المسابقة مسبقاً، لا يمكنك المشاركة مرة أخرى.",
+        );
+      }
+      throw err;
+    }
 
     return { message: "Contest started", data: { attempt_id: rows[0].id } };
   }
@@ -112,19 +139,42 @@ export class ContestService {
       });
     }
 
-    // Insert all answers (transaction recommended)
-    await this.prisma.$transaction([
-      this.prisma.qutuf_sajjadiya_contest_answers.createMany({
-        data: values,
-        skipDuplicates: true, // protects against re-submit edge cases
-      }),
+    console.log(
+      `[submit] attempt=${dto.attempt_id} answers=${dto.answers.length} sample=${JSON.stringify(dto.answers[0])}`,
+    );
 
-      this.prisma.$executeRaw`
-      UPDATE qutuf_sajjadiya_contest_attempts
-      SET final_score = ${finalScore}, submitted_at = NOW()
-      WHERE id = ${dto.attempt_id}::uuid
-    `,
-    ]);
+    const answerRows = Prisma.join(
+      values.map(
+        (v) =>
+          Prisma.sql`(gen_random_uuid(), ${v.attempt_id}::uuid, ${v.question_id}, ${v.selected}, ${v.is_correct})`,
+      ),
+      ", ",
+    );
+
+    try {
+      await this.prisma.$transaction(async (tx) => {
+        await tx.$executeRaw(Prisma.sql`
+          INSERT INTO qutuf_sajjadiya_contest_answers
+            (id, attempt_id, question_id, selected, is_correct)
+          VALUES ${answerRows}
+          ON CONFLICT (attempt_id, question_id) DO NOTHING
+        `);
+
+        await tx.$executeRaw`
+          UPDATE qutuf_sajjadiya_contest_attempts
+          SET final_score = ${finalScore}, submitted_at = NOW()
+          WHERE id = ${dto.attempt_id}::uuid
+        `;
+      });
+    } catch (err: any) {
+      console.error(
+        `[submit] transaction error attempt=${dto.attempt_id}:`,
+        err?.message,
+        "code:", err?.code,
+        "meta:", JSON.stringify(err?.meta),
+      );
+      throw err;
+    }
 
     return {
       success: true,
