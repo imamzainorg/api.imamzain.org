@@ -38,7 +38,7 @@ describe("ContestService", () => {
           provide: PrismaService,
           useValue: {
             $queryRaw: jest.fn(),
-            $transaction: jest.fn((ops) => Promise.all(ops)),
+            $transaction: jest.fn((fn) => fn({ $executeRaw: jest.fn().mockResolvedValue(undefined) })),
             $executeRaw: jest.fn(),
             qutuf_sajjadiya_contest_answers: {
               createMany: jest.fn().mockResolvedValue({ count: 2 }),
