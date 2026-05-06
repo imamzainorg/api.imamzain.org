@@ -29,6 +29,7 @@ describe("AcademicPaperCategoriesService", () => {
               findMany: jest.fn(),
               findFirst: jest.fn(),
               update: jest.fn().mockResolvedValue({}),
+              count: jest.fn().mockResolvedValue(0),
             },
             academic_paper_category_translations: {
               upsert: jest.fn().mockResolvedValue({}),
@@ -58,7 +59,7 @@ describe("AcademicPaperCategoriesService", () => {
       };
       prisma.academic_paper_categories.findMany.mockResolvedValue([category]);
 
-      const result = await service.findAll("ar");
+      const result = await service.findAll("ar", 1, 10);
 
       expect(prisma.academic_paper_categories.findMany).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -68,7 +69,7 @@ describe("AcademicPaperCategoriesService", () => {
           },
         }),
       );
-      expect(result.data[0].academic_paper_category_translations[0].lang).toBe(
+      expect(result.data.items[0].academic_paper_category_translations[0].lang).toBe(
         "ar",
       );
     });
@@ -78,7 +79,7 @@ describe("AcademicPaperCategoriesService", () => {
         baseCategory,
       ]);
 
-      await service.findAll(null);
+      await service.findAll(null, 1, 10);
 
       expect(prisma.academic_paper_categories.findMany).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -90,7 +91,7 @@ describe("AcademicPaperCategoriesService", () => {
     it("only queries non-deleted categories", async () => {
       prisma.academic_paper_categories.findMany.mockResolvedValue([]);
 
-      await service.findAll(null);
+      await service.findAll(null, 1, 10);
 
       expect(prisma.academic_paper_categories.findMany).toHaveBeenCalledWith(
         expect.objectContaining({ where: { deleted_at: null } }),

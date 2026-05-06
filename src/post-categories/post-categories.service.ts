@@ -6,12 +6,18 @@ import { CreatePostCategoryDto, UpdatePostCategoryDto } from './dto/post-categor
 export class PostCategoriesService {
   constructor(private readonly prisma: PrismaService) {}
 
-  async findAll(lang: string | null) {
-    const categories = await this.prisma.post_categories.findMany({
-      where: { deleted_at: null },
-      include: { post_category_translations: lang ? { where: { lang } } : true },
-    });
-    return { message: 'Categories fetched', data: categories };
+  async findAll(lang: string | null, page: number, limit: number) {
+    const skip = (page - 1) * limit;
+    const [categories, total] = await Promise.all([
+      this.prisma.post_categories.findMany({
+        where: { deleted_at: null },
+        include: { post_category_translations: lang ? { where: { lang } } : true },
+        skip,
+        take: limit,
+      }),
+      this.prisma.post_categories.count({ where: { deleted_at: null } }),
+    ]);
+    return { message: 'Categories fetched', data: { items: categories, pagination: { page, limit, total, pages: Math.ceil(total / limit) } } };
   }
 
   async findOne(id: string, lang: string | null) {

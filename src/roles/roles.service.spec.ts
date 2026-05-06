@@ -33,6 +33,7 @@ describe("RolesService", () => {
               create: jest.fn(),
               update: jest.fn(),
               delete: jest.fn(),
+              count: jest.fn().mockResolvedValue(0),
             },
             role_translations: {
               createMany: jest.fn(),
@@ -45,7 +46,7 @@ describe("RolesService", () => {
               deleteMany: jest.fn(),
             },
             user_roles: { count: jest.fn() },
-            permissions: { findMany: jest.fn() },
+            permissions: { findMany: jest.fn(), count: jest.fn().mockResolvedValue(0) },
             audit_logs: { create: jest.fn().mockResolvedValue({}) },
             $transaction: jest.fn(),
           },
@@ -68,7 +69,7 @@ describe("RolesService", () => {
       };
       prisma.roles.findMany.mockResolvedValue([role]);
 
-      const result = await service.findAll("ar");
+      const result = await service.findAll("ar", 1, 10);
 
       expect(prisma.roles.findMany).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -77,13 +78,13 @@ describe("RolesService", () => {
           }),
         }),
       );
-      expect(result.data[0].role_translations[0].lang).toBe("ar");
+      expect(result.data.items[0].role_translations[0].lang).toBe("ar");
     });
 
     it("returns all translations when no lang specified", async () => {
       prisma.roles.findMany.mockResolvedValue([baseRole]);
 
-      await service.findAll(null);
+      await service.findAll(null, 1, 10);
 
       expect(prisma.roles.findMany).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -294,14 +295,14 @@ describe("RolesService", () => {
       };
       prisma.permissions.findMany.mockResolvedValue([perm]);
 
-      const result = await service.findAllPermissions("ar");
+      const result = await service.findAllPermissions("ar", 1, 10);
 
       expect(prisma.permissions.findMany).toHaveBeenCalledWith(
         expect.objectContaining({
           include: { permission_translations: { where: { lang: "ar" } } },
         }),
       );
-      expect(result.data[0].permission_translations[0].lang).toBe("ar");
+      expect(result.data.items[0].permission_translations[0].lang).toBe("ar");
     });
 
     it("returns all translations when no lang specified", async () => {
@@ -309,7 +310,7 @@ describe("RolesService", () => {
         { id: "p1", name: "users:read" },
       ]);
 
-      await service.findAllPermissions(null);
+      await service.findAllPermissions(null, 1, 10);
 
       expect(prisma.permissions.findMany).toHaveBeenCalledWith(
         expect.objectContaining({

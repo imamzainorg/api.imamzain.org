@@ -6,12 +6,18 @@ import { CreateAcademicPaperCategoryDto, UpdateAcademicPaperCategoryDto } from '
 export class AcademicPaperCategoriesService {
   constructor(private readonly prisma: PrismaService) {}
 
-  async findAll(lang: string | null) {
-    const categories = await this.prisma.academic_paper_categories.findMany({
-      where: { deleted_at: null },
-      include: { academic_paper_category_translations: lang ? { where: { lang } } : true },
-    });
-    return { message: 'Categories fetched', data: categories };
+  async findAll(lang: string | null, page: number, limit: number) {
+    const skip = (page - 1) * limit;
+    const [categories, total] = await Promise.all([
+      this.prisma.academic_paper_categories.findMany({
+        where: { deleted_at: null },
+        include: { academic_paper_category_translations: lang ? { where: { lang } } : true },
+        skip,
+        take: limit,
+      }),
+      this.prisma.academic_paper_categories.count({ where: { deleted_at: null } }),
+    ]);
+    return { message: 'Categories fetched', data: { items: categories, pagination: { page, limit, total, pages: Math.ceil(total / limit) } } };
   }
 
   async findOne(id: string, lang: string | null) {

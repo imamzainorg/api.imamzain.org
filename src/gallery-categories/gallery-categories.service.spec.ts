@@ -29,6 +29,7 @@ describe("GalleryCategoriesService", () => {
               findMany: jest.fn(),
               findFirst: jest.fn(),
               update: jest.fn().mockResolvedValue({}),
+              count: jest.fn().mockResolvedValue(0),
             },
             gallery_category_translations: {
               upsert: jest.fn().mockResolvedValue({}),
@@ -56,7 +57,7 @@ describe("GalleryCategoriesService", () => {
       };
       prisma.gallery_categories.findMany.mockResolvedValue([category]);
 
-      const result = await service.findAll("ar");
+      const result = await service.findAll("ar", 1, 10);
 
       expect(prisma.gallery_categories.findMany).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -64,13 +65,13 @@ describe("GalleryCategoriesService", () => {
           include: { gallery_category_translations: { where: { lang: "ar" } } },
         }),
       );
-      expect(result.data[0].gallery_category_translations[0].lang).toBe("ar");
+      expect(result.data.items[0].gallery_category_translations[0].lang).toBe("ar");
     });
 
     it("returns all translations when no lang specified", async () => {
       prisma.gallery_categories.findMany.mockResolvedValue([baseCategory]);
 
-      await service.findAll(null);
+      await service.findAll(null, 1, 10);
 
       expect(prisma.gallery_categories.findMany).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -82,7 +83,7 @@ describe("GalleryCategoriesService", () => {
     it("only queries non-deleted categories", async () => {
       prisma.gallery_categories.findMany.mockResolvedValue([]);
 
-      await service.findAll(null);
+      await service.findAll(null, 1, 10);
 
       expect(prisma.gallery_categories.findMany).toHaveBeenCalledWith(
         expect.objectContaining({ where: { deleted_at: null } }),

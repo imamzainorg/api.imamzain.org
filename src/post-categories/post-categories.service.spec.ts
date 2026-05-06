@@ -25,6 +25,7 @@ describe("PostCategoriesService", () => {
               findMany: jest.fn(),
               findFirst: jest.fn(),
               update: jest.fn().mockResolvedValue({}),
+              count: jest.fn().mockResolvedValue(0),
             },
             post_category_translations: {
               upsert: jest.fn().mockResolvedValue({}),
@@ -51,20 +52,20 @@ describe("PostCategoriesService", () => {
       };
       prisma.post_categories.findMany.mockResolvedValue([category]);
 
-      const result = await service.findAll("ar");
+      const result = await service.findAll("ar", 1, 10);
 
       expect(prisma.post_categories.findMany).toHaveBeenCalledWith(
         expect.objectContaining({
           include: { post_category_translations: { where: { lang: "ar" } } },
         }),
       );
-      expect(result.data[0].post_category_translations[0].lang).toBe("ar");
+      expect(result.data.items[0].post_category_translations[0].lang).toBe("ar");
     });
 
     it("returns all translations when no lang specified", async () => {
       prisma.post_categories.findMany.mockResolvedValue([baseCategory]);
 
-      await service.findAll(null);
+      await service.findAll(null, 1, 10);
 
       expect(prisma.post_categories.findMany).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -76,7 +77,7 @@ describe("PostCategoriesService", () => {
     it("only queries non-deleted categories", async () => {
       prisma.post_categories.findMany.mockResolvedValue([]);
 
-      await service.findAll(null);
+      await service.findAll(null, 1, 10);
 
       expect(prisma.post_categories.findMany).toHaveBeenCalledWith(
         expect.objectContaining({ where: { deleted_at: null } }),

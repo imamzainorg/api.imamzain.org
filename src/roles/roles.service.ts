@@ -6,20 +6,26 @@ import { AssignPermissionDto, CreateRoleDto, UpdateRoleDto } from './dto/role.dt
 export class RolesService {
   constructor(private readonly prisma: PrismaService) {}
 
-  async findAll(lang: string | null) {
-    const roles = await this.prisma.roles.findMany({
-      include: {
-        role_translations: lang ? { where: { lang } } : true,
-        role_permissions: {
-          include: {
-            permissions: {
-              include: { permission_translations: lang ? { where: { lang } } : true },
+  async findAll(lang: string | null, page: number, limit: number) {
+    const skip = (page - 1) * limit;
+    const [roles, total] = await Promise.all([
+      this.prisma.roles.findMany({
+        include: {
+          role_translations: lang ? { where: { lang } } : true,
+          role_permissions: {
+            include: {
+              permissions: {
+                include: { permission_translations: lang ? { where: { lang } } : true },
+              },
             },
           },
         },
-      },
-    });
-    return { message: 'Roles fetched', data: roles };
+        skip,
+        take: limit,
+      }),
+      this.prisma.roles.count(),
+    ]);
+    return { message: 'Roles fetched', data: { items: roles, pagination: { page, limit, total, pages: Math.ceil(total / limit) } } };
   }
 
   async findOne(id: string, lang: string | null) {
@@ -189,10 +195,16 @@ export class RolesService {
     return { message: 'Permission removed', data: null };
   }
 
-  async findAllPermissions(lang: string | null) {
-    const permissions = await this.prisma.permissions.findMany({
-      include: { permission_translations: lang ? { where: { lang } } : true },
-    });
-    return { message: 'Permissions fetched', data: permissions };
+  async findAllPermissions(lang: string | null, page: number, limit: number) {
+    const skip = (page - 1) * limit;
+    const [permissions, total] = await Promise.all([
+      this.prisma.permissions.findMany({
+        include: { permission_translations: lang ? { where: { lang } } : true },
+        skip,
+        take: limit,
+      }),
+      this.prisma.permissions.count(),
+    ]);
+    return { message: 'Permissions fetched', data: { items: permissions, pagination: { page, limit, total, pages: Math.ceil(total / limit) } } };
   }
 }
