@@ -1,10 +1,13 @@
-﻿import { ConflictException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { Cron } from '@nestjs/schedule';
 import { PrismaService } from '../prisma/prisma.service';
 import { R2Service } from '../storage/r2.service';
 import { ConfirmUploadDto, RequestUploadUrlDto, UpdateMediaDto } from './dto/media.dto';
 
 @Injectable()
 export class MediaService {
+  private readonly logger = new Logger(MediaService.name);
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly r2Service: R2Service,
@@ -12,10 +15,21 @@ export class MediaService {
 
   async requestUploadUrl(dto: RequestUploadUrlDto, userId: string) {
     const result = await this.r2Service.generateUploadUrl(dto.filename, dto.mime_type);
+
+    // Track the pending upload so the cleanup cron can delete orphans
+    await this.prisma.pending_media_uploads.create({
+      data: { key: result.key, requested_by: userId },
+    });
+
     return { message: 'Upload URL generated', data: result };
   }
 
   async confirmUpload(dto: ConfirmUploadDto, userId: string) {
+    const exists = await this.r2Service.objectExists(dto.key);
+    if (!exists) {
+      throw new BadRequestException('File not found in storage — upload the file before confirming');
+    }
+
     const publicBaseUrl = process.env.R2_PUBLIC_BASE_URL ?? 'https://cdn.imamzain.org';
     const url = `${publicBaseUrl}/${dto.key}`;
 
@@ -32,6 +46,9 @@ export class MediaService {
       },
     });
 
+    // Remove the pending tracking record now that the upload is confirmed
+    await this.prisma.pending_media_uploads.deleteMany({ where: { key: dto.key } });
+
     try {
       await this.prisma.audit_logs.create({
         data: {
@@ -45,6 +62,29 @@ export class MediaService {
     } catch {}
 
     return { message: 'Media created', data: media };
+  }
+
+  /** Runs every hour at :00. Deletes R2 objects whose presigned URL expired without confirmation. */
+  @Cron('0 * * * *')
+  async cleanupOrphanUploads() {
+    const expired = await this.prisma.pending_media_uploads.findMany({
+      where: { expires_at: { lt: new Date() } },
+    });
+
+    if (expired.length === 0) return;
+
+    this.logger.log(`[MediaCleanup] Found ${expired.length} expired pending upload(s)`);
+
+    for (const record of expired) {
+      try {
+        await this.r2Service.deleteObject(record.key);
+        this.logger.log(`[MediaCleanup] Deleted orphan R2 object: ${record.key}`);
+      } catch (err) {
+        this.logger.warn(`[MediaCleanup] Failed to delete R2 object ${record.key}: ${err}`);
+      }
+
+      await this.prisma.pending_media_uploads.delete({ where: { id: record.id } });
+    }
   }
 
   async findAll(page: number, limit: number) {

@@ -1,5 +1,6 @@
 import { MiddlewareConsumer, Module, NestModule } from "@nestjs/common";
 import { ConfigModule } from "@nestjs/config";
+import { ScheduleModule } from "@nestjs/schedule";
 import { ThrottlerModule } from "@nestjs/throttler";
 import { LoggerModule } from "nestjs-pino";
 import { validateEnv } from "./config/env.validation";
@@ -32,6 +33,7 @@ import { SentryModule } from "@sentry/nestjs/setup";
   imports: [
     SentryModule.forRoot(),
     ConfigModule.forRoot({ isGlobal: true, validate: validateEnv }),
+    ScheduleModule.forRoot(),
     LoggerModule.forRoot({
       pinoHttp: {
         level: process.env.LOG_LEVEL ?? "info",

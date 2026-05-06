@@ -40,6 +40,10 @@ describe('MediaService', () => {
             books: { count: jest.fn() },
             gallery_images: { count: jest.fn() },
             post_attachments: { count: jest.fn() },
+            pending_media_uploads: {
+              create: jest.fn().mockResolvedValue({}),
+              deleteMany: jest.fn().mockResolvedValue({}),
+            },
             audit_logs: { create: jest.fn().mockResolvedValue({}) },
           },
         },
@@ -47,6 +51,7 @@ describe('MediaService', () => {
           provide: R2Service,
           useValue: {
             generateUploadUrl: jest.fn(),
+            objectExists: jest.fn().mockResolvedValue(true),
             deleteObject: jest.fn().mockResolvedValue(undefined),
           },
         },
