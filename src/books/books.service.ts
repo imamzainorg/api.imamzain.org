@@ -59,9 +59,14 @@ export class BooksService {
     });
     if (!book) throw new NotFoundException('Book not found');
 
-    this.prisma.books.update({ where: { id }, data: { views: { increment: 1 } } }).catch(() => {});
-
     return { message: 'Book fetched', data: { ...book, translation: resolveTranslation(book.book_translations, lang) } };
+  }
+
+  async trackView(id: string) {
+    const book = await this.prisma.books.findFirst({ where: { id, deleted_at: null } });
+    if (!book) throw new NotFoundException('Book not found');
+    await this.prisma.books.update({ where: { id }, data: { views: { increment: 1 } } });
+    return { message: 'View tracked', data: null };
   }
 
   async create(dto: CreateBookDto, userId: string) {

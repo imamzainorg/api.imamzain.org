@@ -139,9 +139,6 @@ describe("PostsService", () => {
 
       expect(result.data.id).toBe("post-1");
       expect(result.data.translation.lang).toBe("ar");
-      expect(prisma.posts.update).toHaveBeenCalledWith(
-        expect.objectContaining({ data: { views: { increment: 1 } } }),
-      );
     });
 
     it("throws NotFoundException when post not found", async () => {

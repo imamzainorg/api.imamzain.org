@@ -84,8 +84,6 @@ export class PostsService {
 
     if (!post) throw new NotFoundException('Post not found');
 
-    this.prisma.posts.update({ where: { id }, data: { views: { increment: 1 } } }).catch(() => {});
-
     return {
       message: 'Post fetched',
       data: { ...post, translation: resolveTranslation(post.post_translations, lang) },
@@ -250,6 +248,13 @@ export class PostsService {
     } catch {}
 
     return { message: `Post ${dto.is_published ? 'published' : 'unpublished'}`, data: null };
+  }
+
+  async trackView(id: string) {
+    const post = await this.prisma.posts.findFirst({ where: { id, deleted_at: null, is_published: true } });
+    if (!post) throw new NotFoundException('Post not found');
+    await this.prisma.posts.update({ where: { id }, data: { views: { increment: 1 } } });
+    return { message: 'View tracked', data: null };
   }
 
   async softDelete(id: string, userId: string) {

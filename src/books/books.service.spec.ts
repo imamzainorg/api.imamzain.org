@@ -90,9 +90,6 @@ describe("BooksService", () => {
       const result = await service.findOne("book-1", "en");
 
       expect(result.data.translation.lang).toBe("en");
-      expect(prisma.books.update).toHaveBeenCalledWith(
-        expect.objectContaining({ data: { views: { increment: 1 } } }),
-      );
     });
 
     it("throws NotFoundException when book not found", async () => {
