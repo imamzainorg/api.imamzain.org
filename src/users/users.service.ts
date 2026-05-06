@@ -26,10 +26,11 @@ export class UsersService {
       this.prisma.users.count({ where: { deleted_at: null } }),
     ]);
 
+    const mapped = items.map(({ ...u }: any) => ({ ...u, is_active: u.deleted_at === null }));
     return {
       message: 'Users fetched',
       data: {
-        items,
+        items: mapped,
         pagination: { page, limit, total, pages: Math.ceil(total / limit) },
       },
     };
@@ -63,7 +64,7 @@ export class UsersService {
     const { password_hash, ...rest } = user as any;
     return {
       message: 'User fetched',
-      data: { ...rest, permissions: Array.from(permissionSet) },
+      data: { ...rest, is_active: rest.deleted_at === null, permissions: Array.from(permissionSet) },
     };
   }
 
@@ -154,8 +155,8 @@ export class UsersService {
     if (!user) throw new NotFoundException('User not found');
 
     await this.prisma.user_roles.upsert({
-      where: { user_id_role_id: { user_id: userId, role_id: dto.roleId } },
-      create: { user_id: userId, role_id: dto.roleId },
+      where: { user_id_role_id: { user_id: userId, role_id: dto.role_id } },
+      create: { user_id: userId, role_id: dto.role_id },
       update: {},
     });
 
@@ -166,7 +167,7 @@ export class UsersService {
           action: 'ROLE_ASSIGNED_TO_USER',
           resource_type: 'user',
           resource_id: userId,
-          changes: { method: 'POST', path: `/api/v1/users/${userId}/roles`, roleId: dto.roleId },
+          changes: { method: 'POST', path: `/api/v1/users/${userId}/roles`, role_id: dto.role_id },
         },
       });
     } catch {}

@@ -35,5 +35,5 @@ export class AssignRoleDto {
     format: "uuid",
   })
   @IsUUID()
-  roleId!: string;
+  role_id!: string;
 }

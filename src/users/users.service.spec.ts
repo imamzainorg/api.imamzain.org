@@ -184,7 +184,7 @@ describe('UsersService', () => {
       prisma.users.findFirst.mockResolvedValue(baseUser);
       prisma.user_roles.upsert.mockResolvedValue({});
 
-      const result = await service.assignRole('user-1', { roleId: 'role-1' }, 'actor-1');
+      const result = await service.assignRole('user-1', { role_id: 'role-1' }, 'actor-1');
 
       expect(prisma.user_roles.upsert).toHaveBeenCalled();
       expect(result.message).toBe('Role assigned');
@@ -194,7 +194,7 @@ describe('UsersService', () => {
       prisma.users.findFirst.mockResolvedValue(null);
 
       await expect(
-        service.assignRole('ghost', { roleId: 'role-1' }, 'actor-1'),
+        service.assignRole('ghost', { role_id: 'role-1' }, 'actor-1'),
       ).rejects.toThrow(NotFoundException);
     });
   });
