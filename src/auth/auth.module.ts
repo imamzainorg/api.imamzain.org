@@ -11,7 +11,7 @@ import { JwtStrategy } from './strategies/jwt.strategy';
     PassportModule,
     JwtModule.register({
       secret: process.env.JWT_SECRET ?? 'fallback-secret-change-me',
-      signOptions: { expiresIn: (process.env.JWT_EXPIRES_IN ?? '24h') as any },
+      signOptions: { expiresIn: (process.env.JWT_EXPIRES_IN ?? '15m') as any },
     }),
   ],
   providers: [AuthService, JwtStrategy, JwtAuthGuard],

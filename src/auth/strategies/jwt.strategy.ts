@@ -13,13 +13,17 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
     });
   }
 
-  async validate(payload: { sub: string; username: string; permissions: string[] }) {
+  async validate(payload: { sub: string; username: string; permissions: string[]; token_version?: number }) {
     const user = await this.prisma.users.findFirst({
       where: { id: payload.sub, deleted_at: null },
     });
 
     if (!user) {
       throw new UnauthorizedException();
+    }
+
+    if (payload.token_version !== undefined && user.token_version !== payload.token_version) {
+      throw new UnauthorizedException('Token has been invalidated');
     }
 
     return { id: user.id, username: user.username, permissions: payload.permissions };

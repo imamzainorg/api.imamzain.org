@@ -15,6 +15,7 @@ const mockUser = {
   id: "user-1",
   username: "admin",
   password_hash: "$2a$12$hashed",
+  token_version: 1,
   created_at: new Date("2024-01-01"),
   deleted_at: null,
   user_roles: [
@@ -45,6 +46,11 @@ describe("AuthService", () => {
             users: {
               findFirst: jest.fn(),
               update: jest.fn(),
+            },
+            refresh_tokens: {
+              create: jest.fn().mockResolvedValue({}),
+              findFirst: jest.fn(),
+              updateMany: jest.fn().mockResolvedValue({}),
             },
             audit_logs: { create: jest.fn().mockResolvedValue({}) },
           },
