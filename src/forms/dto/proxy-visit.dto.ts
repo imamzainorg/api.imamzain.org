@@ -22,12 +22,12 @@ export class CreateProxyVisitDto {
   visitor_name!: string;
 
   @ApiProperty({
-    example: "+9647001234567",
-    description: "E.164 format required (e.g. +9647001234567)",
+    example: "+9647801234567",
+    description: "E.164 format required (e.g. +9647801234567)",
   })
   @IsString()
   @Matches(/^\+[1-9]\d{1,14}$/, {
-    message: "Phone must be in E.164 format e.g. +9647001234567",
+    message: "Phone must be in E.164 format e.g. +9647801234567",
   })
   visitor_phone!: string;
 
