@@ -1,12 +1,30 @@
-import { Body, Controller, Delete, Get, Param, Post, Query, UseGuards } from '@nestjs/common';
-import { ApiBearerAuth, ApiOperation, ApiParam, ApiTags } from '@nestjs/swagger';
+import { Body, Controller, Delete, Get, HttpCode, Param, Post, Query, UseGuards } from '@nestjs/common';
+import {
+  ApiBadRequestResponse,
+  ApiBearerAuth,
+  ApiConflictResponse,
+  ApiForbiddenResponse,
+  ApiNotFoundResponse,
+  ApiOkResponse,
+  ApiOperation,
+  ApiParam,
+  ApiQuery,
+  ApiTags,
+  ApiTooManyRequestsResponse,
+  ApiUnauthorizedResponse,
+} from '@nestjs/swagger';
 import { Throttle } from '@nestjs/throttler';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { CurrentUser, CurrentUserPayload } from '../common/decorators/current-user.decorator';
 import { RequirePermission } from '../common/decorators/require-permission.decorator';
-import { PaginationDto } from '../common/dto/pagination.dto';
+import { ConflictErrorDto, ForbiddenErrorDto, NotFoundErrorDto, TooManyRequestsErrorDto, UnauthorizedErrorDto, ValidationErrorDto } from '../common/dto/api-response.dto';
 import { PermissionGuard } from '../common/guards/permission.guard';
-import { SubscribeDto, UnsubscribeDto } from './dto/newsletter.dto';
+import { SubscriberQueryDto, SubscribeDto, UnsubscribeDto } from './dto/newsletter.dto';
+import {
+  NewsletterMessageResponseDto,
+  SubscriberListResponseDto,
+  SubscriberResponseDto,
+} from './dto/newsletter-response.dto';
 import { NewsletterService } from './newsletter.service';
 
 @ApiTags('Newsletter')
@@ -15,15 +33,25 @@ export class NewsletterController {
   constructor(private readonly newsletterService: NewsletterService) {}
 
   @Post('subscribe')
+  @HttpCode(200)
   @Throttle({ default: { limit: 5, ttl: 900_000 } })
   @ApiOperation({ summary: 'Subscribe an email address to the newsletter', description: 'Rate-limited to 5 requests per 15 minutes. If the email was previously unsubscribed, it will be reactivated.' })
+  @ApiOkResponse({ type: SubscriberResponseDto, description: 'Email successfully subscribed; returns the subscriber record. If the email was previously soft-deleted (unsubscribed), it is reactivated instead of creating a duplicate.' })
+  @ApiBadRequestResponse({ type: ValidationErrorDto, description: 'Validation failed — e.g. invalid email format' })
+  @ApiConflictResponse({ type: ConflictErrorDto, description: 'That email address is already an active subscriber' })
+  @ApiTooManyRequestsResponse({ type: TooManyRequestsErrorDto, description: 'Rate limit exceeded — maximum 5 requests per 15 minutes per IP' })
   subscribe(@Body() dto: SubscribeDto) {
     return this.newsletterService.subscribe(dto);
   }
 
   @Post('unsubscribe')
+  @HttpCode(200)
   @Throttle({ default: { limit: 5, ttl: 900_000 } })
   @ApiOperation({ summary: 'Unsubscribe an email address from the newsletter', description: 'Rate-limited to 5 requests per 15 minutes.' })
+  @ApiOkResponse({ type: NewsletterMessageResponseDto, description: 'Email successfully unsubscribed; the subscriber record is soft-deleted and the email will no longer receive newsletters' })
+  @ApiBadRequestResponse({ type: ValidationErrorDto, description: 'Validation failed — e.g. invalid email format' })
+  @ApiNotFoundResponse({ type: NotFoundErrorDto, description: 'No active subscriber with that email address exists' })
+  @ApiTooManyRequestsResponse({ type: TooManyRequestsErrorDto, description: 'Rate limit exceeded — maximum 5 requests per 15 minutes per IP' })
   unsubscribe(@Body() dto: UnsubscribeDto) {
     return this.newsletterService.unsubscribe(dto);
   }
@@ -32,9 +60,16 @@ export class NewsletterController {
   @UseGuards(JwtAuthGuard, PermissionGuard)
   @ApiBearerAuth('jwt')
   @RequirePermission('newsletter:read')
-  @ApiOperation({ summary: 'List active newsletter subscribers (paginated)', description: 'Requires permission: `newsletter:read`.' })
-  findAll(@Query() query: PaginationDto) {
-    return this.newsletterService.findAll(query.page ?? 1, query.limit ?? 20);
+  @ApiOperation({ summary: 'List newsletter subscribers (paginated)', description: 'Requires permission: `newsletter:read`. Defaults to active subscribers only; pass `is_active=false` to list inactive ones.' })
+  @ApiQuery({ name: 'page', required: false, type: Number, example: 1, description: 'Page number (default: 1)' })
+  @ApiQuery({ name: 'limit', required: false, type: Number, example: 20, description: 'Items per page (default: 20, max: 100)' })
+  @ApiQuery({ name: 'search', required: false, type: String, example: 'reader@example.com', description: 'Partial email search' })
+  @ApiQuery({ name: 'is_active', required: false, type: Boolean, example: true, description: 'Filter by active status. Omit to return all.' })
+  @ApiOkResponse({ type: SubscriberListResponseDto, description: 'Paginated list of subscribers' })
+  @ApiUnauthorizedResponse({ type: UnauthorizedErrorDto, description: 'Missing or invalid JWT' })
+  @ApiForbiddenResponse({ type: ForbiddenErrorDto, description: 'Insufficient permissions' })
+  findAll(@Query() query: SubscriberQueryDto) {
+    return this.newsletterService.findAll(query.page ?? 1, query.limit ?? 20, { search: query.search, is_active: query.is_active });
   }
 
   @Delete('subscribers/:id')
@@ -43,6 +78,10 @@ export class NewsletterController {
   @RequirePermission('newsletter:delete')
   @ApiOperation({ summary: 'Soft-delete a subscriber record', description: 'Requires permission: `newsletter:delete`.' })
   @ApiParam({ name: 'id', format: 'uuid' })
+  @ApiOkResponse({ type: NewsletterMessageResponseDto, description: 'Subscriber record soft-deleted; the email address can re-subscribe in the future' })
+  @ApiNotFoundResponse({ type: NotFoundErrorDto, description: 'No subscriber with that ID exists, or it has already been deleted' })
+  @ApiUnauthorizedResponse({ type: UnauthorizedErrorDto, description: 'Missing or invalid JWT' })
+  @ApiForbiddenResponse({ type: ForbiddenErrorDto, description: 'Insufficient permissions' })
   remove(@Param('id') id: string, @CurrentUser() user: CurrentUserPayload) {
     return this.newsletterService.softDelete(id, user.id);
   }

@@ -65,16 +65,22 @@ export class NewsletterService {
     return { message: 'Successfully unsubscribed', data: updated };
   }
 
-  async findAll(page: number, limit: number) {
+  async findAll(page: number, limit: number, filters: { search?: string; is_active?: boolean }) {
     const skip = (page - 1) * limit;
+
+    const where: any = { deleted_at: null };
+    if (filters.is_active !== undefined) where.is_active = filters.is_active;
+    else where.is_active = true;
+    if (filters.search) where.email = { contains: filters.search, mode: 'insensitive' };
+
     const [items, total] = await Promise.all([
       this.prisma.newsletter_subscribers.findMany({
-        where: { is_active: true, deleted_at: null },
+        where,
         orderBy: { subscribed_at: 'desc' },
         skip,
         take: limit,
       }),
-      this.prisma.newsletter_subscribers.count({ where: { is_active: true, deleted_at: null } }),
+      this.prisma.newsletter_subscribers.count({ where }),
     ]);
 
     return { message: 'Subscribers fetched', data: { items, pagination: { page, limit, total, pages: Math.ceil(total / limit) } } };

@@ -108,7 +108,7 @@ describe('NewsletterService', () => {
       prisma.newsletter_subscribers.findMany.mockResolvedValue([activeSubscriber]);
       prisma.newsletter_subscribers.count.mockResolvedValue(1);
 
-      const result = await service.findAll(1, 10);
+      const result = await service.findAll(1, 10, {});
 
       expect(result.data.items).toHaveLength(1);
       expect(result.data.pagination).toEqual({ page: 1, limit: 10, total: 1, pages: 1 });
@@ -118,7 +118,7 @@ describe('NewsletterService', () => {
       prisma.newsletter_subscribers.findMany.mockResolvedValue([]);
       prisma.newsletter_subscribers.count.mockResolvedValue(0);
 
-      await service.findAll(1, 10);
+      await service.findAll(1, 10, {});
 
       expect(prisma.newsletter_subscribers.findMany).toHaveBeenCalledWith(
         expect.objectContaining({ where: { is_active: true, deleted_at: null } }),
