@@ -1,4 +1,10 @@
 import "reflect-metadata";
+
+// BigInt fields (views, file_size) are not natively JSON-serializable
+(BigInt.prototype as any).toJSON = function () {
+  return Number(this);
+};
+
 import * as Sentry from "@sentry/node";
 
 if (process.env.NODE_ENV === "production" && process.env.SENTRY_DSN) {
