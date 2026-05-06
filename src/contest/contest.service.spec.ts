@@ -38,7 +38,9 @@ describe("ContestService", () => {
           provide: PrismaService,
           useValue: {
             $queryRaw: jest.fn(),
-            $transaction: jest.fn((fn) => fn({ $executeRaw: jest.fn().mockResolvedValue(undefined) })),
+            $transaction: jest.fn((fn) =>
+              fn({ $executeRaw: jest.fn().mockResolvedValue(undefined) }),
+            ),
             $executeRaw: jest.fn(),
             qutuf_sajjadiya_contest_answers: {
               createMany: jest.fn().mockResolvedValue({ count: 2 }),
@@ -80,7 +82,7 @@ describe("ContestService", () => {
       prisma.$queryRaw.mockResolvedValueOnce([{ id: ATTEMPT_ID }]);
 
       const result = await service.start(
-        { name: "Ahmad", contact: "+9647001234567", contactType: "phone" },
+        { name: "Ahmad", contact: "+9647801234567", contactType: "phone" },
         "127.0.0.1",
         "TestAgent",
       );
