@@ -6,11 +6,16 @@ import { AuthService } from './auth.service';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
 import { JwtStrategy } from './strategies/jwt.strategy';
 
+const JWT_SECRET = process.env.JWT_SECRET;
+if (!JWT_SECRET) {
+  throw new Error('JWT_SECRET is required');
+}
+
 @Module({
   imports: [
     PassportModule,
     JwtModule.register({
-      secret: process.env.JWT_SECRET ?? 'fallback-secret-change-me',
+      secret: JWT_SECRET,
       signOptions: { expiresIn: (process.env.JWT_EXPIRES_IN ?? '15m') as any },
     }),
   ],

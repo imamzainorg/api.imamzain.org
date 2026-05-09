@@ -1,10 +1,12 @@
 import { plainToInstance } from "class-transformer";
 import {
+  IsBooleanString,
   IsEnum,
   IsInt,
   IsOptional,
   IsString,
   Min,
+  ValidateIf,
   validateSync,
 } from "class-validator";
 
@@ -36,6 +38,38 @@ class EnvironmentVariables {
   @IsOptional()
   @IsString()
   JWT_EXPIRES_IN: string = "24h";
+
+  // Required in production; optional in development/test so contributors
+  // can boot without R2 access. Missing keys cause boot failure in prod.
+  @ValidateIf((o) => o.NODE_ENV === NodeEnv.Production)
+  @IsString()
+  R2_ACCOUNT_ID?: string;
+
+  @ValidateIf((o) => o.NODE_ENV === NodeEnv.Production)
+  @IsString()
+  R2_ACCESS_KEY_ID?: string;
+
+  @ValidateIf((o) => o.NODE_ENV === NodeEnv.Production)
+  @IsString()
+  R2_SECRET_ACCESS_KEY?: string;
+
+  @ValidateIf((o) => o.NODE_ENV === NodeEnv.Production)
+  @IsString()
+  R2_BUCKET?: string;
+
+  @ValidateIf((o) => o.NODE_ENV === NodeEnv.Production)
+  @IsString()
+  R2_PUBLIC_BASE_URL?: string;
+
+  // Required in production: explicit comma-separated allowlist of CORS origins.
+  // Without this, CORS would fall back to a permissive default.
+  @ValidateIf((o) => o.NODE_ENV === NodeEnv.Production)
+  @IsString()
+  ALLOWED_ORIGINS?: string;
+
+  @IsOptional()
+  @IsBooleanString()
+  EXPOSE_DOCS?: string;
 }
 
 export function validateEnv(config: Record<string, unknown>) {
@@ -46,18 +80,11 @@ export function validateEnv(config: Record<string, unknown>) {
     skipMissingProperties: false,
   });
 
-  const requiredMissing = ["DATABASE_URL", "DIRECT_URL", "JWT_SECRET"].filter(
-    (key) => !config[key],
-  );
-
-  if (requiredMissing.length > 0) {
-    console.warn(
-      `[ENV] Warning: Missing required environment variables: ${requiredMissing.join(", ")}. The app may not function correctly.`,
-    );
-  }
-
   if (errors.length > 0) {
-    console.warn("[ENV] Environment validation warnings:", errors.toString());
+    const message = errors
+      .map((e) => `${e.property}: ${Object.values(e.constraints ?? {}).join(", ")}`)
+      .join("\n  ");
+    throw new Error(`Invalid environment configuration:\n  ${message}`);
   }
 
   return validatedConfig;

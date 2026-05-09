@@ -24,11 +24,33 @@ import { AppModule } from "./app.module";
 import { AllExceptionsFilter } from "./common/filters/all-exceptions.filter";
 import { ResponseInterceptor } from "./common/interceptors/response.interceptor";
 
+function resolveCorsOrigin(): string[] | boolean {
+  const allowedOriginsEnv = process.env.ALLOWED_ORIGINS;
+  if (allowedOriginsEnv) {
+    return allowedOriginsEnv
+      .split(",")
+      .map((o) => o.trim())
+      .filter(Boolean);
+  }
+  if (process.env.NODE_ENV === "production") {
+    // env validation enforces ALLOWED_ORIGINS in production; this branch is a defensive guard.
+    throw new Error("ALLOWED_ORIGINS must be set in production");
+  }
+  // Development default: allow any localhost / 127.0.0.1 origin without credential echoing risk.
+  return [/^https?:\/\/localhost(:\d+)?$/, /^https?:\/\/127\.0\.0\.1(:\d+)?$/] as unknown as string[];
+}
+
+function shouldExposeDocs(): boolean {
+  const flag = process.env.EXPOSE_DOCS;
+  if (flag !== undefined) return flag === "true";
+  return process.env.NODE_ENV !== "production";
+}
+
 async function bootstrap() {
   const app = await NestFactory.create(AppModule, { bufferLogs: true });
 
   app.useLogger(app.get(Logger));
-
+  app.enableShutdownHooks();
   app.setGlobalPrefix("api/v1");
 
   app.use(
@@ -50,14 +72,8 @@ async function bootstrap() {
 
   app.use(require("compression")());
 
-  const allowedOriginsEnv = process.env.ALLOWED_ORIGINS;
-  const isProduction = process.env.NODE_ENV === "production";
-
   app.enableCors({
-    origin:
-      isProduction && allowedOriginsEnv
-        ? allowedOriginsEnv.split(",").map((o) => o.trim())
-        : true,
+    origin: resolveCorsOrigin(),
     credentials: true,
     optionsSuccessStatus: 200,
   });
@@ -74,36 +90,39 @@ async function bootstrap() {
   app.useGlobalInterceptors(new ResponseInterceptor());
 
   // ── OpenAPI / Scalar docs ─────────────────────────────────────────────────
-  const swaggerConfig = new DocumentBuilder()
-    .setTitle("imamzain.org API")
-    .setDescription(
-      "REST API for imamzain.org — Islamic content management, digital library, gallery, forms, and contest.\n\n" +
-        "**Authentication:** Protected endpoints require a Bearer JWT. Obtain one via `POST /api/v1/auth/login`.\n\n" +
-        "**Language:** Send `Accept-Language: ar` (or any supported ISO 639-1 code) to receive translated content. " +
-        "Falls back to the default translation when the requested language is unavailable.",
-    )
-    .setVersion("1.0.0")
-    .addBearerAuth(
-      {
-        type: "http",
-        scheme: "bearer",
-        bearerFormat: "JWT",
-        description: "Paste the JWT returned by /auth/login",
-      },
-      "jwt",
-    )
-    .build();
+  // Gated behind EXPOSE_DOCS (defaults: on in dev/test, off in production).
+  // Avoids leaking the full route + DTO surface to anonymous callers in prod.
+  if (shouldExposeDocs()) {
+    const swaggerConfig = new DocumentBuilder()
+      .setTitle("imamzain.org API")
+      .setDescription(
+        "REST API for imamzain.org — Islamic content management, digital library, gallery, forms, and contest.\n\n" +
+          "**Authentication:** Protected endpoints require a Bearer JWT. Obtain one via `POST /api/v1/auth/login`.\n\n" +
+          "**Language:** Send `Accept-Language: ar` (or any supported ISO 639-1 code) to receive translated content. " +
+          "Falls back to the default translation when the requested language is unavailable.",
+      )
+      .setVersion("1.0.0")
+      .addBearerAuth(
+        {
+          type: "http",
+          scheme: "bearer",
+          bearerFormat: "JWT",
+          description: "Paste the JWT returned by /auth/login",
+        },
+        "jwt",
+      )
+      .build();
 
-  const document = SwaggerModule.createDocument(app, swaggerConfig);
+    const document = SwaggerModule.createDocument(app, swaggerConfig);
 
-  app.use("/openapi.json", (_req: any, res: any) => {
-    res.setHeader("Content-Type", "application/json");
-    res.send(JSON.stringify(document));
-  });
+    app.use("/openapi.json", (_req: any, res: any) => {
+      res.setHeader("Content-Type", "application/json");
+      res.send(JSON.stringify(document));
+    });
 
-  app.use("/docs", (_req: any, res: any) => {
-    res.setHeader("Content-Type", "text/html");
-    res.send(`<!doctype html>
+    app.use("/docs", (_req: any, res: any) => {
+      res.setHeader("Content-Type", "text/html");
+      res.send(`<!doctype html>
 <html>
   <head>
     <title>imamzain.org API Reference</title>
@@ -119,7 +138,8 @@ async function bootstrap() {
     <script src="https://cdn.jsdelivr.net/npm/@scalar/api-reference"></script>
   </body>
 </html>`);
-  });
+    });
+  }
   // ─────────────────────────────────────────────────────────────────────────
 
   const port = process.env.PORT ?? 3000;
@@ -132,15 +152,21 @@ async function bootstrap() {
     "Bootstrap",
   );
   logger.log(`Health: http://localhost:${port}/api/v1/health`, "Bootstrap");
-  logger.log(`API Docs: http://localhost:${port}/docs`, "Bootstrap");
+  if (shouldExposeDocs()) {
+    logger.log(`API Docs: http://localhost:${port}/docs`, "Bootstrap");
+  }
   logger.log(
     `R2 Bucket: ${process.env.R2_BUCKET ?? "not configured"}`,
     "Bootstrap",
   );
   logger.log(
-    `Sentry: ${process.env.SENTRY_DSN && isProduction ? "enabled" : "disabled"}`,
+    `Sentry: ${process.env.SENTRY_DSN && process.env.NODE_ENV === "production" ? "enabled" : "disabled"}`,
     "Bootstrap",
   );
 }
 
-bootstrap();
+bootstrap().catch((err) => {
+  // eslint-disable-next-line no-console
+  console.error("Fatal: bootstrap failed", err);
+  process.exit(1);
+});
