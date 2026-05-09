@@ -36,14 +36,15 @@ REST API powering [imamzain.org](https://imamzain.org) — Islamic content manag
 
 ## Features
 
-- Multi-language content — send `Accept-Language: ar` (or any ISO 639-1 code) to get translated responses
+- Multi-language content — send `Accept-Language: ar` (or any ISO 639-1 code) to get translated responses, with automatic fallback to the default translation when one isn't available
 - Role-based access control (RBAC) with per-permission granularity
-- JWT authentication with bcrypt password hashing
-- File uploads via Cloudflare R2 pre-signed URLs
+- JWT authentication with bcrypt password hashing, atomic refresh-token rotation, and reuse detection that revokes the whole token chain when an already-rotated token is replayed
+- File uploads via Cloudflare R2 pre-signed URLs, with server-side MIME enforcement and ownership-bound confirmation (the user that requested the URL is the only one who can register the resulting media row)
+- HTML-escaped admin notification emails to defuse stored XSS via form fields
 - Comprehensive audit logging on all write operations
-- Health endpoint for uptime monitoring and load-balancer probes
-- Interactive API explorer at `/docs`
-- Rate limiting, Helmet security headers, CORS, and response compression
+- Health endpoint for uptime monitoring and load-balancer probes (storage status cached for 60s to avoid amplifying load on the object store)
+- Interactive API explorer at `/docs` (toggleable via `EXPOSE_DOCS`; off by default in production)
+- Globally enforced rate limiting via `@nestjs/throttler` with stricter caps on auth and view-counter endpoints, Helmet security headers, strict CORS allowlist in production, and response compression
 
 ---
 
@@ -99,11 +100,18 @@ See [.env.example](.env.example) for the complete list with inline descriptions.
 | `R2_SECRET_ACCESS_KEY` | Yes | R2 API secret key |
 | `R2_BUCKET` | Yes | R2 bucket name |
 | `R2_PUBLIC_BASE_URL` | Yes | Public CDN base URL for served files |
-| `ALLOWED_ORIGINS` | Prod | Comma-separated CORS allowed origins |
+| `ALLOWED_ORIGINS` | Prod | Comma-separated CORS allowed origins. **Required in production** — the app refuses to boot without it rather than fall back to a permissive default |
+| `EXPOSE_DOCS` | Optional | `true` to expose `/docs` and `/openapi.json`. Defaults to off in production |
+| `NEWSLETTER_UNSUBSCRIBE_SECRET` | Optional | HMAC secret for unsubscribe tokens; falls back to `JWT_SECRET` |
 | `SENTRY_DSN` | Optional | Sentry DSN for error tracking |
 | `TWILIO_ACCOUNT_SID` | Optional | Twilio account SID |
 | `TWILIO_AUTH_TOKEN` | Optional | Twilio auth token |
 | `TWILIO_WHATSAPP_FROM` | Optional | Twilio WhatsApp sender number |
+
+> **Boot behaviour:** the app validates required env vars on startup. Missing
+> `JWT_SECRET`, `DATABASE_URL`, `DIRECT_URL`, or — in production —
+> `ALLOWED_ORIGINS` and the `R2_*` group, will cause the process to exit.
+> There is intentionally no insecure fallback for the JWT secret.
 
 ---
 
@@ -164,9 +172,13 @@ Raw OpenAPI 3.0 spec: `GET /openapi.json`.
 
 ### Authentication
 
-| Method | Endpoint | Auth | Description |
-| --- | --- | --- | --- |
-| POST | `/auth/login` | Public | Returns a signed JWT |
+| Method | Endpoint | Auth | Rate limit | Description |
+| --- | --- | --- | --- | --- |
+| POST | `/auth/login` | Public | 10 / 15 min per IP | Returns a signed JWT plus a rotating refresh token |
+| POST | `/auth/refresh` | Public | 30 / 15 min per IP | Atomically rotates the refresh token; presenting an already-revoked token revokes the entire chain for that user |
+| POST | `/auth/logout` | JWT | — | Revokes the supplied refresh token, or all sessions if none supplied |
+| GET | `/auth/me` | JWT | — | Current profile with roles and permissions |
+| PATCH | `/auth/me/password` | JWT | — | Change password and invalidate all sessions (transactional) |
 
 ### Content Management (JWT required)
 
@@ -189,14 +201,16 @@ Raw OpenAPI 3.0 spec: `GET /openapi.json`.
 
 | Method | Endpoint | Rate limit | Description |
 | --- | --- | --- | --- |
-| POST | `/forms/contact` | — | Contact form submission |
-| POST | `/forms/proxy-visit` | — | Proxy visit tracking |
-| GET | `/forms/qutuf-sajjadiya-contest/questions` | — | Contest question list |
-| POST | `/forms/qutuf-sajjadiya-contest/start` | 10/hr per IP | Start contest attempt, returns `attempt_id` |
-| POST | `/forms/qutuf-sajjadiya-contest/submit` | 30/hr per IP | Submit answers, returns score |
-| POST | `/newsletter/subscribe` | — | Newsletter opt-in |
-| DELETE | `/newsletter/unsubscribe` | — | Newsletter opt-out |
-| GET | `/health` | — | Liveness probe |
+| POST | `/forms/contact` | 300 / hr per IP | Contact form submission |
+| POST | `/forms/proxy-visit` | 300 / hr per IP | Proxy visit tracking |
+| GET | `/forms/qutuf-sajjadiya-contest/questions` | global only | Contest question list |
+| POST | `/forms/qutuf-sajjadiya-contest/start` | 10 / hr per IP | Start contest attempt, returns `attempt_id` |
+| POST | `/forms/qutuf-sajjadiya-contest/submit` | 30 / hr per IP | Submit answers, returns score |
+| POST | `/newsletter/subscribe` | 5 / 15 min per IP | Newsletter opt-in; returns an `unsubscribe_token` |
+| POST | `/newsletter/unsubscribe` | 5 / 15 min per IP | Newsletter opt-out; requires the token issued at subscribe time |
+| POST | `/posts/:id/view` | 30 / min per IP | Increment the view counter on a published post |
+| POST | `/books/:id/view` | 30 / min per IP | Increment the view counter on a book |
+| GET | `/health` | 60 / min per IP | Liveness probe (storage check is cached for 60s) |
 
 ---
 

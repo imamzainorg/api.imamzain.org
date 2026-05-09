@@ -45,6 +45,9 @@ export class AllExceptionsFilter implements ExceptionFilter {
       } else if (code === "P2025") {
         status = HttpStatus.NOT_FOUND;
         message = "Record not found";
+      } else if (code === "P2003") {
+        status = HttpStatus.BAD_REQUEST;
+        message = "Foreign key constraint failed — referenced record does not exist";
       } else {
         status = HttpStatus.INTERNAL_SERVER_ERROR;
         message = "Internal server error";
