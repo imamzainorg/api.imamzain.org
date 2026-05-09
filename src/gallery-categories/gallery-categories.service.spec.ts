@@ -34,6 +34,7 @@ describe("GalleryCategoriesService", () => {
             gallery_category_translations: {
               upsert: jest.fn().mockResolvedValue({}),
             },
+            gallery_images: { count: jest.fn().mockResolvedValue(0) },
             audit_logs: { create: jest.fn().mockResolvedValue({}) },
             $transaction: jest.fn(),
           },
@@ -197,8 +198,9 @@ describe("GalleryCategoriesService", () => {
   });
 
   describe("softDelete", () => {
-    it("soft-deletes the category", async () => {
+    it("soft-deletes the category when no images reference it", async () => {
       prisma.gallery_categories.findFirst.mockResolvedValue(baseCategory);
+      prisma.gallery_images.count.mockResolvedValue(0);
 
       const result = await service.softDelete("cat-1", "actor-1");
 
@@ -206,6 +208,16 @@ describe("GalleryCategoriesService", () => {
         expect.objectContaining({ data: { deleted_at: expect.any(Date) } }),
       );
       expect(result.message).toBe("Category deleted");
+    });
+
+    it("throws ConflictException when category has images", async () => {
+      prisma.gallery_categories.findFirst.mockResolvedValue(baseCategory);
+      prisma.gallery_images.count.mockResolvedValue(2);
+
+      const { ConflictException } = await import("@nestjs/common");
+      await expect(service.softDelete("cat-1", "actor-1")).rejects.toThrow(
+        ConflictException,
+      );
     });
 
     it("throws NotFoundException when not found", async () => {

@@ -1,15 +1,7 @@
 import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
+import { resolveTranslation } from '../common/utils/translation.util';
 import { BookQueryDto, CreateBookDto, UpdateBookDto } from './dto/book.dto';
-
-function resolveTranslation(translations: any[], lang: string | null) {
-  if (!translations || translations.length === 0) return null;
-  if (lang) {
-    const match = translations.find((t) => t.lang === lang);
-    if (match) return match;
-  }
-  return translations.find((t) => t.is_default) ?? translations[0];
-}
 
 @Injectable()
 export class BooksService {
@@ -37,7 +29,7 @@ export class BooksService {
           media: true,
           book_categories: { include: { book_category_translations: true } },
         },
-        orderBy: { created_at: 'desc' },
+        orderBy: [{ created_at: 'desc' }, { id: 'asc' }],
         skip,
         take: limit,
       }),
@@ -77,7 +69,9 @@ export class BooksService {
     if (!media) throw new NotFoundException('Cover image not found');
 
     if (dto.isbn) {
-      const existing = await this.prisma.books.findFirst({ where: { isbn: dto.isbn, deleted_at: null } });
+      // Check the unique constraint as the DB sees it (no soft-delete filter):
+      // a deleted book still occupies its ISBN until softDelete frees it.
+      const existing = await this.prisma.books.findUnique({ where: { isbn: dto.isbn } });
       if (existing) throw new ConflictException('A book with that ISBN already exists');
     }
 
@@ -125,8 +119,20 @@ export class BooksService {
     const book = await this.prisma.books.findFirst({ where: { id, deleted_at: null } });
     if (!book) throw new NotFoundException('Book not found');
 
+    if (dto.category_id !== undefined && dto.category_id !== book.category_id) {
+      const category = await this.prisma.book_categories.findFirst({
+        where: { id: dto.category_id, deleted_at: null },
+      });
+      if (!category) throw new NotFoundException('Category not found');
+    }
+
+    if (dto.cover_image_id !== undefined && dto.cover_image_id !== book.cover_image_id) {
+      const media = await this.prisma.media.findUnique({ where: { id: dto.cover_image_id } });
+      if (!media) throw new NotFoundException('Cover image not found');
+    }
+
     if (dto.isbn && dto.isbn !== book.isbn) {
-      const conflict = await this.prisma.books.findFirst({ where: { isbn: dto.isbn, deleted_at: null } });
+      const conflict = await this.prisma.books.findUnique({ where: { isbn: dto.isbn } });
       if (conflict) throw new ConflictException('A book with that ISBN already exists');
     }
 
@@ -140,6 +146,11 @@ export class BooksService {
             create: { book_id: id, lang: t.lang, title: t.title, author: t.author ?? null, publisher: t.publisher ?? null, description: t.description ?? null, series: t.series ?? null, is_default: t.is_default ?? false },
             update: { title: t.title, author: t.author ?? null, publisher: t.publisher ?? null, description: t.description ?? null, series: t.series ?? null, is_default: t.is_default ?? false },
           });
+        }
+
+        const defaults = await tx.book_translations.count({ where: { book_id: id, is_default: true } });
+        if (defaults !== 1) {
+          throw new BadRequestException('Exactly one translation must have is_default: true');
         }
       }
     });
@@ -157,7 +168,15 @@ export class BooksService {
     const book = await this.prisma.books.findFirst({ where: { id, deleted_at: null } });
     if (!book) throw new NotFoundException('Book not found');
 
-    await this.prisma.books.update({ where: { id }, data: { deleted_at: new Date() } });
+    // Free the unique ISBN by suffixing it; without this, recreating a book
+    // with the same ISBN after deletion fails with a P2002 from the DB.
+    const deletedAt = new Date();
+    const isbnUpdate = book.isbn ? { isbn: `${book.isbn}__del_${deletedAt.getTime()}` } : {};
+
+    await this.prisma.books.update({
+      where: { id },
+      data: { deleted_at: deletedAt, ...isbnUpdate },
+    });
 
     try {
       await this.prisma.audit_logs.create({

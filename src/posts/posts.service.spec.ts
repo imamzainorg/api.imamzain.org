@@ -41,7 +41,14 @@ describe("PostsService", () => {
 
   const mockTx = {
     posts: { create: jest.fn(), update: jest.fn() },
-    post_translations: { createMany: jest.fn(), upsert: jest.fn() },
+    post_translations: {
+      createMany: jest.fn(),
+      upsert: jest.fn(),
+      findFirst: jest.fn().mockResolvedValue(null),
+      findMany: jest.fn().mockResolvedValue([]),
+      update: jest.fn().mockResolvedValue({}),
+      count: jest.fn().mockResolvedValue(1),
+    },
     post_attachments: { createMany: jest.fn(), deleteMany: jest.fn() },
   };
 
@@ -365,15 +372,21 @@ describe("PostsService", () => {
   });
 
   describe("softDelete", () => {
-    it("sets deleted_at on the post", async () => {
+    it("sets deleted_at on the post and frees up translation slugs", async () => {
       prisma.posts.findFirst.mockResolvedValue(basePost);
+      mockTx.post_translations.findMany.mockResolvedValue(basePost.post_translations);
+      prisma.$transaction.mockImplementation((cb: any) => cb(mockTx));
 
       const result = await service.softDelete("post-1", "user-1");
 
-      expect(prisma.posts.update).toHaveBeenCalledWith(
+      expect(mockTx.posts.update).toHaveBeenCalledWith(
         expect.objectContaining({
-          data: { deleted_at: expect.any(Date) },
+          data: expect.objectContaining({ deleted_at: expect.any(Date) }),
         }),
+      );
+      // Each existing translation should have its slug suffixed.
+      expect(mockTx.post_translations.update).toHaveBeenCalledTimes(
+        basePost.post_translations.length,
       );
       expect(result.message).toBe("Post deleted");
     });

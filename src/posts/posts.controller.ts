@@ -23,6 +23,7 @@ import {
   ApiTags,
   ApiUnauthorizedResponse,
 } from '@nestjs/swagger';
+import { Throttle } from '@nestjs/throttler';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { CurrentUser, CurrentUserPayload } from '../common/decorators/current-user.decorator';
 import { Lang } from '../common/decorators/language.decorator';
@@ -80,17 +81,32 @@ export class PostsController {
     return this.postsService.findAll(query, lang, true);
   }
 
-  @Get(':id')
-  @ApiOperation({ summary: 'Get a single post by ID (public)' })
+  @Get('admin/:id')
+  @UseGuards(JwtAuthGuard, PermissionGuard)
+  @ApiBearerAuth('jwt')
+  @RequirePermission('posts:read')
+  @ApiOperation({ summary: 'Get a single post by ID including unpublished (admin)', description: 'Requires permission: `posts:read`. Returns drafts and unpublished posts.' })
   @ApiParam({ name: 'id', format: 'uuid' })
-  @ApiOkResponse({ type: PostDetailResponseDto, description: 'Post detail with all translations and attached media records' })
+  @ApiOkResponse({ type: PostDetailResponseDto, description: 'Post detail with all translations and attached media records (regardless of publish state)' })
   @ApiNotFoundResponse({ type: NotFoundErrorDto, description: 'No post with that ID exists, or it has been deleted' })
+  @ApiUnauthorizedResponse({ type: UnauthorizedErrorDto, description: 'Missing or invalid JWT' })
+  @ApiForbiddenResponse({ type: ForbiddenErrorDto, description: 'Insufficient permissions' })
+  findAdminOne(@Param('id') id: string, @Lang() lang: string | null) {
+    return this.postsService.findOne(id, lang, true);
+  }
+
+  @Get(':id')
+  @ApiOperation({ summary: 'Get a single published post by ID (public)' })
+  @ApiParam({ name: 'id', format: 'uuid' })
+  @ApiOkResponse({ type: PostDetailResponseDto, description: 'Post detail with all translations and attached media records (published only)' })
+  @ApiNotFoundResponse({ type: NotFoundErrorDto, description: 'No published post with that ID exists, or it has been deleted/unpublished' })
   findOne(@Param('id') id: string, @Lang() lang: string | null) {
-    return this.postsService.findOne(id, lang);
+    return this.postsService.findOne(id, lang, false);
   }
 
   @Post(':id/view')
-  @ApiOperation({ summary: 'Record a view for a published post (public)', description: 'Increments the view counter. Call this explicitly when a reader views the post content.' })
+  @Throttle({ default: { ttl: 60_000, limit: 30 } })
+  @ApiOperation({ summary: 'Record a view for a published post (public)', description: 'Increments the view counter. Rate-limited to 30 calls per minute per IP.' })
   @ApiParam({ name: 'id', format: 'uuid' })
   @ApiOkResponse({ type: PostMessageResponseDto, description: 'View counter incremented by 1; only applies to currently published posts' })
   @ApiNotFoundResponse({ type: NotFoundErrorDto, description: 'No post with that ID exists, it has been deleted, or it is not currently published' })

@@ -30,7 +30,11 @@ describe("BooksService", () => {
 
   const mockTx = {
     books: { create: jest.fn(), update: jest.fn() },
-    book_translations: { createMany: jest.fn(), upsert: jest.fn() },
+    book_translations: {
+      createMany: jest.fn(),
+      upsert: jest.fn(),
+      count: jest.fn().mockResolvedValue(1),
+    },
   };
 
   beforeEach(async () => {
@@ -156,7 +160,7 @@ describe("BooksService", () => {
     it("throws ConflictException when ISBN already exists", async () => {
       prisma.book_categories.findFirst.mockResolvedValue({ id: "cat-1" });
       prisma.media.findUnique.mockResolvedValue({ id: "media-1" });
-      prisma.books.findFirst.mockResolvedValue(baseBook);
+      prisma.books.findUnique.mockResolvedValue(baseBook);
 
       await expect(
         service.create(
@@ -174,7 +178,7 @@ describe("BooksService", () => {
     it("throws BadRequestException when no default translation", async () => {
       prisma.book_categories.findFirst.mockResolvedValue({ id: "cat-1" });
       prisma.media.findUnique.mockResolvedValue({ id: "media-1" });
-      prisma.books.findFirst.mockResolvedValue(null);
+      prisma.books.findUnique.mockResolvedValue(null);
 
       await expect(
         service.create(
@@ -212,9 +216,8 @@ describe("BooksService", () => {
     });
 
     it("throws ConflictException on duplicate ISBN", async () => {
-      prisma.books.findFirst
-        .mockResolvedValueOnce(baseBook)
-        .mockResolvedValueOnce({ id: "book-2", isbn: "978-0-00-000000-0" });
+      prisma.books.findFirst.mockResolvedValueOnce(baseBook);
+      prisma.books.findUnique.mockResolvedValueOnce({ id: "book-2", isbn: "978-0-00-000000-0" });
 
       await expect(
         service.update("book-1", { isbn: "978-0-00-000000-0" }, "u1"),
@@ -223,13 +226,18 @@ describe("BooksService", () => {
   });
 
   describe("softDelete", () => {
-    it("sets deleted_at", async () => {
+    it("sets deleted_at and frees up the isbn", async () => {
       prisma.books.findFirst.mockResolvedValue(baseBook);
 
       const result = await service.softDelete("book-1", "user-1");
 
       expect(prisma.books.update).toHaveBeenCalledWith(
-        expect.objectContaining({ data: { deleted_at: expect.any(Date) } }),
+        expect.objectContaining({
+          data: expect.objectContaining({
+            deleted_at: expect.any(Date),
+            isbn: expect.stringContaining("__del_"),
+          }),
+        }),
       );
       expect(result.message).toBe("Book deleted");
     });

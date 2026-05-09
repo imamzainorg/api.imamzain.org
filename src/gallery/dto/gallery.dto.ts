@@ -85,11 +85,7 @@ export class CreateGalleryImageDto {
 }
 
 export class UpdateGalleryImageDto {
-  @ApiPropertyOptional({ format: "uuid" })
-  @IsOptional()
-  @IsUUID()
-  media_id?: string;
-
+  // media_id is the primary key for gallery_images and intentionally not updatable.
   @ApiPropertyOptional({ format: "uuid" })
   @IsOptional()
   @IsUUID()

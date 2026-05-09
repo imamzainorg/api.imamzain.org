@@ -109,8 +109,18 @@ export class GalleryService {
     const image = await this.prisma.gallery_images.findFirst({ where: { media_id: id, deleted_at: null } });
     if (!image) throw new NotFoundException('Gallery image not found');
 
+    if (dto.category_id !== undefined && dto.category_id !== image.category_id) {
+      const category = await this.prisma.gallery_categories.findFirst({
+        where: { id: dto.category_id, deleted_at: null },
+      });
+      if (!category) throw new NotFoundException('Category not found');
+    }
+
     await this.prisma.$transaction(async (tx) => {
-      const { translations, ...rest } = dto;
+      // Defensively strip media_id (the primary key) and translations from
+      // the data spread; the DTO no longer exposes media_id, but this guards
+      // the service against future DTO regressions.
+      const { translations, media_id: _media_id, ...rest } = dto as any;
       await tx.gallery_images.update({ where: { media_id: id }, data: { ...rest, updated_at: new Date() } });
       if (translations) {
         for (const t of translations) {

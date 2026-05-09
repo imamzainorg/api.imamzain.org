@@ -1,15 +1,7 @@
-﻿import { Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
+import { resolveTranslation } from '../common/utils/translation.util';
 import { AcademicPaperQueryDto, CreateAcademicPaperDto, UpdateAcademicPaperDto } from './dto/academic-paper.dto';
-
-function resolveTranslation(translations: any[], lang: string | null) {
-  if (!translations || translations.length === 0) return null;
-  if (lang) {
-    const match = translations.find((t) => t.lang === lang);
-    if (match) return match;
-  }
-  return translations.find((t) => t.is_default) ?? translations[0];
-}
 
 @Injectable()
 export class AcademicPapersService {
@@ -41,7 +33,7 @@ export class AcademicPapersService {
           academic_paper_translations: true,
           academic_paper_categories: { include: { academic_paper_category_translations: true } },
         },
-        orderBy: { created_at: 'desc' },
+        orderBy: [{ created_at: 'desc' }, { id: 'asc' }],
         skip,
         take: limit,
       }),
@@ -67,6 +59,9 @@ export class AcademicPapersService {
   async create(dto: CreateAcademicPaperDto, userId: string) {
     const category = await this.prisma.academic_paper_categories.findFirst({ where: { id: dto.category_id, deleted_at: null } });
     if (!category) throw new NotFoundException('Category not found');
+
+    const defaultCount = dto.translations.filter((t) => t.is_default).length;
+    if (defaultCount !== 1) throw new BadRequestException('Exactly one translation must have is_default: true');
 
     const paper = await this.prisma.$transaction(async (tx) => {
       const created = await tx.academic_papers.create({
@@ -106,6 +101,13 @@ export class AcademicPapersService {
     const paper = await this.prisma.academic_papers.findFirst({ where: { id, deleted_at: null } });
     if (!paper) throw new NotFoundException('Paper not found');
 
+    if (dto.category_id !== undefined && dto.category_id !== paper.category_id) {
+      const category = await this.prisma.academic_paper_categories.findFirst({
+        where: { id: dto.category_id, deleted_at: null },
+      });
+      if (!category) throw new NotFoundException('Category not found');
+    }
+
     await this.prisma.$transaction(async (tx) => {
       const { translations, ...rest } = dto;
       await tx.academic_papers.update({ where: { id }, data: { ...rest, updated_at: new Date() } });
@@ -116,6 +118,11 @@ export class AcademicPapersService {
             create: { paper_id: id, lang: t.lang, title: t.title, abstract: t.abstract ?? null, authors: t.authors ?? [], keywords: t.keywords ?? [], publication_venue: t.publication_venue ?? null, page_count: t.page_count ?? null, is_default: t.is_default ?? false },
             update: { title: t.title, abstract: t.abstract ?? null, authors: t.authors ?? [], keywords: t.keywords ?? [], publication_venue: t.publication_venue ?? null, page_count: t.page_count ?? null, is_default: t.is_default ?? false },
           });
+        }
+
+        const defaults = await tx.academic_paper_translations.count({ where: { paper_id: id, is_default: true } });
+        if (defaults !== 1) {
+          throw new BadRequestException('Exactly one translation must have is_default: true');
         }
       }
     });

@@ -34,6 +34,7 @@ describe("AcademicPaperCategoriesService", () => {
             academic_paper_category_translations: {
               upsert: jest.fn().mockResolvedValue({}),
             },
+            academic_papers: { count: jest.fn().mockResolvedValue(0) },
             audit_logs: { create: jest.fn().mockResolvedValue({}) },
             $transaction: jest.fn(),
           },
@@ -213,10 +214,9 @@ describe("AcademicPaperCategoriesService", () => {
   });
 
   describe("softDelete", () => {
-    it("soft-deletes the category", async () => {
-      prisma.academic_paper_categories.findFirst.mockResolvedValue(
-        baseCategory,
-      );
+    it("soft-deletes the category when no papers reference it", async () => {
+      prisma.academic_paper_categories.findFirst.mockResolvedValue(baseCategory);
+      prisma.academic_papers.count.mockResolvedValue(0);
 
       const result = await service.softDelete("cat-1", "actor-1");
 
@@ -224,6 +224,16 @@ describe("AcademicPaperCategoriesService", () => {
         expect.objectContaining({ data: { deleted_at: expect.any(Date) } }),
       );
       expect(result.message).toBe("Category deleted");
+    });
+
+    it("throws ConflictException when category has papers", async () => {
+      prisma.academic_paper_categories.findFirst.mockResolvedValue(baseCategory);
+      prisma.academic_papers.count.mockResolvedValue(3);
+
+      const { ConflictException } = await import("@nestjs/common");
+      await expect(service.softDelete("cat-1", "actor-1")).rejects.toThrow(
+        ConflictException,
+      );
     });
 
     it("throws NotFoundException when not found", async () => {

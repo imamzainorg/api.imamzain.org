@@ -1,15 +1,7 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
+import { resolveTranslation } from '../common/utils/translation.util';
 import { CreatePostDto, PostQueryDto, TogglePublishDto, UpdatePostDto } from './dto/post.dto';
-
-function resolveTranslation(translations: any[], lang: string | null) {
-  if (!translations || translations.length === 0) return null;
-  if (lang) {
-    const match = translations.find((t) => t.lang === lang);
-    if (match) return match;
-  }
-  return translations.find((t) => t.is_default) ?? translations[0];
-}
 
 @Injectable()
 export class PostsService {
@@ -53,7 +45,7 @@ export class PostsService {
             orderBy: { display_order: 'asc' },
           },
         },
-        orderBy: [{ published_at: 'desc' }, { created_at: 'desc' }],
+        orderBy: [{ published_at: 'desc' }, { created_at: 'desc' }, { id: 'asc' }],
         skip,
         take: limit,
       }),
@@ -71,9 +63,12 @@ export class PostsService {
     };
   }
 
-  async findOne(id: string, lang: string | null) {
+  async findOne(id: string, lang: string | null, isAdmin = false) {
+    const where: any = { id, deleted_at: null };
+    if (!isAdmin) where.is_published = true;
+
     const post = await this.prisma.posts.findFirst({
-      where: { id, deleted_at: null },
+      where,
       include: {
         post_translations: true,
         post_categories: { include: { post_category_translations: true } },
@@ -91,13 +86,10 @@ export class PostsService {
   }
 
   async findBySlug(slug: string, lang: string | null) {
-    const translation = await this.prisma.post_translations.findFirst({
-      where: {
-        slug,
-        posts: { deleted_at: null, is_published: true },
-      },
-    });
+    const where: any = { slug, posts: { deleted_at: null, is_published: true } };
+    if (lang) where.lang = lang;
 
+    const translation = await this.prisma.post_translations.findFirst({ where });
     if (!translation) throw new NotFoundException('Post not found');
 
     return this.findOne(translation.post_id, lang);
@@ -120,6 +112,17 @@ export class PostsService {
     }
 
     const post = await this.prisma.$transaction(async (tx) => {
+      // Pre-check slug availability inside the transaction so duplicate slugs
+      // surface as 409 with a useful message instead of a Prisma P2002 500.
+      for (const t of dto.translations) {
+        const conflict = await tx.post_translations.findFirst({
+          where: { lang: t.lang, slug: t.slug },
+        });
+        if (conflict) {
+          throw new ConflictException(`Slug "${t.slug}" is already in use for language ${t.lang}`);
+        }
+      }
+
       const created = await tx.posts.create({
         data: {
           category_id: dto.category_id,
@@ -174,22 +177,58 @@ export class PostsService {
     const post = await this.prisma.posts.findFirst({ where: { id, deleted_at: null } });
     if (!post) throw new NotFoundException('Post not found');
 
+    if (dto.category_id !== undefined && dto.category_id !== post.category_id) {
+      const category = await this.prisma.post_categories.findFirst({
+        where: { id: dto.category_id, deleted_at: null },
+      });
+      if (!category) throw new NotFoundException('Category not found');
+    }
+
+    if (dto.cover_image_id) {
+      const media = await this.prisma.media.findUnique({ where: { id: dto.cover_image_id } });
+      if (!media) throw new NotFoundException('Cover image not found');
+    }
+
     await this.prisma.$transaction(async (tx) => {
       const updateData: any = { updated_at: new Date() };
       if (dto.category_id !== undefined) updateData.category_id = dto.category_id;
       if (dto.cover_image_id !== undefined) updateData.cover_image_id = dto.cover_image_id;
       if (dto.is_published !== undefined) updateData.is_published = dto.is_published;
-      if (dto.published_at !== undefined) updateData.published_at = new Date(dto.published_at);
+      if (dto.published_at !== undefined) {
+        updateData.published_at = dto.published_at ? new Date(dto.published_at) : null;
+      }
 
       await tx.posts.update({ where: { id }, data: updateData });
 
       if (dto.translations) {
         for (const t of dto.translations) {
+          // Slug collision check (skip same row).
+          const conflict = await tx.post_translations.findFirst({
+            where: {
+              lang: t.lang,
+              slug: t.slug,
+              NOT: { post_id: id },
+            },
+          });
+          if (conflict) {
+            throw new ConflictException(`Slug "${t.slug}" is already in use for language ${t.lang}`);
+          }
+
           await tx.post_translations.upsert({
             where: { post_id_lang: { post_id: id, lang: t.lang } },
             create: { post_id: id, lang: t.lang, title: t.title, summary: t.summary ?? null, body: t.body, slug: t.slug, is_default: t.is_default ?? false },
             update: { title: t.title, summary: t.summary ?? null, body: t.body, slug: t.slug, is_default: t.is_default ?? false },
           });
+        }
+
+        // Re-assert the single-default invariant once all upserts have landed:
+        // a partial update that flips is_default on one row must not leave 0
+        // or 2+ defaults.
+        const defaults = await tx.post_translations.count({
+          where: { post_id: id, is_default: true },
+        });
+        if (defaults !== 1) {
+          throw new BadRequestException('Exactly one translation must have is_default: true');
         }
       }
 
@@ -261,7 +300,22 @@ export class PostsService {
     const post = await this.prisma.posts.findFirst({ where: { id, deleted_at: null } });
     if (!post) throw new NotFoundException('Post not found');
 
-    await this.prisma.posts.update({ where: { id }, data: { deleted_at: new Date() } });
+    // Free up the (lang, slug) unique constraint by suffixing each translation
+    // slug with a marker that points back to the deletion. Without this, a
+    // soft-deleted post's slug stays reserved forever.
+    const deletedAt = new Date();
+    const suffix = `__del_${deletedAt.getTime()}`;
+
+    await this.prisma.$transaction(async (tx) => {
+      const translations = await tx.post_translations.findMany({ where: { post_id: id } });
+      for (const t of translations) {
+        await tx.post_translations.update({
+          where: { post_id_lang: { post_id: id, lang: t.lang } },
+          data: { slug: `${t.slug}${suffix}` },
+        });
+      }
+      await tx.posts.update({ where: { id }, data: { deleted_at: deletedAt } });
+    });
 
     try {
       await this.prisma.audit_logs.create({

@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { resolveTranslation } from '../common/utils/translation.util';
 import { CreateAcademicPaperCategoryDto, UpdateAcademicPaperCategoryDto } from './dto/academic-paper-category.dto';
@@ -88,6 +88,9 @@ export class AcademicPaperCategoriesService {
   async softDelete(id: string, actorId: string) {
     const category = await this.prisma.academic_paper_categories.findFirst({ where: { id, deleted_at: null } });
     if (!category) throw new NotFoundException('Category not found');
+
+    const paperCount = await this.prisma.academic_papers.count({ where: { category_id: id, deleted_at: null } });
+    if (paperCount > 0) throw new ConflictException('Cannot delete a category that contains academic papers');
 
     await this.prisma.academic_paper_categories.update({ where: { id }, data: { deleted_at: new Date() } });
 

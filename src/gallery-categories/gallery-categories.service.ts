@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { resolveTranslation } from '../common/utils/translation.util';
 import { CreateGalleryCategoryDto, UpdateGalleryCategoryDto } from './dto/gallery-category.dto';
@@ -88,6 +88,9 @@ export class GalleryCategoriesService {
   async softDelete(id: string, actorId: string) {
     const category = await this.prisma.gallery_categories.findFirst({ where: { id, deleted_at: null } });
     if (!category) throw new NotFoundException('Category not found');
+
+    const imageCount = await this.prisma.gallery_images.count({ where: { category_id: id, deleted_at: null } });
+    if (imageCount > 0) throw new ConflictException('Cannot delete a category that contains gallery images');
 
     await this.prisma.gallery_categories.update({ where: { id }, data: { deleted_at: new Date() } });
 

@@ -14,6 +14,7 @@ import {
   ApiTags,
   ApiUnauthorizedResponse,
 } from '@nestjs/swagger';
+import { Throttle } from '@nestjs/throttler';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { CurrentUser, CurrentUserPayload } from '../common/decorators/current-user.decorator';
 import { Lang } from '../common/decorators/language.decorator';
@@ -56,7 +57,8 @@ export class BooksController {
   }
 
   @Post(':id/view')
-  @ApiOperation({ summary: 'Record a view for a book (public)', description: 'Increments the view counter. Call this explicitly when a reader views the book.' })
+  @Throttle({ default: { ttl: 60_000, limit: 30 } })
+  @ApiOperation({ summary: 'Record a view for a book (public)', description: 'Increments the view counter. Rate-limited to 30 calls per minute per IP.' })
   @ApiParam({ name: 'id', format: 'uuid' })
   @ApiOkResponse({ type: BookMessageResponseDto, description: 'Book view counter incremented by 1' })
   @ApiNotFoundResponse({ type: NotFoundErrorDto, description: 'No book with that ID exists, or it has been deleted' })
