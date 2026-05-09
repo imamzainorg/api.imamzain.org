@@ -16,6 +16,13 @@ class SubscriberDto {
 
   @ApiProperty({ example: '2024-01-01T00:00:00.000Z' })
   created_at: string;
+
+  @ApiPropertyOptional({
+    example: 'a3f1c0...e8',
+    description:
+      'HMAC-signed token, returned only on subscribe / resubscribe. Required body field for the public POST /unsubscribe; embed it in unsubscribe links inside emails. Not present on admin list responses.',
+  })
+  unsubscribe_token?: string;
 }
 
 export class SubscriberResponseDto {

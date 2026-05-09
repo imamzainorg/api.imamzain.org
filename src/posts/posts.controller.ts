@@ -12,6 +12,7 @@ import {
 import {
   ApiBadRequestResponse,
   ApiBearerAuth,
+  ApiConflictResponse,
   ApiCreatedResponse,
   ApiForbiddenResponse,
   ApiHeader,
@@ -28,7 +29,7 @@ import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { CurrentUser, CurrentUserPayload } from '../common/decorators/current-user.decorator';
 import { Lang } from '../common/decorators/language.decorator';
 import { RequirePermission } from '../common/decorators/require-permission.decorator';
-import { ForbiddenErrorDto, NotFoundErrorDto, UnauthorizedErrorDto, ValidationErrorDto } from '../common/dto/api-response.dto';
+import { ConflictErrorDto, ForbiddenErrorDto, NotFoundErrorDto, UnauthorizedErrorDto, ValidationErrorDto } from '../common/dto/api-response.dto';
 import { PermissionGuard } from '../common/guards/permission.guard';
 import { CreatePostDto, PostQueryDto, TogglePublishDto, UpdatePostDto } from './dto/post.dto';
 import {
@@ -120,8 +121,9 @@ export class PostsController {
   @RequirePermission('posts:create')
   @ApiOperation({ summary: 'Create a new post with translations and optional attachments', description: 'Requires permission: `posts:create`. Exactly one translation must have `is_default: true`.' })
   @ApiCreatedResponse({ type: PostCreatedResponseDto, description: 'Post created with all provided translations; returns the full post object including translation records and attachment list' })
-  @ApiBadRequestResponse({ type: ValidationErrorDto, description: 'Validation failed' })
+  @ApiBadRequestResponse({ type: ValidationErrorDto, description: 'Validation failed, or translations did not contain exactly one is_default entry' })
   @ApiNotFoundResponse({ type: NotFoundErrorDto, description: 'No post category with that category_id exists, or the cover_image_id does not match any media record' })
+  @ApiConflictResponse({ type: ConflictErrorDto, description: 'A translation slug is already used by another post in the same language' })
   @ApiUnauthorizedResponse({ type: UnauthorizedErrorDto, description: 'Missing or invalid JWT' })
   @ApiForbiddenResponse({ type: ForbiddenErrorDto, description: 'Insufficient permissions' })
   create(@Body() dto: CreatePostDto, @CurrentUser() user: CurrentUserPayload) {
@@ -135,8 +137,9 @@ export class PostsController {
   @ApiOperation({ summary: 'Update a post and upsert translations', description: 'Requires permission: `posts:update`. Providing `attachment_ids` replaces all existing attachments.' })
   @ApiParam({ name: 'id', format: 'uuid' })
   @ApiOkResponse({ type: PostDetailResponseDto, description: 'Updated post with all translations; if attachment_ids was provided the attachment list reflects the replacement' })
-  @ApiBadRequestResponse({ type: ValidationErrorDto, description: 'Validation failed' })
-  @ApiNotFoundResponse({ type: NotFoundErrorDto, description: 'No post with that ID exists, or it has been deleted' })
+  @ApiBadRequestResponse({ type: ValidationErrorDto, description: 'Validation failed, or the resulting translations did not contain exactly one is_default entry' })
+  @ApiNotFoundResponse({ type: NotFoundErrorDto, description: 'No post with that ID exists, or the new category_id / cover_image_id does not exist or has been soft-deleted' })
+  @ApiConflictResponse({ type: ConflictErrorDto, description: 'A translation slug is already used by another post in the same language' })
   @ApiUnauthorizedResponse({ type: UnauthorizedErrorDto, description: 'Missing or invalid JWT' })
   @ApiForbiddenResponse({ type: ForbiddenErrorDto, description: 'Insufficient permissions' })
   update(

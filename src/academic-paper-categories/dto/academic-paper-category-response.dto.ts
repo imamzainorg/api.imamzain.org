@@ -21,6 +21,14 @@ class AcademicPaperCategoryDto {
 
   @ApiProperty({ type: [AcademicPaperCategoryTranslationItemDto] })
   academic_paper_category_translations: AcademicPaperCategoryTranslationItemDto[];
+
+  @ApiPropertyOptional({
+    type: AcademicPaperCategoryTranslationItemDto,
+    nullable: true,
+    description:
+      'Resolved translation for the requested Accept-Language header, with fallback to the first available translation. Null when the category has no translations.',
+  })
+  translation: AcademicPaperCategoryTranslationItemDto | null;
 }
 
 class AcademicPaperCategoryListDataDto {

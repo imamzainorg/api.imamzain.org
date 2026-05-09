@@ -21,6 +21,14 @@ class GalleryCategoryDto {
 
   @ApiProperty({ type: [GalleryCategoryTranslationItemDto] })
   gallery_category_translations: GalleryCategoryTranslationItemDto[];
+
+  @ApiPropertyOptional({
+    type: GalleryCategoryTranslationItemDto,
+    nullable: true,
+    description:
+      'Resolved translation for the requested Accept-Language header, with fallback to the first available translation. Null when the category has no translations.',
+  })
+  translation: GalleryCategoryTranslationItemDto | null;
 }
 
 class GalleryCategoryListDataDto {

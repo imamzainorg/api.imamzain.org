@@ -11,8 +11,9 @@ export class RequestUploadUrlDto {
 
   @ApiProperty({
     example: "image/jpeg",
-    description: "Must start with image/",
-    pattern: "^image/",
+    description:
+      "MIME type. Allowed: image/jpeg, image/png, image/gif, image/webp. Other types are rejected with 400.",
+    enum: ["image/jpeg", "image/png", "image/gif", "image/webp"],
   })
   @IsString()
   @Matches(/^image\//)

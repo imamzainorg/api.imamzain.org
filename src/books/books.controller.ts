@@ -88,8 +88,9 @@ export class BooksController {
   @ApiOperation({ summary: 'Update a book and upsert translations', description: 'Requires permission: `books:update`.' })
   @ApiParam({ name: 'id', format: 'uuid' })
   @ApiOkResponse({ type: BookDetailResponseDto, description: 'Updated book with all translations' })
-  @ApiBadRequestResponse({ type: ValidationErrorDto, description: 'Validation failed' })
-  @ApiNotFoundResponse({ type: NotFoundErrorDto, description: 'No book with that ID exists, or it has been deleted' })
+  @ApiBadRequestResponse({ type: ValidationErrorDto, description: 'Validation failed, or the resulting translations did not contain exactly one is_default entry' })
+  @ApiNotFoundResponse({ type: NotFoundErrorDto, description: 'No book with that ID exists, or the new category_id / cover_image_id does not exist or has been soft-deleted' })
+  @ApiConflictResponse({ type: ConflictErrorDto, description: 'A book with that ISBN already exists' })
   @ApiUnauthorizedResponse({ type: UnauthorizedErrorDto, description: 'Missing or invalid JWT' })
   @ApiForbiddenResponse({ type: ForbiddenErrorDto, description: 'Insufficient permissions' })
   update(@Param('id') id: string, @Body() dto: UpdateBookDto, @CurrentUser() user: CurrentUserPayload) {

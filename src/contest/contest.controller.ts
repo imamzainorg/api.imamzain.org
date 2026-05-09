@@ -63,10 +63,12 @@ export class ContestController {
   @Throttle({ default: { limit: 10, ttl: 3_600_000 } })
   @ApiOperation({
     summary: 'Start a contest attempt (public)',
-    description: 'Creates a new attempt row and returns an `attempt_id`. Rate-limited to 10 starts per hour per IP.',
+    description:
+      'Creates a new attempt row and returns an `attempt_id`. The `contact` field must match `contactType` (E.164-ish phone or RFC-style email). The same value can only be used once across the `phone` and `email` columns combined. Rate-limited to 10 starts per hour per IP.',
   })
   @ApiCreatedResponse({ type: StartContestResponseDto, description: 'Attempt created — use the returned `attempt_id` when submitting answers' })
-  @ApiBadRequestResponse({ type: ValidationErrorDto, description: 'Validation failed' })
+  @ApiBadRequestResponse({ type: ValidationErrorDto, description: 'Validation failed, or contact value did not match the declared contactType' })
+  @ApiConflictResponse({ type: ConflictErrorDto, description: 'This identity has already submitted a contest attempt' })
   @ApiTooManyRequestsResponse({ type: TooManyRequestsErrorDto, description: 'Max 10 starts per hour per IP' })
   start(@Body() dto: StartContestDto, @Req() req: Request) {
     const ip = req.ip ?? '';

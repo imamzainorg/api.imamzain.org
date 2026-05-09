@@ -56,10 +56,12 @@ export class MediaController {
     summary: 'Request a pre-signed R2 upload URL',
     description:
       'Step 1 of the two-step upload flow. Use the returned `uploadUrl` to PUT the file directly to R2, ' +
-      'then call `POST /media/confirm` with the returned `key`. Requires permission: `media:create`',
+      'then call `POST /media/confirm` with the returned `key`. Allowed MIME types: ' +
+      '`image/jpeg`, `image/png`, `image/gif`, `image/webp`. The signed URL is bound to the ' +
+      'requesting user — only that user can confirm the upload. Requires permission: `media:create`.',
   })
   @ApiOkResponse({ type: UploadUrlResponseDto, description: 'Returns a pre-signed PUT URL (valid for 15 minutes) and the storage key; use the key when calling POST /media/confirm' })
-  @ApiBadRequestResponse({ type: ValidationErrorDto, description: 'Validation failed' })
+  @ApiBadRequestResponse({ type: ValidationErrorDto, description: 'Validation failed, or MIME type not in the allowlist' })
   requestUploadUrl(@Body() dto: RequestUploadUrlDto, @CurrentUser() user: CurrentUserPayload) {
     return this.mediaService.requestUploadUrl(dto, user.id);
   }
@@ -71,10 +73,14 @@ export class MediaController {
     summary: 'Confirm an upload and register the media record',
     description:
       'Step 2 of the two-step upload flow. Call after successfully PUTting the file to R2 using the signed URL. ' +
-      'Requires permission: `media:create`',
+      'The server verifies the key is one this user requested via `/media/upload-url`, and authoritatively reads ' +
+      'the actual stored Content-Type and Content-Length from R2 (client-supplied values are not trusted). ' +
+      'Requires permission: `media:create`.',
   })
   @ApiCreatedResponse({ type: MediaCreatedResponseDto, description: 'Media record registered in the database; returns the full media object including the public CDN URL' })
-  @ApiBadRequestResponse({ type: ValidationErrorDto, description: 'Validation failed' })
+  @ApiBadRequestResponse({ type: ValidationErrorDto, description: 'Validation failed, the key is not under the managed prefix, or the file was not uploaded to R2' })
+  @ApiNotFoundResponse({ type: NotFoundErrorDto, description: 'No pending upload exists for that key — request a new upload URL first' })
+  @ApiForbiddenResponse({ type: ForbiddenErrorDto, description: 'The key was issued to a different user' })
   confirmUpload(@Body() dto: ConfirmUploadDto, @CurrentUser() user: CurrentUserPayload) {
     return this.mediaService.confirmUpload(dto, user.id);
   }

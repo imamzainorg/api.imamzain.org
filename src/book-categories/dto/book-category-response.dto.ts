@@ -21,6 +21,14 @@ class BookCategoryDto {
 
   @ApiProperty({ type: [BookCategoryTranslationItemDto] })
   book_category_translations: BookCategoryTranslationItemDto[];
+
+  @ApiPropertyOptional({
+    type: BookCategoryTranslationItemDto,
+    nullable: true,
+    description:
+      'Resolved translation for the requested Accept-Language header, with fallback to the first available translation. Null when the category has no translations.',
+  })
+  translation: BookCategoryTranslationItemDto | null;
 }
 
 class BookCategoryListDataDto {

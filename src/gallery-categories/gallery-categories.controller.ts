@@ -2,6 +2,7 @@ import { Body, Controller, Delete, Get, Param, Patch, Post, Query, UseGuards } f
 import {
   ApiBadRequestResponse,
   ApiBearerAuth,
+  ApiConflictResponse,
   ApiCreatedResponse,
   ApiForbiddenResponse,
   ApiHeader,
@@ -17,7 +18,7 @@ import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { CurrentUser, CurrentUserPayload } from '../common/decorators/current-user.decorator';
 import { Lang } from '../common/decorators/language.decorator';
 import { RequirePermission } from '../common/decorators/require-permission.decorator';
-import { ForbiddenErrorDto, NotFoundErrorDto, UnauthorizedErrorDto, ValidationErrorDto } from '../common/dto/api-response.dto';
+import { ConflictErrorDto, ForbiddenErrorDto, NotFoundErrorDto, UnauthorizedErrorDto, ValidationErrorDto } from '../common/dto/api-response.dto';
 import { PaginationDto } from '../common/dto/pagination.dto';
 import { PermissionGuard } from '../common/guards/permission.guard';
 import { GalleryCategoriesService } from './gallery-categories.service';
@@ -85,10 +86,15 @@ export class GalleryCategoriesController {
   @UseGuards(JwtAuthGuard, PermissionGuard)
   @ApiBearerAuth('jwt')
   @RequirePermission('gallery-categories:delete')
-  @ApiOperation({ summary: 'Soft-delete a gallery category', description: 'Requires permission: `gallery-categories:delete`.' })
+  @ApiOperation({
+    summary: 'Soft-delete a gallery category',
+    description:
+      'Fails with 409 if the category still contains gallery images — reassign or delete those first. Requires permission: `gallery-categories:delete`.',
+  })
   @ApiParam({ name: 'id', format: 'uuid' })
-  @ApiOkResponse({ type: GalleryCategoryMessageResponseDto, description: 'Gallery category soft-deleted; existing gallery images that referenced this category retain their category_id' })
+  @ApiOkResponse({ type: GalleryCategoryMessageResponseDto, description: 'Gallery category soft-deleted' })
   @ApiNotFoundResponse({ type: NotFoundErrorDto, description: 'No gallery category with that ID exists, or it has already been deleted' })
+  @ApiConflictResponse({ type: ConflictErrorDto, description: 'Cannot delete: this gallery category still has live gallery images attached' })
   @ApiUnauthorizedResponse({ type: UnauthorizedErrorDto, description: 'Missing or invalid JWT' })
   @ApiForbiddenResponse({ type: ForbiddenErrorDto, description: 'Insufficient permissions' })
   remove(@Param('id') id: string, @CurrentUser() user: CurrentUserPayload) {

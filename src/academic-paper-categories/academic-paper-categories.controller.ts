@@ -2,6 +2,7 @@ import { Body, Controller, Delete, Get, Param, Patch, Post, Query, UseGuards } f
 import {
   ApiBadRequestResponse,
   ApiBearerAuth,
+  ApiConflictResponse,
   ApiCreatedResponse,
   ApiForbiddenResponse,
   ApiHeader,
@@ -17,7 +18,7 @@ import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { CurrentUser, CurrentUserPayload } from '../common/decorators/current-user.decorator';
 import { Lang } from '../common/decorators/language.decorator';
 import { RequirePermission } from '../common/decorators/require-permission.decorator';
-import { ForbiddenErrorDto, NotFoundErrorDto, UnauthorizedErrorDto, ValidationErrorDto } from '../common/dto/api-response.dto';
+import { ConflictErrorDto, ForbiddenErrorDto, NotFoundErrorDto, UnauthorizedErrorDto, ValidationErrorDto } from '../common/dto/api-response.dto';
 import { PaginationDto } from '../common/dto/pagination.dto';
 import { PermissionGuard } from '../common/guards/permission.guard';
 import { AcademicPaperCategoriesService } from './academic-paper-categories.service';
@@ -85,10 +86,15 @@ export class AcademicPaperCategoriesController {
   @UseGuards(JwtAuthGuard, PermissionGuard)
   @ApiBearerAuth('jwt')
   @RequirePermission('academic-paper-categories:delete')
-  @ApiOperation({ summary: 'Soft-delete an academic paper category', description: 'Requires permission: `academic-paper-categories:delete`.' })
+  @ApiOperation({
+    summary: 'Soft-delete an academic paper category',
+    description:
+      'Fails with 409 if the category still contains academic papers — reassign or delete those first. Requires permission: `academic-paper-categories:delete`.',
+  })
   @ApiParam({ name: 'id', format: 'uuid' })
-  @ApiOkResponse({ type: AcademicPaperCategoryMessageResponseDto, description: 'Academic paper category soft-deleted; existing papers that referenced this category retain their category_id' })
+  @ApiOkResponse({ type: AcademicPaperCategoryMessageResponseDto, description: 'Academic paper category soft-deleted' })
   @ApiNotFoundResponse({ type: NotFoundErrorDto, description: 'No academic paper category with that ID exists, or it has already been deleted' })
+  @ApiConflictResponse({ type: ConflictErrorDto, description: 'Cannot delete: this category still has live academic papers attached' })
   @ApiUnauthorizedResponse({ type: UnauthorizedErrorDto, description: 'Missing or invalid JWT' })
   @ApiForbiddenResponse({ type: ForbiddenErrorDto, description: 'Insufficient permissions' })
   remove(@Param('id') id: string, @CurrentUser() user: CurrentUserPayload) {

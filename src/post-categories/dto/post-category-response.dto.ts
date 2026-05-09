@@ -21,6 +21,14 @@ class PostCategoryDto {
 
   @ApiProperty({ type: [PostCategoryTranslationDto] })
   post_category_translations: PostCategoryTranslationDto[];
+
+  @ApiPropertyOptional({
+    type: PostCategoryTranslationDto,
+    nullable: true,
+    description:
+      'Resolved translation for the requested Accept-Language header, with fallback to the first available translation. Null when the category has no translations.',
+  })
+  translation: PostCategoryTranslationDto | null;
 }
 
 class PostCategoryListDataDto {
