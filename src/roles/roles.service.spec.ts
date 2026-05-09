@@ -10,13 +10,19 @@ describe("RolesService", () => {
   let prisma: any;
 
   const mockTx = {
-    roles: { create: jest.fn(), update: jest.fn(), delete: jest.fn() },
+    roles: {
+      create: jest.fn(),
+      update: jest.fn(),
+      delete: jest.fn(),
+      findUnique: jest.fn(),
+    },
     role_translations: {
       createMany: jest.fn(),
       upsert: jest.fn(),
       deleteMany: jest.fn(),
     },
     role_permissions: { deleteMany: jest.fn() },
+    user_roles: { count: jest.fn() },
   };
 
   beforeEach(async () => {
@@ -210,8 +216,8 @@ describe("RolesService", () => {
 
   describe("delete", () => {
     it("deletes role and its translations + permissions in a transaction", async () => {
-      prisma.roles.findUnique.mockResolvedValue(baseRole);
-      prisma.user_roles.count.mockResolvedValue(0);
+      mockTx.roles.findUnique.mockResolvedValue(baseRole);
+      mockTx.user_roles.count.mockResolvedValue(0);
       mockTx.role_permissions.deleteMany.mockResolvedValue({});
       mockTx.role_translations.deleteMany.mockResolvedValue({});
       mockTx.roles.delete.mockResolvedValue({});
@@ -226,7 +232,8 @@ describe("RolesService", () => {
     });
 
     it("throws NotFoundException when role not found", async () => {
-      prisma.roles.findUnique.mockResolvedValue(null);
+      mockTx.roles.findUnique.mockResolvedValue(null);
+      prisma.$transaction.mockImplementation((cb: any) => cb(mockTx));
 
       await expect(service.delete("ghost", "actor-1")).rejects.toThrow(
         NotFoundException,
@@ -234,8 +241,9 @@ describe("RolesService", () => {
     });
 
     it("throws ConflictException when role is assigned to users", async () => {
-      prisma.roles.findUnique.mockResolvedValue(baseRole);
-      prisma.user_roles.count.mockResolvedValue(3);
+      mockTx.roles.findUnique.mockResolvedValue(baseRole);
+      mockTx.user_roles.count.mockResolvedValue(3);
+      prisma.$transaction.mockImplementation((cb: any) => cb(mockTx));
 
       await expect(service.delete("role-1", "actor-1")).rejects.toThrow(
         ConflictException,
@@ -273,7 +281,8 @@ describe("RolesService", () => {
 
   describe("removePermission", () => {
     it("deletes role_permissions record", async () => {
-      prisma.role_permissions.delete.mockResolvedValue({});
+      prisma.roles.findUnique.mockResolvedValue(baseRole);
+      prisma.role_permissions.deleteMany.mockResolvedValue({ count: 1 });
 
       const result = await service.removePermission(
         "role-1",
@@ -281,8 +290,25 @@ describe("RolesService", () => {
         "actor-1",
       );
 
-      expect(prisma.role_permissions.delete).toHaveBeenCalled();
+      expect(prisma.role_permissions.deleteMany).toHaveBeenCalled();
       expect(result.message).toBe("Permission removed");
+    });
+
+    it("throws NotFoundException when role not found", async () => {
+      prisma.roles.findUnique.mockResolvedValue(null);
+
+      await expect(
+        service.removePermission("ghost", "perm-1", "actor-1"),
+      ).rejects.toThrow(NotFoundException);
+    });
+
+    it("throws NotFoundException when permission is not assigned", async () => {
+      prisma.roles.findUnique.mockResolvedValue(baseRole);
+      prisma.role_permissions.deleteMany.mockResolvedValue({ count: 0 });
+
+      await expect(
+        service.removePermission("role-1", "perm-1", "actor-1"),
+      ).rejects.toThrow(NotFoundException);
     });
   });
 

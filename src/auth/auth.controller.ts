@@ -13,7 +13,7 @@ import { Request } from 'express';
 import { CurrentUser, CurrentUserPayload } from '../common/decorators/current-user.decorator';
 import { TooManyRequestsErrorDto, UnauthorizedErrorDto, ValidationErrorDto } from '../common/dto/api-response.dto';
 import { AuthService } from './auth.service';
-import { ChangePasswordDto, LoginDto, RefreshTokenDto } from './dto/auth.dto';
+import { ChangePasswordDto, LoginDto, LogoutDto, RefreshTokenDto } from './dto/auth.dto';
 import {
   ChangePasswordResponseDto,
   LoginResponseDto,
@@ -44,12 +44,17 @@ export class AuthController {
 
   @Post('refresh')
   @HttpCode(200)
+  @Throttle({ default: { limit: 30, ttl: 900_000 } })
   @ApiOperation({
     summary: 'Exchange a refresh token for new access + refresh tokens',
-    description: 'The supplied refresh token is revoked and replaced (rotation). Expires after 7 days.',
+    description:
+      'The supplied refresh token is atomically revoked and replaced (rotation). ' +
+      'Presenting an already-revoked token revokes the entire token chain for the user. ' +
+      'Refresh tokens expire after 7 days. Rate-limited to 30 attempts per 15 minutes per IP.',
   })
   @ApiOkResponse({ type: RefreshResponseDto, description: 'New access token and rotated refresh token' })
-  @ApiUnauthorizedResponse({ type: UnauthorizedErrorDto, description: 'Invalid or expired refresh token' })
+  @ApiUnauthorizedResponse({ type: UnauthorizedErrorDto, description: 'Invalid, expired, or reused refresh token' })
+  @ApiTooManyRequestsResponse({ type: TooManyRequestsErrorDto, description: 'Rate limit exceeded' })
   refresh(@Body() dto: RefreshTokenDto) {
     return this.authService.refresh(dto);
   }
@@ -64,7 +69,7 @@ export class AuthController {
   })
   @ApiOkResponse({ type: LogoutResponseDto, description: 'Logged out successfully' })
   @ApiUnauthorizedResponse({ type: UnauthorizedErrorDto, description: 'Missing or invalid JWT' })
-  logout(@Body() dto: Partial<RefreshTokenDto>, @CurrentUser() user: CurrentUserPayload) {
+  logout(@Body() dto: LogoutDto, @CurrentUser() user: CurrentUserPayload) {
     return this.authService.logout(user.id, dto.refresh_token);
   }
 

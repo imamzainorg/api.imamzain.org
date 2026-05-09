@@ -45,14 +45,35 @@ describe("AuthService", () => {
           useValue: {
             users: {
               findFirst: jest.fn(),
+              findUnique: jest.fn(),
               update: jest.fn(),
             },
             refresh_tokens: {
               create: jest.fn().mockResolvedValue({}),
               findFirst: jest.fn(),
-              updateMany: jest.fn().mockResolvedValue({}),
+              findUnique: jest.fn(),
+              update: jest.fn(),
+              updateMany: jest.fn().mockResolvedValue({ count: 1 }),
             },
             audit_logs: { create: jest.fn().mockResolvedValue({}) },
+            $transaction: jest.fn().mockImplementation(async (cb: any) => {
+              if (typeof cb === 'function') {
+                return cb({
+                  users: {
+                    findFirst: jest.fn(),
+                    findUnique: jest.fn(),
+                    update: jest.fn().mockResolvedValue({}),
+                  },
+                  refresh_tokens: {
+                    findUnique: jest.fn(),
+                    update: jest.fn().mockResolvedValue({}),
+                    updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+                    create: jest.fn().mockResolvedValue({}),
+                  },
+                });
+              }
+              return cb;
+            }),
           },
         },
         {
@@ -188,7 +209,15 @@ describe("AuthService", () => {
       prisma.users.findFirst.mockResolvedValue(mockUser);
       (bcrypt.compare as jest.Mock).mockResolvedValue(true);
       (bcrypt.hash as jest.Mock).mockResolvedValue("$2a$12$newhash");
-      prisma.users.update.mockResolvedValue({});
+
+      const txUsersUpdate = jest.fn().mockResolvedValue({});
+      const txRefreshUpdateMany = jest.fn().mockResolvedValue({ count: 0 });
+      prisma.$transaction.mockImplementation(async (cb: any) =>
+        cb({
+          users: { update: txUsersUpdate },
+          refresh_tokens: { updateMany: txRefreshUpdateMany },
+        }),
+      );
 
       const result = await service.changePassword(
         "user-1",
@@ -196,12 +225,13 @@ describe("AuthService", () => {
         "127.0.0.1",
       );
 
-      expect(prisma.users.update).toHaveBeenCalledWith(
+      expect(txUsersUpdate).toHaveBeenCalledWith(
         expect.objectContaining({
           where: { id: "user-1" },
           data: expect.objectContaining({ password_hash: "$2a$12$newhash" }),
         }),
       );
+      expect(txRefreshUpdateMany).toHaveBeenCalled();
       expect(result.message).toBe("Password changed successfully");
     });
 

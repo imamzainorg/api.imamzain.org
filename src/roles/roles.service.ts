@@ -121,15 +121,18 @@ export class RolesService {
   }
 
   async delete(id: string, actorId: string) {
-    const role = await this.prisma.roles.findUnique({ where: { id } });
-    if (!role) throw new NotFoundException('Role not found');
-
-    const assigned = await this.prisma.user_roles.count({ where: { role_id: id } });
-    if (assigned > 0) {
-      throw new ConflictException('Cannot delete a role that is assigned to users');
-    }
-
+    // Move the assignment check inside the transaction so a concurrent
+    // assignRole call between count and delete cannot orphan the user_roles
+    // row via the Cascade delete.
     await this.prisma.$transaction(async (tx) => {
+      const role = await tx.roles.findUnique({ where: { id } });
+      if (!role) throw new NotFoundException('Role not found');
+
+      const assigned = await tx.user_roles.count({ where: { role_id: id } });
+      if (assigned > 0) {
+        throw new ConflictException('Cannot delete a role that is assigned to users');
+      }
+
       await tx.role_permissions.deleteMany({ where: { role_id: id } });
       await tx.role_translations.deleteMany({ where: { role_id: id } });
       await tx.roles.delete({ where: { id } });
@@ -176,9 +179,15 @@ export class RolesService {
   }
 
   async removePermission(roleId: string, permissionId: string, actorId: string) {
-    await this.prisma.role_permissions.delete({
-      where: { role_id_permission_id: { role_id: roleId, permission_id: permissionId } },
+    const role = await this.prisma.roles.findUnique({ where: { id: roleId } });
+    if (!role) throw new NotFoundException('Role not found');
+
+    const result = await this.prisma.role_permissions.deleteMany({
+      where: { role_id: roleId, permission_id: permissionId },
     });
+    if (result.count === 0) {
+      throw new NotFoundException('Permission is not assigned to this role');
+    }
 
     try {
       await this.prisma.audit_logs.create({

@@ -38,6 +38,7 @@ describe('UsersService', () => {
               upsert: jest.fn(),
               delete: jest.fn(),
             },
+            roles: { findUnique: jest.fn() },
             audit_logs: { create: jest.fn().mockResolvedValue({}) },
           },
         },
@@ -182,6 +183,7 @@ describe('UsersService', () => {
   describe('assignRole', () => {
     it('upserts user_roles record', async () => {
       prisma.users.findFirst.mockResolvedValue(baseUser);
+      prisma.roles.findUnique.mockResolvedValue({ id: 'role-1', name: 'Admin' });
       prisma.user_roles.upsert.mockResolvedValue({});
 
       const result = await service.assignRole('user-1', { role_id: 'role-1' }, 'actor-1');
@@ -192,9 +194,19 @@ describe('UsersService', () => {
 
     it('throws NotFoundException when user not found', async () => {
       prisma.users.findFirst.mockResolvedValue(null);
+      prisma.roles.findUnique.mockResolvedValue({ id: 'role-1', name: 'Admin' });
 
       await expect(
         service.assignRole('ghost', { role_id: 'role-1' }, 'actor-1'),
+      ).rejects.toThrow(NotFoundException);
+    });
+
+    it('throws NotFoundException when role not found', async () => {
+      prisma.users.findFirst.mockResolvedValue(baseUser);
+      prisma.roles.findUnique.mockResolvedValue(null);
+
+      await expect(
+        service.assignRole('user-1', { role_id: 'ghost' }, 'actor-1'),
       ).rejects.toThrow(NotFoundException);
     });
   });

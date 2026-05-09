@@ -152,8 +152,12 @@ export class UsersService {
   }
 
   async assignRole(userId: string, dto: AssignRoleDto, actorId: string) {
-    const user = await this.prisma.users.findFirst({ where: { id: userId, deleted_at: null } });
+    const [user, role] = await Promise.all([
+      this.prisma.users.findFirst({ where: { id: userId, deleted_at: null } }),
+      this.prisma.roles.findUnique({ where: { id: dto.role_id } }),
+    ]);
     if (!user) throw new NotFoundException('User not found');
+    if (!role) throw new NotFoundException('Role not found');
 
     await this.prisma.user_roles.upsert({
       where: { user_id_role_id: { user_id: userId, role_id: dto.role_id } },
