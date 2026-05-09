@@ -1,5 +1,6 @@
-﻿import { Injectable, NotFoundException } from '@nestjs/common';
+import { Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
+import { resolveTranslation } from '../common/utils/translation.util';
 import { CreateGalleryCategoryDto, UpdateGalleryCategoryDto } from './dto/gallery-category.dto';
 
 @Injectable()
@@ -11,22 +12,30 @@ export class GalleryCategoriesService {
     const [categories, total] = await Promise.all([
       this.prisma.gallery_categories.findMany({
         where: { deleted_at: null },
-        include: { gallery_category_translations: lang ? { where: { lang } } : true },
+        include: { gallery_category_translations: true },
+        orderBy: [{ created_at: 'desc' }, { id: 'asc' }],
         skip,
         take: limit,
       }),
       this.prisma.gallery_categories.count({ where: { deleted_at: null } }),
     ]);
-    return { message: 'Categories fetched', data: { items: categories, pagination: { page, limit, total, pages: Math.ceil(total / limit) } } };
+    const items = categories.map((c) => ({
+      ...c,
+      translation: resolveTranslation(c.gallery_category_translations, lang),
+    }));
+    return { message: 'Categories fetched', data: { items, pagination: { page, limit, total, pages: Math.ceil(total / limit) } } };
   }
 
   async findOne(id: string, lang: string | null) {
     const category = await this.prisma.gallery_categories.findFirst({
       where: { id, deleted_at: null },
-      include: { gallery_category_translations: lang ? { where: { lang } } : true },
+      include: { gallery_category_translations: true },
     });
     if (!category) throw new NotFoundException('Category not found');
-    return { message: 'Category fetched', data: category };
+    return {
+      message: 'Category fetched',
+      data: { ...category, translation: resolveTranslation(category.gallery_category_translations, lang) },
+    };
   }
 
   async create(dto: CreateGalleryCategoryDto, actorId: string) {

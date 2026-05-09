@@ -49,11 +49,12 @@ describe("BookCategoriesService", () => {
   afterEach(() => jest.clearAllMocks());
 
   describe("findAll", () => {
-    it("filters translations by lang when Accept-Language is set", async () => {
+    it("resolves translation to requested lang when present", async () => {
       const category = {
         ...baseCategory,
         book_category_translations: [
           { lang: "ar", title: "فقه", slug: "fiqh" },
+          { lang: "en", title: "Jurisprudence", slug: "jurisprudence" },
         ],
       };
       prisma.book_categories.findMany.mockResolvedValue([category]);
@@ -63,13 +64,28 @@ describe("BookCategoriesService", () => {
       expect(prisma.book_categories.findMany).toHaveBeenCalledWith(
         expect.objectContaining({
           where: { deleted_at: null },
-          include: { book_category_translations: { where: { lang: "ar" } } },
+          include: { book_category_translations: true },
+          orderBy: [{ created_at: "desc" }, { id: "asc" }],
         }),
       );
-      expect(result.data.items[0].book_category_translations[0].lang).toBe("ar");
+      expect(result.data.items[0].translation.lang).toBe("ar");
     });
 
-    it("returns all translations when no lang specified", async () => {
+    it("falls back to first translation when requested lang is missing", async () => {
+      const category = {
+        ...baseCategory,
+        book_category_translations: [
+          { lang: "ar", title: "فقه", slug: "fiqh" },
+        ],
+      };
+      prisma.book_categories.findMany.mockResolvedValue([category]);
+
+      const result = await service.findAll("fr", 1, 10);
+
+      expect(result.data.items[0].translation.lang).toBe("ar");
+    });
+
+    it("loads all translations and orders deterministically", async () => {
       prisma.book_categories.findMany.mockResolvedValue([baseCategory]);
 
       await service.findAll(null, 1, 10);
@@ -77,6 +93,7 @@ describe("BookCategoriesService", () => {
       expect(prisma.book_categories.findMany).toHaveBeenCalledWith(
         expect.objectContaining({
           include: { book_category_translations: true },
+          orderBy: [{ created_at: "desc" }, { id: "asc" }],
         }),
       );
     });
@@ -93,10 +110,11 @@ describe("BookCategoriesService", () => {
   });
 
   describe("findOne", () => {
-    it("returns category with lang-filtered translations", async () => {
+    it("returns category with resolved translation in requested lang", async () => {
       const category = {
         ...baseCategory,
         book_category_translations: [
+          { lang: "ar", title: "فقه", slug: "fiqh" },
           { lang: "en", title: "Jurisprudence", slug: "jurisprudence" },
         ],
       };
@@ -107,23 +125,23 @@ describe("BookCategoriesService", () => {
       expect(prisma.book_categories.findFirst).toHaveBeenCalledWith(
         expect.objectContaining({
           where: { id: "cat-1", deleted_at: null },
-          include: { book_category_translations: { where: { lang: "en" } } },
-        }),
-      );
-      expect(result.data.id).toBe("cat-1");
-      expect(result.data.book_category_translations[0].lang).toBe("en");
-    });
-
-    it("returns all translations when no lang specified", async () => {
-      prisma.book_categories.findFirst.mockResolvedValue(baseCategory);
-
-      await service.findOne("cat-1", null);
-
-      expect(prisma.book_categories.findFirst).toHaveBeenCalledWith(
-        expect.objectContaining({
           include: { book_category_translations: true },
         }),
       );
+      expect(result.data.id).toBe("cat-1");
+      expect(result.data.translation.lang).toBe("en");
+    });
+
+    it("falls back to first translation when requested lang is missing", async () => {
+      const category = {
+        ...baseCategory,
+        book_category_translations: [{ lang: "ar", title: "فقه", slug: "fiqh" }],
+      };
+      prisma.book_categories.findFirst.mockResolvedValue(category);
+
+      const result = await service.findOne("cat-1", "fr");
+
+      expect(result.data.translation.lang).toBe("ar");
     });
 
     it("throws NotFoundException when not found", async () => {

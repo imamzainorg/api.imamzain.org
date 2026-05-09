@@ -17,6 +17,7 @@ export class UsersService {
           username: true,
           created_at: true,
           updated_at: true,
+          deleted_at: true,
           user_roles: { include: { roles: true } },
         },
         orderBy: { created_at: 'desc' },
@@ -26,7 +27,7 @@ export class UsersService {
       this.prisma.users.count({ where: { deleted_at: null } }),
     ]);
 
-    const mapped = items.map(({ ...u }: any) => ({ ...u, is_active: u.deleted_at === null }));
+    const mapped = items.map(({ deleted_at, ...u }) => ({ ...u, is_active: deleted_at === null }));
     return {
       message: 'Users fetched',
       data: {

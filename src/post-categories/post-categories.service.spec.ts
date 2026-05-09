@@ -45,10 +45,13 @@ describe("PostCategoriesService", () => {
   afterEach(() => jest.clearAllMocks());
 
   describe("findAll", () => {
-    it("filters translations by lang when Accept-Language is set", async () => {
+    it("resolves translation to requested lang when present", async () => {
       const category = {
         ...baseCategory,
-        post_category_translations: [{ lang: "ar", title: "فئة", slug: "fia" }],
+        post_category_translations: [
+          { lang: "ar", title: "فئة", slug: "fia" },
+          { lang: "en", title: "Category", slug: "cat" },
+        ],
       };
       prisma.post_categories.findMany.mockResolvedValue([category]);
 
@@ -56,20 +59,36 @@ describe("PostCategoriesService", () => {
 
       expect(prisma.post_categories.findMany).toHaveBeenCalledWith(
         expect.objectContaining({
-          include: { post_category_translations: { where: { lang: "ar" } } },
+          include: { post_category_translations: true },
+          orderBy: [{ created_at: "desc" }, { id: "asc" }],
         }),
       );
-      expect(result.data.items[0].post_category_translations[0].lang).toBe("ar");
+      expect(result.data.items[0].translation.lang).toBe("ar");
     });
 
-    it("returns all translations when no lang specified", async () => {
-      prisma.post_categories.findMany.mockResolvedValue([baseCategory]);
+    it("falls back to first translation when requested lang is missing", async () => {
+      const category = {
+        ...baseCategory,
+        post_category_translations: [{ lang: "en", title: "Category", slug: "cat" }],
+      };
+      prisma.post_categories.findMany.mockResolvedValue([category]);
+
+      const result = await service.findAll("fr", 1, 10);
+
+      expect(result.data.items[0].translation.lang).toBe("en");
+    });
+
+    it("loads all translations and orders deterministically", async () => {
+      prisma.post_categories.findMany.mockResolvedValue([
+        { ...baseCategory, post_category_translations: [] },
+      ]);
 
       await service.findAll(null, 1, 10);
 
       expect(prisma.post_categories.findMany).toHaveBeenCalledWith(
         expect.objectContaining({
           include: { post_category_translations: true },
+          orderBy: [{ created_at: "desc" }, { id: "asc" }],
         }),
       );
     });
@@ -86,10 +105,11 @@ describe("PostCategoriesService", () => {
   });
 
   describe("findOne", () => {
-    it("returns category by id with lang-filtered translations", async () => {
+    it("returns category with resolved translation in requested lang", async () => {
       const category = {
         ...baseCategory,
         post_category_translations: [
+          { lang: "ar", title: "فئة", slug: "fia" },
           { lang: "en", title: "Category", slug: "cat" },
         ],
       };
@@ -100,23 +120,23 @@ describe("PostCategoriesService", () => {
       expect(prisma.post_categories.findFirst).toHaveBeenCalledWith(
         expect.objectContaining({
           where: { id: "cat-1", deleted_at: null },
-          include: { post_category_translations: { where: { lang: "en" } } },
-        }),
-      );
-      expect(result.data.id).toBe("cat-1");
-      expect(result.data.post_category_translations[0].lang).toBe("en");
-    });
-
-    it("returns all translations when no lang specified", async () => {
-      prisma.post_categories.findFirst.mockResolvedValue(baseCategory);
-
-      await service.findOne("cat-1", null);
-
-      expect(prisma.post_categories.findFirst).toHaveBeenCalledWith(
-        expect.objectContaining({
           include: { post_category_translations: true },
         }),
       );
+      expect(result.data.id).toBe("cat-1");
+      expect(result.data.translation.lang).toBe("en");
+    });
+
+    it("falls back to first translation when requested lang is missing", async () => {
+      const category = {
+        ...baseCategory,
+        post_category_translations: [{ lang: "ar", title: "فئة", slug: "fia" }],
+      };
+      prisma.post_categories.findFirst.mockResolvedValue(category);
+
+      const result = await service.findOne("cat-1", "fr");
+
+      expect(result.data.translation.lang).toBe("ar");
     });
 
     it("throws NotFoundException when not found", async () => {
