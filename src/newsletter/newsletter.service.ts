@@ -1,54 +1,111 @@
-﻿import { ConflictException, Injectable, NotFoundException } from '@nestjs/common';
+import { ConflictException, Injectable, Logger, NotFoundException, UnauthorizedException } from '@nestjs/common';
+import * as crypto from 'crypto';
 import { PrismaService } from '../prisma/prisma.service';
 import { SubscribeDto, UnsubscribeDto } from './dto/newsletter.dto';
 
+const UNSUBSCRIBE_SECRET =
+  process.env.NEWSLETTER_UNSUBSCRIBE_SECRET ?? process.env.JWT_SECRET ?? '';
+
 @Injectable()
 export class NewsletterService {
+  private readonly logger = new Logger(NewsletterService.name);
+
   constructor(private readonly prisma: PrismaService) {}
 
+  /**
+   * HMAC of the subscriber id, returned to the client at subscribe time and
+   * required at unsubscribe time. Replaces the previous "anyone can
+   * unsubscribe anyone by guessing an email" surface.
+   */
+  private signUnsubscribeToken(subscriberId: string): string {
+    return crypto
+      .createHmac('sha256', UNSUBSCRIBE_SECRET)
+      .update(subscriberId)
+      .digest('hex');
+  }
+
+  private verifyUnsubscribeToken(subscriberId: string, token: string): boolean {
+    const expected = this.signUnsubscribeToken(subscriberId);
+    const a = Buffer.from(expected, 'utf8');
+    const b = Buffer.from(token, 'utf8');
+    if (a.length !== b.length) return false;
+    return crypto.timingSafeEqual(a, b);
+  }
+
   async subscribe(dto: SubscribeDto) {
-    const existing = await this.prisma.newsletter_subscribers.findFirst({
-      where: { email: dto.email, deleted_at: null },
+    // Look across all rows (including soft-deleted ones) so a previously
+    // soft-deleted address can be re-subscribed instead of crashing into
+    // the DB-level unique(email) constraint.
+    const existing = await this.prisma.newsletter_subscribers.findUnique({
+      where: { email: dto.email },
     });
 
     if (existing) {
-      if (existing.is_active) {
+      if (existing.is_active && existing.deleted_at === null) {
         throw new ConflictException('This email is already subscribed');
       }
       const updated = await this.prisma.newsletter_subscribers.update({
         where: { id: existing.id },
-        data: { is_active: true, unsubscribed_at: null },
+        data: { is_active: true, unsubscribed_at: null, deleted_at: null },
       });
 
       try {
         await this.prisma.audit_logs.create({
           data: { user_id: null, action: 'NEWSLETTER_RESUBSCRIBED', resource_type: 'newsletter_subscriber', resource_id: existing.id, changes: { method: 'POST', path: '/api/v1/newsletter/subscribe' } },
         });
-      } catch {}
+      } catch (err) {
+        this.logger.warn(`Failed to write NEWSLETTER_RESUBSCRIBED audit: ${err}`);
+      }
 
-      return { message: 'Successfully resubscribed', data: updated };
+      return {
+        message: 'Successfully resubscribed',
+        data: { ...updated, unsubscribe_token: this.signUnsubscribeToken(existing.id) },
+      };
     }
 
-    const subscriber = await this.prisma.newsletter_subscribers.create({
-      data: { email: dto.email, is_active: true },
-    });
+    let subscriber;
+    try {
+      subscriber = await this.prisma.newsletter_subscribers.create({
+        data: { email: dto.email, is_active: true },
+      });
+    } catch (err: any) {
+      // Concurrent subscribe with the same email lost the race; turn the
+      // P2002 unique violation into a clean 409 instead of a 500.
+      if (err?.code === 'P2002') {
+        throw new ConflictException('This email is already subscribed');
+      }
+      throw err;
+    }
 
     try {
       await this.prisma.audit_logs.create({
         data: { user_id: null, action: 'NEWSLETTER_SUBSCRIBED', resource_type: 'newsletter_subscriber', resource_id: subscriber.id, changes: { method: 'POST', path: '/api/v1/newsletter/subscribe' } },
       });
-    } catch {}
+    } catch (err) {
+      this.logger.warn(`Failed to write NEWSLETTER_SUBSCRIBED audit: ${err}`);
+    }
 
-    return { message: 'Successfully subscribed', data: subscriber };
+    return {
+      message: 'Successfully subscribed',
+      data: { ...subscriber, unsubscribe_token: this.signUnsubscribeToken(subscriber.id) },
+    };
   }
 
   async unsubscribe(dto: UnsubscribeDto) {
-    const subscriber = await this.prisma.newsletter_subscribers.findFirst({
-      where: { email: dto.email, deleted_at: null },
+    const subscriber = await this.prisma.newsletter_subscribers.findUnique({
+      where: { email: dto.email },
     });
 
-    if (!subscriber || !subscriber.is_active) {
-      throw new NotFoundException('Subscriber not found');
+    // Don't differentiate "not found" from "invalid token" — both return the
+    // same generic error so an attacker cannot enumerate subscribers.
+    if (!subscriber || !this.verifyUnsubscribeToken(subscriber.id, dto.token)) {
+      throw new UnauthorizedException('Invalid unsubscribe token');
+    }
+
+    // Idempotent: already unsubscribed → 200 with the existing record so
+    // double-clicking the unsubscribe link doesn't surface a confusing 404.
+    if (!subscriber.is_active) {
+      return { message: 'Already unsubscribed', data: subscriber };
     }
 
     const updated = await this.prisma.newsletter_subscribers.update({
@@ -60,7 +117,9 @@ export class NewsletterService {
       await this.prisma.audit_logs.create({
         data: { user_id: null, action: 'NEWSLETTER_UNSUBSCRIBED', resource_type: 'newsletter_subscriber', resource_id: subscriber.id, changes: { method: 'POST', path: '/api/v1/newsletter/unsubscribe' } },
       });
-    } catch {}
+    } catch (err) {
+      this.logger.warn(`Failed to write NEWSLETTER_UNSUBSCRIBED audit: ${err}`);
+    }
 
     return { message: 'Successfully unsubscribed', data: updated };
   }
@@ -76,7 +135,7 @@ export class NewsletterService {
     const [items, total] = await Promise.all([
       this.prisma.newsletter_subscribers.findMany({
         where,
-        orderBy: { subscribed_at: 'desc' },
+        orderBy: [{ subscribed_at: 'desc' }, { id: 'asc' }],
         skip,
         take: limit,
       }),
@@ -96,7 +155,9 @@ export class NewsletterService {
       await this.prisma.audit_logs.create({
         data: { user_id: actorId, action: 'NEWSLETTER_SUBSCRIBER_DELETED', resource_type: 'newsletter_subscriber', resource_id: id, changes: { method: 'DELETE', path: `/api/v1/newsletter/subscribers/${id}` } },
       });
-    } catch {}
+    } catch (err) {
+      this.logger.warn(`Failed to write NEWSLETTER_SUBSCRIBER_DELETED audit: ${err}`);
+    }
 
     return { message: 'Subscriber deleted', data: null };
   }

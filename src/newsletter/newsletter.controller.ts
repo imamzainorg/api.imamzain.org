@@ -47,10 +47,14 @@ export class NewsletterController {
   @Post('unsubscribe')
   @HttpCode(200)
   @Throttle({ default: { limit: 5, ttl: 900_000 } })
-  @ApiOperation({ summary: 'Unsubscribe an email address from the newsletter', description: 'Rate-limited to 5 requests per 15 minutes.' })
-  @ApiOkResponse({ type: NewsletterMessageResponseDto, description: 'Email successfully unsubscribed; the subscriber record is soft-deleted and the email will no longer receive newsletters' })
-  @ApiBadRequestResponse({ type: ValidationErrorDto, description: 'Validation failed — e.g. invalid email format' })
-  @ApiNotFoundResponse({ type: NotFoundErrorDto, description: 'No active subscriber with that email address exists' })
+  @ApiOperation({
+    summary: 'Unsubscribe an email address from the newsletter',
+    description:
+      'Requires the unsubscribe token returned from POST /subscribe (or embedded in unsubscribe email links). Idempotent: re-calls return the existing record. Rate-limited to 5 requests per 15 minutes per IP.',
+  })
+  @ApiOkResponse({ type: NewsletterMessageResponseDto, description: 'Email is no longer active; idempotent on repeated calls' })
+  @ApiBadRequestResponse({ type: ValidationErrorDto, description: 'Validation failed — invalid email format or missing token' })
+  @ApiUnauthorizedResponse({ type: UnauthorizedErrorDto, description: 'Token does not match the subscriber, or no such subscriber exists' })
   @ApiTooManyRequestsResponse({ type: TooManyRequestsErrorDto, description: 'Rate limit exceeded — maximum 5 requests per 15 minutes per IP' })
   unsubscribe(@Body() dto: UnsubscribeDto) {
     return this.newsletterService.unsubscribe(dto);

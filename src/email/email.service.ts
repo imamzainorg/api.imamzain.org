@@ -1,5 +1,22 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import * as nodemailer from 'nodemailer';
+
+function escapeHtml(value: unknown): string {
+  if (value === null || value === undefined) return '';
+  return String(value)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+function sanitizeHeaderValue(value: unknown): string {
+  if (value === null || value === undefined) return '';
+  // Strip CR/LF to prevent header injection in mail subjects (and any other
+  // header) even though nodemailer normally guards against this.
+  return String(value).replace(/[\r\n]/g, ' ').trim();
+}
 
 function stripHtml(html: string): string {
   return html.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
@@ -7,6 +24,7 @@ function stripHtml(html: string): string {
 
 @Injectable()
 export class EmailService {
+  private readonly logger = new Logger(EmailService.name);
   private transporter: nodemailer.Transporter | null = null;
   private configured = false;
 
@@ -16,7 +34,7 @@ export class EmailService {
     const pass = process.env.SMTP_PASS;
 
     if (!host || !user || !pass) {
-      console.warn('[EmailService] SMTP not configured — email sending disabled');
+      this.logger.warn('SMTP not configured — email sending disabled');
       return;
     }
 
@@ -25,6 +43,10 @@ export class EmailService {
       port: Number(process.env.SMTP_PORT ?? 465),
       secure: process.env.SMTP_SECURE === 'true',
       auth: { user, pass },
+      // Bound network waits so a hung SMTP server can't stall request handlers.
+      connectionTimeout: 10_000,
+      greetingTimeout: 10_000,
+      socketTimeout: 20_000,
     });
     this.configured = true;
   }
@@ -43,29 +65,32 @@ export class EmailService {
         text: stripHtml(html),
         replyTo,
       });
-      console.info('[EmailService] Sent:', info.messageId);
+      this.logger.log(`Email sent: ${info.messageId}`);
       return true;
     } catch (err) {
-      console.error('[EmailService] Send error:', err);
+      this.logger.error(`Failed to send email to ${to}: ${err}`);
       return false;
     }
   }
 
   notifyContactSubmission(record: any): Promise<boolean> {
+    // Every interpolated field is HTML-escaped: the form fields are
+    // attacker-controlled and would otherwise allow stored XSS / phishing
+    // injection in the admin's mail client.
     const html = `
       <h2>New Contact Submission</h2>
       <table border="1" cellpadding="6" cellspacing="0">
-        <tr><th>ID</th><td>${record.id}</td></tr>
-        <tr><th>Name</th><td>${record.name}</td></tr>
-        <tr><th>Email</th><td>${record.email}</td></tr>
-        <tr><th>Country</th><td>${record.country ?? '—'}</td></tr>
-        <tr><th>Submitted At</th><td>${record.submitted_at}</td></tr>
-        <tr><th>Message</th><td><blockquote>${record.message}</blockquote></td></tr>
+        <tr><th>ID</th><td>${escapeHtml(record.id)}</td></tr>
+        <tr><th>Name</th><td>${escapeHtml(record.name)}</td></tr>
+        <tr><th>Email</th><td>${escapeHtml(record.email)}</td></tr>
+        <tr><th>Country</th><td>${escapeHtml(record.country ?? '—')}</td></tr>
+        <tr><th>Submitted At</th><td>${escapeHtml(record.submitted_at)}</td></tr>
+        <tr><th>Message</th><td><blockquote>${escapeHtml(record.message)}</blockquote></td></tr>
       </table>
     `;
     return this.send(
       process.env.EMAIL_TO ?? 'info@imamzain.org',
-      `New contact submission — ${record.name}`,
+      `New contact submission — ${sanitizeHeaderValue(record.name)}`,
       html,
     );
   }
@@ -74,16 +99,16 @@ export class EmailService {
     const html = `
       <h2>New Proxy Visit Request</h2>
       <table border="1" cellpadding="6" cellspacing="0">
-        <tr><th>Name</th><td>${record.name}</td></tr>
-        <tr><th>Phone</th><td>${record.phone ?? '—'}</td></tr>
-        <tr><th>Country</th><td>${record.country ?? '—'}</td></tr>
-        <tr><th>Status</th><td>${record.status}</td></tr>
-        <tr><th>Submitted At</th><td>${record.submitted_at}</td></tr>
+        <tr><th>Name</th><td>${escapeHtml(record.name)}</td></tr>
+        <tr><th>Phone</th><td>${escapeHtml(record.phone ?? '—')}</td></tr>
+        <tr><th>Country</th><td>${escapeHtml(record.country ?? '—')}</td></tr>
+        <tr><th>Status</th><td>${escapeHtml(record.status)}</td></tr>
+        <tr><th>Submitted At</th><td>${escapeHtml(record.submitted_at)}</td></tr>
       </table>
     `;
     return this.send(
       process.env.EMAIL_TO ?? 'info@imamzain.org',
-      `New proxy visit request — ${record.name}`,
+      `New proxy visit request — ${sanitizeHeaderValue(record.name)}`,
       html,
     );
   }

@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   ConflictException,
   Injectable,
   Logger,
@@ -7,6 +8,9 @@ import {
 import { Prisma } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
 import { StartContestDto, SubmitContestDto } from "./dto/contest.dto";
+
+const PHONE_RE = /^\+?[\d\s-]{7,20}$/;
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 @Injectable()
 export class ContestService {
@@ -24,7 +28,7 @@ export class ContestService {
     const [items, total] = await Promise.all([
       this.prisma.qutuf_sajjadiya_contest_attempts.findMany({
         where,
-        orderBy: { started_at: "desc" },
+        orderBy: [{ started_at: "desc" }, { id: "asc" }],
         skip,
         take: limit,
         select: {
@@ -61,12 +65,31 @@ export class ContestService {
   }
 
   async start(dto: StartContestDto, ip: string, userAgent: string) {
+    if (dto.contactType === "phone" && !PHONE_RE.test(dto.contact)) {
+      throw new BadRequestException("Invalid phone number format");
+    }
+    if (dto.contactType === "email" && !EMAIL_RE.test(dto.contact)) {
+      throw new BadRequestException("Invalid email format");
+    }
+
     const phone = dto.contactType === "phone" ? dto.contact : null;
     const email = dto.contactType === "email" ? dto.contact : null;
 
-    let rows: any[];
-    try {
-      rows = await this.prisma.$queryRaw`
+    // The DB has no unique index on (phone) or (email), so enforce
+    // one-attempt-per-identity at the service level. Search both columns
+    // for the supplied value so the same string submitted as both
+    // contactType=phone and contactType=email is still caught.
+    const existing = await this.prisma.qutuf_sajjadiya_contest_attempts.findFirst({
+      where: { OR: [{ phone: dto.contact }, { email: dto.contact }] },
+      select: { id: true },
+    });
+    if (existing) {
+      throw new ConflictException(
+        "لقد شاركتَ في المسابقة مسبقاً، لا يمكنك المشاركة مرة أخرى.",
+      );
+    }
+
+    const rows: { id: string }[] = await this.prisma.$queryRaw`
       INSERT INTO qutuf_sajjadiya_contest_attempts
       (name, phone, email, started_at, submitted_at, ip, user_agent)
       VALUES (
@@ -80,37 +103,15 @@ export class ContestService {
       )
       RETURNING id
     `;
-    } catch (err: any) {
-      if (err?.code === "P2010" && err?.meta?.code === "23505") {
-        throw new ConflictException(
-          "لقد شاركتَ في المسابقة مسبقاً، لا يمكنك المشاركة مرة أخرى.",
-        );
-      }
-      throw err;
-    }
 
     return { message: "Contest started", data: { attempt_id: rows[0].id } };
   }
 
   async submit(dto: SubmitContestDto) {
-    const attempts: any[] = await this.prisma.$queryRaw`
-    SELECT id, final_score
-    FROM qutuf_sajjadiya_contest_attempts
-    WHERE id = ${dto.attempt_id}::uuid
-  `;
-
-    if (!attempts.length) {
-      throw new NotFoundException("Attempt not found");
-    }
-
-    if (attempts[0].final_score !== null) {
-      throw new ConflictException("This attempt has already been submitted");
-    }
-
-    const questions: any[] = await this.prisma.$queryRaw`
-    SELECT id, correct_answer
-    FROM qutuf_sajjadiya_contest_questions
-  `;
+    const questions: { id: string; correct_answer: string }[] = await this.prisma.$queryRaw`
+      SELECT id, correct_answer
+      FROM qutuf_sajjadiya_contest_questions
+    `;
 
     if (dto.answers.length !== questions.length) {
       throw new ConflictException("All questions must be answered");
@@ -120,61 +121,87 @@ export class ContestService {
       questions.map((q) => [String(q.id), q.correct_answer]),
     );
 
+    // Score by unique question_id only, so duplicate entries pointing at the
+    // same question can't inflate the score (the previous bug let an attacker
+    // submit N copies of one correct answer for N/N).
+    const seen = new Set<string>();
     let finalScore = 0;
-
-    // Prepare bulk insert values
-    const values: any[] = [];
+    const insertValues: {
+      attempt_id: string;
+      question_id: string;
+      selected: string;
+      is_correct: boolean;
+    }[] = [];
 
     for (const answer of dto.answers) {
-      const correctAnswer = questionMap.get(String(answer.question_id));
-      const isCorrect = correctAnswer === answer.answer;
+      const qid = String(answer.question_id);
+      if (seen.has(qid)) continue;
+      seen.add(qid);
+      if (!questionMap.has(qid)) continue;
 
+      const isCorrect = questionMap.get(qid) === answer.answer;
       if (isCorrect) finalScore++;
 
-      values.push({
+      insertValues.push({
         attempt_id: dto.attempt_id,
-        question_id: String(answer.question_id),
+        question_id: qid,
         selected: answer.answer,
         is_correct: isCorrect,
       });
     }
 
-    console.log(
-      `[submit] attempt=${dto.attempt_id} answers=${dto.answers.length} sample=${JSON.stringify(dto.answers[0])}`,
-    );
+    if (insertValues.length === 0) {
+      throw new BadRequestException("No valid answers provided");
+    }
 
     const answerRows = Prisma.join(
-      values.map(
+      insertValues.map(
         (v) =>
           Prisma.sql`(gen_random_uuid(), ${v.attempt_id}::uuid, ${v.question_id}, ${v.selected}, ${v.is_correct})`,
       ),
       ", ",
     );
 
-    try {
-      await this.prisma.$transaction(async (tx) => {
-        await tx.$executeRaw(Prisma.sql`
-          INSERT INTO qutuf_sajjadiya_contest_answers
-            (id, attempt_id, question_id, selected, is_correct)
-          VALUES ${answerRows}
-          ON CONFLICT (attempt_id, question_id) DO NOTHING
-        `);
+    // Wrap the existence check, the answer insert and the score finalization
+    // in a single transaction. The conditional UPDATE returns 0 when another
+    // submitter already finalized the same attempt, letting us reject the
+    // duplicate cleanly instead of silently overwriting their score.
+    const updated = await this.prisma.$transaction(async (tx) => {
+      const attempts: { id: string; final_score: number | null }[] = await tx.$queryRaw`
+        SELECT id, final_score
+        FROM qutuf_sajjadiya_contest_attempts
+        WHERE id = ${dto.attempt_id}::uuid
+        FOR UPDATE
+      `;
+      if (!attempts.length) {
+        throw new NotFoundException("Attempt not found");
+      }
+      if (attempts[0].final_score !== null) {
+        throw new ConflictException("This attempt has already been submitted");
+      }
 
-        await tx.$executeRaw`
-          UPDATE qutuf_sajjadiya_contest_attempts
-          SET final_score = ${finalScore}, submitted_at = NOW()
-          WHERE id = ${dto.attempt_id}::uuid
-        `;
-      });
-    } catch (err: any) {
-      console.error(
-        `[submit] transaction error attempt=${dto.attempt_id}:`,
-        err?.message,
-        "code:", err?.code,
-        "meta:", JSON.stringify(err?.meta),
-      );
-      throw err;
+      await tx.$executeRaw(Prisma.sql`
+        INSERT INTO qutuf_sajjadiya_contest_answers
+          (id, attempt_id, question_id, selected, is_correct)
+        VALUES ${answerRows}
+        ON CONFLICT (attempt_id, question_id) DO NOTHING
+      `);
+
+      const result = await tx.$executeRaw`
+        UPDATE qutuf_sajjadiya_contest_attempts
+        SET final_score = ${finalScore}, submitted_at = NOW()
+        WHERE id = ${dto.attempt_id}::uuid AND final_score IS NULL
+      `;
+      return result;
+    });
+
+    if (updated === 0) {
+      throw new ConflictException("This attempt has already been submitted");
     }
+
+    this.logger.debug(
+      `Contest submission: attempt=${dto.attempt_id} answered=${insertValues.length}/${questions.length}`,
+    );
 
     return {
       success: true,

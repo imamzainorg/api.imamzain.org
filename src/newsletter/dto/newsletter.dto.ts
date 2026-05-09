@@ -1,6 +1,6 @@
 import { ApiProperty, ApiPropertyOptional } from "@nestjs/swagger";
 import { Transform } from "class-transformer";
-import { IsBoolean, IsEmail, IsOptional, IsString } from "class-validator";
+import { IsBoolean, IsEmail, IsOptional, IsString, MaxLength } from "class-validator";
 import { PaginationDto } from "../../common/dto/pagination.dto";
 
 export class SubscribeDto {
@@ -13,6 +13,15 @@ export class UnsubscribeDto {
   @ApiProperty({ example: "reader@example.com", format: "email" })
   @IsEmail({}, { message: "Please provide a valid email address" })
   email!: string;
+
+  @ApiProperty({
+    example: "f3a8...c2",
+    description:
+      "Unsubscribe token returned from POST /newsletter/subscribe. Required to prove ownership and prevent mass-unsubscribe by email enumeration.",
+  })
+  @IsString()
+  @MaxLength(256)
+  token!: string;
 }
 
 export class SubscriberQueryDto extends PaginationDto {
