@@ -20,8 +20,10 @@ describe('MediaService', () => {
   let service: MediaService;
   let prisma: any;
   let r2: any;
+  let prismaMediaCreate: jest.Mock;
 
   beforeEach(async () => {
+    prismaMediaCreate = jest.fn();
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         MediaService,
@@ -42,9 +44,18 @@ describe('MediaService', () => {
             post_attachments: { count: jest.fn() },
             pending_media_uploads: {
               create: jest.fn().mockResolvedValue({}),
+              findFirst: jest.fn(),
+              findMany: jest.fn(),
+              delete: jest.fn().mockResolvedValue({}),
               deleteMany: jest.fn().mockResolvedValue({}),
             },
             audit_logs: { create: jest.fn().mockResolvedValue({}) },
+            $transaction: jest.fn().mockImplementation(async (cb: any) =>
+              cb({
+                media: { create: prismaMediaCreate },
+                pending_media_uploads: { deleteMany: jest.fn().mockResolvedValue({}) },
+              }),
+            ),
           },
         },
         {
@@ -52,6 +63,14 @@ describe('MediaService', () => {
           useValue: {
             generateUploadUrl: jest.fn(),
             objectExists: jest.fn().mockResolvedValue(true),
+            headObject: jest.fn().mockResolvedValue({
+              contentType: 'image/jpeg',
+              contentLength: 10240,
+            }),
+            isManagedKey: jest.fn().mockReturnValue(true),
+            keyFromPublicUrl: jest.fn().mockImplementation((u: string) =>
+              u.replace('https://cdn.imamzain.org/', ''),
+            ),
             deleteObject: jest.fn().mockResolvedValue(undefined),
           },
         },
@@ -84,8 +103,12 @@ describe('MediaService', () => {
   });
 
   describe('confirmUpload', () => {
-    it('creates a media record with the public URL', async () => {
-      prisma.media.create.mockResolvedValue(baseMedia);
+    it('creates a media record bound to the user that requested the upload', async () => {
+      prisma.pending_media_uploads.findFirst.mockResolvedValue({
+        key: 'media/photo.jpg',
+        requested_by: 'user-1',
+      });
+      prismaMediaCreate.mockResolvedValue(baseMedia);
 
       const result = await service.confirmUpload(
         {
@@ -97,9 +120,45 @@ describe('MediaService', () => {
         'user-1',
       );
 
-      expect(prisma.media.create).toHaveBeenCalled();
+      expect(prismaMediaCreate).toHaveBeenCalled();
       expect(result.message).toBe('Media created');
       expect(result.data.id).toBe('media-1');
+    });
+
+    it('rejects when no pending upload matches the key', async () => {
+      prisma.pending_media_uploads.findFirst.mockResolvedValue(null);
+
+      await expect(
+        service.confirmUpload(
+          {
+            key: 'media/photo.jpg',
+            filename: 'photo.jpg',
+            mime_type: 'image/jpeg',
+            file_size: 10240,
+          },
+          'user-1',
+        ),
+      ).rejects.toThrow(NotFoundException);
+    });
+
+    it('rejects when the pending upload was issued to a different user', async () => {
+      prisma.pending_media_uploads.findFirst.mockResolvedValue({
+        key: 'media/photo.jpg',
+        requested_by: 'someone-else',
+      });
+
+      const { ForbiddenException } = await import('@nestjs/common');
+      await expect(
+        service.confirmUpload(
+          {
+            key: 'media/photo.jpg',
+            filename: 'photo.jpg',
+            mime_type: 'image/jpeg',
+            file_size: 10240,
+          },
+          'user-1',
+        ),
+      ).rejects.toThrow(ForbiddenException);
     });
   });
 

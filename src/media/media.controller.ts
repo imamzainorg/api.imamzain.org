@@ -5,6 +5,7 @@ import {
   Get,
   HttpCode,
   Param,
+  ParseUUIDPipe,
   Patch,
   Post,
   Query,
@@ -94,7 +95,7 @@ export class MediaController {
   @ApiParam({ name: 'id', format: 'uuid' })
   @ApiOkResponse({ type: MediaDetailResponseDto, description: 'Media record detail including filename, MIME type, dimensions, and public CDN URL' })
   @ApiNotFoundResponse({ type: NotFoundErrorDto, description: 'No media record with that ID exists' })
-  findOne(@Param('id') id: string) {
+  findOne(@Param('id', new ParseUUIDPipe()) id: string) {
     return this.mediaService.findOne(id);
   }
 
@@ -106,7 +107,7 @@ export class MediaController {
   @ApiBadRequestResponse({ type: ValidationErrorDto, description: 'Validation failed' })
   @ApiNotFoundResponse({ type: NotFoundErrorDto, description: 'No media record with that ID exists' })
   update(
-    @Param('id') id: string,
+    @Param('id', new ParseUUIDPipe()) id: string,
     @Body() dto: UpdateMediaDto,
     @CurrentUser() user: CurrentUserPayload,
   ) {
@@ -125,7 +126,7 @@ export class MediaController {
   @ApiOkResponse({ type: MediaMessageResponseDto, description: 'Media record deleted from the database and the file permanently removed from R2 storage — this action is irreversible' })
   @ApiNotFoundResponse({ type: NotFoundErrorDto, description: 'No media record with that ID exists' })
   @ApiConflictResponse({ type: ConflictErrorDto, description: 'Cannot delete: this media file is still referenced by one or more posts, books, gallery images, or attachments — remove those references first' })
-  remove(@Param('id') id: string, @CurrentUser() user: CurrentUserPayload) {
+  remove(@Param('id', new ParseUUIDPipe()) id: string, @CurrentUser() user: CurrentUserPayload) {
     return this.mediaService.delete(id, user.id);
   }
 }

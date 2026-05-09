@@ -1,4 +1,4 @@
-import { BadRequestException, ConflictException, Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, ForbiddenException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { Cron } from '@nestjs/schedule';
 import { PrismaService } from '../prisma/prisma.service';
 import { R2Service } from '../storage/r2.service';
@@ -16,7 +16,6 @@ export class MediaService {
   async requestUploadUrl(dto: RequestUploadUrlDto, userId: string) {
     const result = await this.r2Service.generateUploadUrl(dto.filename, dto.mime_type);
 
-    // Track the pending upload so the cleanup cron can delete orphans
     await this.prisma.pending_media_uploads.create({
       data: { key: result.key, requested_by: userId },
     });
@@ -25,29 +24,56 @@ export class MediaService {
   }
 
   async confirmUpload(dto: ConfirmUploadDto, userId: string) {
-    const exists = await this.r2Service.objectExists(dto.key);
-    if (!exists) {
+    if (!this.r2Service.isManagedKey(dto.key)) {
+      throw new BadRequestException('Invalid storage key');
+    }
+
+    // Bind the confirm step to the user that issued the presigned URL.
+    // Without this check, anyone with media:create could register a row
+    // pointing at any object in the bucket — including objects uploaded
+    // by other users for unrelated flows.
+    const pending = await this.prisma.pending_media_uploads.findFirst({
+      where: { key: dto.key },
+    });
+    if (!pending) {
+      throw new NotFoundException('No pending upload for that key — request a new upload URL');
+    }
+    if (pending.requested_by !== userId) {
+      throw new ForbiddenException('Upload key was issued to a different user');
+    }
+
+    const head = await this.r2Service.headObject(dto.key);
+    if (!head) {
       throw new BadRequestException('File not found in storage — upload the file before confirming');
     }
 
-    const publicBaseUrl = process.env.R2_PUBLIC_BASE_URL ?? 'https://cdn.imamzain.org';
+    // Trust HeadObject over the client-declared metadata. The DTO values are
+    // attacker-controlled (they could declare image/jpeg for an HTML or SVG
+    // payload, or claim 1×1 px for a 100 MB file).
+    const actualMime = head.contentType ?? dto.mime_type;
+    const actualSize = head.contentLength ?? dto.file_size;
+
+    const publicBaseUrl = (process.env.R2_PUBLIC_BASE_URL ?? 'https://cdn.imamzain.org').replace(/\/$/, '');
     const url = `${publicBaseUrl}/${dto.key}`;
 
-    const media = await this.prisma.media.create({
-      data: {
-        filename: dto.filename,
-        alt_text: dto.alt_text ?? null,
-        url,
-        mime_type: dto.mime_type,
-        file_size: dto.file_size,
-        width: dto.width ?? null,
-        height: dto.height ?? null,
-        uploaded_by: userId,
-      },
-    });
+    const media = await this.prisma.$transaction(async (tx) => {
+      const created = await tx.media.create({
+        data: {
+          filename: dto.filename,
+          alt_text: dto.alt_text ?? null,
+          url,
+          mime_type: actualMime,
+          file_size: actualSize,
+          width: dto.width ?? null,
+          height: dto.height ?? null,
+          uploaded_by: userId,
+        },
+      });
 
-    // Remove the pending tracking record now that the upload is confirmed
-    await this.prisma.pending_media_uploads.deleteMany({ where: { key: dto.key } });
+      await tx.pending_media_uploads.deleteMany({ where: { key: dto.key } });
+
+      return created;
+    });
 
     try {
       await this.prisma.audit_logs.create({
@@ -59,7 +85,9 @@ export class MediaService {
           changes: { method: 'POST', path: '/api/v1/media/confirm' },
         },
       });
-    } catch {}
+    } catch (err) {
+      this.logger.warn(`Failed to write MEDIA_CREATED audit: ${err}`);
+    }
 
     return { message: 'Media created', data: media };
   }
@@ -73,17 +101,27 @@ export class MediaService {
 
     if (expired.length === 0) return;
 
-    this.logger.log(`[MediaCleanup] Found ${expired.length} expired pending upload(s)`);
+    this.logger.log(`Found ${expired.length} expired pending upload(s)`);
 
     for (const record of expired) {
+      // Only delete the pending row when the R2 deletion succeeded. If we
+      // dropped the row anyway, a transient R2 outage would silently leave
+      // an orphan blob with no remaining tracking record.
       try {
         await this.r2Service.deleteObject(record.key);
-        this.logger.log(`[MediaCleanup] Deleted orphan R2 object: ${record.key}`);
       } catch (err) {
-        this.logger.warn(`[MediaCleanup] Failed to delete R2 object ${record.key}: ${err}`);
+        this.logger.warn(`Failed to delete R2 object ${record.key}: ${err}`);
+        continue;
       }
 
-      await this.prisma.pending_media_uploads.delete({ where: { id: record.id } });
+      try {
+        await this.prisma.pending_media_uploads.delete({ where: { id: record.id } });
+        this.logger.log(`Cleaned up orphan upload ${record.key}`);
+      } catch (err) {
+        // Multi-instance: another worker may have already deleted the row
+        // (P2025). Ignore so the loop continues.
+        this.logger.debug(`pending_media_uploads.delete skipped for ${record.id}: ${err}`);
+      }
     }
   }
 
@@ -91,7 +129,7 @@ export class MediaService {
     const skip = (page - 1) * limit;
     const [items, total] = await Promise.all([
       this.prisma.media.findMany({
-        orderBy: { created_at: 'desc' },
+        orderBy: [{ created_at: 'desc' }, { id: 'asc' }],
         skip,
         take: limit,
       }),
@@ -126,7 +164,9 @@ export class MediaService {
           changes: { method: 'PATCH', path: `/api/v1/media/${id}` },
         },
       });
-    } catch {}
+    } catch (err) {
+      this.logger.warn(`Failed to write MEDIA_UPDATED audit: ${err}`);
+    }
 
     return { message: 'Media updated', data: updated };
   }
@@ -146,13 +186,18 @@ export class MediaService {
       throw new ConflictException('Media is still referenced by other records');
     }
 
-    const publicBaseUrl = process.env.R2_PUBLIC_BASE_URL ?? 'https://cdn.imamzain.org';
-    const key = media.url.replace(publicBaseUrl + '/', '');
-    this.r2Service.deleteObject(key).catch((err) => {
-      console.error('[MediaService] R2 delete failed:', err);
-    });
-
+    // Delete the DB row first so a downstream R2 failure leaves only a
+    // detectable orphan blob (which the cleanup cron can sweep), instead
+    // of the previous order which kept the DB row pointing at a key that
+    // could already have been deleted in R2.
     await this.prisma.media.delete({ where: { id } });
+
+    const key = this.r2Service.keyFromPublicUrl(media.url);
+    try {
+      await this.r2Service.deleteObject(key);
+    } catch (err) {
+      this.logger.warn(`R2 delete failed for ${key}: ${err}`);
+    }
 
     try {
       await this.prisma.audit_logs.create({
@@ -164,7 +209,9 @@ export class MediaService {
           changes: { method: 'DELETE', path: `/api/v1/media/${id}` },
         },
       });
-    } catch {}
+    } catch (err) {
+      this.logger.warn(`Failed to write MEDIA_DELETED audit: ${err}`);
+    }
 
     return { message: 'Media deleted', data: null };
   }
