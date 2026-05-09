@@ -1,4 +1,4 @@
-import { Body, Controller, Delete, Get, HttpCode, Param, Post, Query, UseGuards } from '@nestjs/common';
+import { Body, Controller, Delete, Get, HttpCode, Param, ParseUUIDPipe, Post, Query, UseGuards } from '@nestjs/common';
 import {
   ApiBadRequestResponse,
   ApiBearerAuth,
@@ -76,17 +76,64 @@ export class NewsletterController {
     return this.newsletterService.findAll(query.page ?? 1, query.limit ?? 20, { search: query.search, is_active: query.is_active });
   }
 
+  @Post('subscribers/:id/unsubscribe')
+  @HttpCode(200)
+  @UseGuards(JwtAuthGuard, PermissionGuard)
+  @ApiBearerAuth('jwt')
+  @RequirePermission('newsletter:update')
+  @ApiOperation({
+    summary: 'Unsubscribe a subscriber (admin)',
+    description:
+      'Marks the subscriber inactive without requiring the user-facing HMAC token. The subscriber row is preserved (use DELETE /subscribers/:id to also remove it). Idempotent. Requires permission: `newsletter:update`.',
+  })
+  @ApiParam({ name: 'id', format: 'uuid' })
+  @ApiOkResponse({ type: SubscriberResponseDto, description: 'Subscriber set to inactive; their email is preserved' })
+  @ApiNotFoundResponse({ type: NotFoundErrorDto, description: 'No subscriber with that ID exists' })
+  @ApiUnauthorizedResponse({ type: UnauthorizedErrorDto, description: 'Missing or invalid JWT' })
+  @ApiForbiddenResponse({ type: ForbiddenErrorDto, description: 'Insufficient permissions' })
+  unsubscribeAsAdmin(
+    @Param('id', new ParseUUIDPipe()) id: string,
+    @CurrentUser() user: CurrentUserPayload,
+  ) {
+    return this.newsletterService.unsubscribeAsAdmin(id, user.id);
+  }
+
+  @Post('subscribers/:id/resubscribe')
+  @HttpCode(200)
+  @UseGuards(JwtAuthGuard, PermissionGuard)
+  @ApiBearerAuth('jwt')
+  @RequirePermission('newsletter:update')
+  @ApiOperation({
+    summary: 'Reactivate an inactive subscriber (admin)',
+    description: 'Flips an unsubscribed subscriber back to active. Idempotent. Requires permission: `newsletter:update`.',
+  })
+  @ApiParam({ name: 'id', format: 'uuid' })
+  @ApiOkResponse({ type: SubscriberResponseDto, description: 'Subscriber set back to active' })
+  @ApiNotFoundResponse({ type: NotFoundErrorDto, description: 'No subscriber with that ID exists' })
+  @ApiUnauthorizedResponse({ type: UnauthorizedErrorDto, description: 'Missing or invalid JWT' })
+  @ApiForbiddenResponse({ type: ForbiddenErrorDto, description: 'Insufficient permissions' })
+  resubscribeAsAdmin(
+    @Param('id', new ParseUUIDPipe()) id: string,
+    @CurrentUser() user: CurrentUserPayload,
+  ) {
+    return this.newsletterService.resubscribeAsAdmin(id, user.id);
+  }
+
   @Delete('subscribers/:id')
   @UseGuards(JwtAuthGuard, PermissionGuard)
   @ApiBearerAuth('jwt')
   @RequirePermission('newsletter:delete')
-  @ApiOperation({ summary: 'Soft-delete a subscriber record', description: 'Requires permission: `newsletter:delete`.' })
+  @ApiOperation({
+    summary: 'Soft-delete a subscriber record (admin)',
+    description:
+      'Removes the subscriber record from listings (sets `deleted_at`). Distinct from unsubscribe — use `POST /subscribers/:id/unsubscribe` if you only want to mark them inactive. Requires permission: `newsletter:delete`.',
+  })
   @ApiParam({ name: 'id', format: 'uuid' })
   @ApiOkResponse({ type: NewsletterMessageResponseDto, description: 'Subscriber record soft-deleted; the email address can re-subscribe in the future' })
   @ApiNotFoundResponse({ type: NotFoundErrorDto, description: 'No subscriber with that ID exists, or it has already been deleted' })
   @ApiUnauthorizedResponse({ type: UnauthorizedErrorDto, description: 'Missing or invalid JWT' })
   @ApiForbiddenResponse({ type: ForbiddenErrorDto, description: 'Insufficient permissions' })
-  remove(@Param('id') id: string, @CurrentUser() user: CurrentUserPayload) {
+  remove(@Param('id', new ParseUUIDPipe()) id: string, @CurrentUser() user: CurrentUserPayload) {
     return this.newsletterService.softDelete(id, user.id);
   }
 }

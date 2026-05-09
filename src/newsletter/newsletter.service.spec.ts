@@ -164,6 +164,66 @@ describe('NewsletterService', () => {
     });
   });
 
+  describe('unsubscribeAsAdmin', () => {
+    it('marks an active subscriber inactive without a token', async () => {
+      prisma.newsletter_subscribers.findFirst.mockResolvedValue(activeSubscriber);
+      prisma.newsletter_subscribers.update.mockResolvedValue({ ...activeSubscriber, is_active: false });
+
+      const result = await service.unsubscribeAsAdmin(SUB_ID, 'admin-1');
+
+      expect(prisma.newsletter_subscribers.update).toHaveBeenCalledWith({
+        where: { id: SUB_ID },
+        data: { is_active: false, unsubscribed_at: expect.any(Date) },
+      });
+      expect(result.message).toBe('Successfully unsubscribed');
+    });
+
+    it('is idempotent on already-inactive subscribers', async () => {
+      prisma.newsletter_subscribers.findFirst.mockResolvedValue(inactiveSubscriber);
+
+      const result = await service.unsubscribeAsAdmin(SUB_ID, 'admin-1');
+
+      expect(result.message).toBe('Already unsubscribed');
+      expect(prisma.newsletter_subscribers.update).not.toHaveBeenCalled();
+    });
+
+    it('throws NotFoundException when subscriber not found', async () => {
+      prisma.newsletter_subscribers.findFirst.mockResolvedValue(null);
+
+      await expect(service.unsubscribeAsAdmin('ghost', 'admin-1')).rejects.toThrow(NotFoundException);
+    });
+  });
+
+  describe('resubscribeAsAdmin', () => {
+    it('flips an inactive subscriber back to active', async () => {
+      prisma.newsletter_subscribers.findFirst.mockResolvedValue(inactiveSubscriber);
+      prisma.newsletter_subscribers.update.mockResolvedValue({ ...activeSubscriber });
+
+      const result = await service.resubscribeAsAdmin(SUB_ID, 'admin-1');
+
+      expect(prisma.newsletter_subscribers.update).toHaveBeenCalledWith({
+        where: { id: SUB_ID },
+        data: { is_active: true, unsubscribed_at: null },
+      });
+      expect(result.message).toBe('Successfully resubscribed');
+    });
+
+    it('is idempotent on already-active subscribers', async () => {
+      prisma.newsletter_subscribers.findFirst.mockResolvedValue(activeSubscriber);
+
+      const result = await service.resubscribeAsAdmin(SUB_ID, 'admin-1');
+
+      expect(result.message).toBe('Already subscribed');
+      expect(prisma.newsletter_subscribers.update).not.toHaveBeenCalled();
+    });
+
+    it('throws NotFoundException when subscriber not found', async () => {
+      prisma.newsletter_subscribers.findFirst.mockResolvedValue(null);
+
+      await expect(service.resubscribeAsAdmin('ghost', 'admin-1')).rejects.toThrow(NotFoundException);
+    });
+  });
+
   describe('softDelete', () => {
     it('sets deleted_at on the subscriber', async () => {
       prisma.newsletter_subscribers.findFirst.mockResolvedValue(activeSubscriber);

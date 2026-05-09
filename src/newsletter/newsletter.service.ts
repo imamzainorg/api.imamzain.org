@@ -145,6 +145,81 @@ export class NewsletterService {
     return { message: 'Subscribers fetched', data: { items, pagination: { page, limit, total, pages: Math.ceil(total / limit) } } };
   }
 
+  /**
+   * Admin-side unsubscribe. Bypasses the HMAC token check (which exists only
+   * to prove ownership of the inbox in the public flow) and authorizes via
+   * the caller's `newsletter:update` permission instead. Idempotent: a
+   * second call on an already-inactive subscriber returns the existing row.
+   */
+  async unsubscribeAsAdmin(id: string, actorId: string) {
+    const subscriber = await this.prisma.newsletter_subscribers.findFirst({
+      where: { id, deleted_at: null },
+    });
+    if (!subscriber) throw new NotFoundException('Subscriber not found');
+
+    if (!subscriber.is_active) {
+      return { message: 'Already unsubscribed', data: subscriber };
+    }
+
+    const updated = await this.prisma.newsletter_subscribers.update({
+      where: { id },
+      data: { is_active: false, unsubscribed_at: new Date() },
+    });
+
+    try {
+      await this.prisma.audit_logs.create({
+        data: {
+          user_id: actorId,
+          action: 'NEWSLETTER_UNSUBSCRIBED_BY_ADMIN',
+          resource_type: 'newsletter_subscriber',
+          resource_id: id,
+          changes: { method: 'POST', path: `/api/v1/newsletter/subscribers/${id}/unsubscribe` },
+        },
+      });
+    } catch (err) {
+      this.logger.warn(`Failed to write NEWSLETTER_UNSUBSCRIBED_BY_ADMIN audit: ${err}`);
+    }
+
+    return { message: 'Successfully unsubscribed', data: updated };
+  }
+
+  /**
+   * Admin-side resubscribe — flips an inactive subscriber back to active
+   * without going through the public subscribe endpoint, useful when a user
+   * asks support to put them back on the list.
+   */
+  async resubscribeAsAdmin(id: string, actorId: string) {
+    const subscriber = await this.prisma.newsletter_subscribers.findFirst({
+      where: { id, deleted_at: null },
+    });
+    if (!subscriber) throw new NotFoundException('Subscriber not found');
+
+    if (subscriber.is_active) {
+      return { message: 'Already subscribed', data: subscriber };
+    }
+
+    const updated = await this.prisma.newsletter_subscribers.update({
+      where: { id },
+      data: { is_active: true, unsubscribed_at: null },
+    });
+
+    try {
+      await this.prisma.audit_logs.create({
+        data: {
+          user_id: actorId,
+          action: 'NEWSLETTER_RESUBSCRIBED_BY_ADMIN',
+          resource_type: 'newsletter_subscriber',
+          resource_id: id,
+          changes: { method: 'POST', path: `/api/v1/newsletter/subscribers/${id}/resubscribe` },
+        },
+      });
+    } catch (err) {
+      this.logger.warn(`Failed to write NEWSLETTER_RESUBSCRIBED_BY_ADMIN audit: ${err}`);
+    }
+
+    return { message: 'Successfully resubscribed', data: updated };
+  }
+
   async softDelete(id: string, actorId: string) {
     const subscriber = await this.prisma.newsletter_subscribers.findFirst({ where: { id, deleted_at: null } });
     if (!subscriber) throw new NotFoundException('Subscriber not found');

@@ -188,7 +188,7 @@ Raw OpenAPI 3.0 spec: `GET /openapi.json`.
 | Roles | `/roles` | Admin only |
 | Languages | `/languages` | |
 | Media | `/media` | R2 pre-signed upload URLs |
-| Posts | `/posts` | i18n via translation tables |
+| Posts | `/posts` | i18n via translation tables; admin-only `GET /posts/admin/:id` returns drafts |
 | Post Categories | `/post-categories` | |
 | Books | `/books` | |
 | Book Categories | `/book-categories` | |
@@ -196,6 +196,7 @@ Raw OpenAPI 3.0 spec: `GET /openapi.json`.
 | Gallery Categories | `/gallery-categories` | |
 | Academic Papers | `/academic-papers` | |
 | Academic Paper Categories | `/academic-paper-categories` | |
+| Newsletter Subscribers | `/newsletter/subscribers` | List, soft-delete, plus admin `POST /:id/unsubscribe` and `POST /:id/resubscribe` for flipping `is_active` without going through the public token-based flow |
 
 ### Public Endpoints
 
