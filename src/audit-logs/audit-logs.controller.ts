@@ -37,6 +37,7 @@ export class AuditLogsController {
       userId: query.user_id,
       action: query.action,
       resourceType: query.resource_type,
+      resourceId: query.resource_id,
       from: query.from,
       to: query.to,
     });

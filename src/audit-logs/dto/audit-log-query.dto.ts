@@ -35,6 +35,14 @@ export class AuditLogQueryDto {
   @MaxLength(100)
   resource_type?: string;
 
+  @ApiPropertyOptional({
+    description:
+      'Filter by resource UUID. Combine with resource_type to scope to one row\'s history (e.g. all events for one post).',
+  })
+  @IsOptional()
+  @IsUUID()
+  resource_id?: string;
+
   @ApiPropertyOptional({ description: 'Start of date range (ISO 8601)' })
   @IsOptional()
   @IsISO8601()
