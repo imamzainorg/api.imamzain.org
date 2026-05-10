@@ -23,6 +23,20 @@ export class UploadUrlResponseDto {
   data: UploadUrlDataDto;
 }
 
+class MediaVariantDto {
+  @ApiProperty({ example: 768, description: 'Output width in pixels' })
+  width: number;
+
+  @ApiProperty({ example: 'https://cdn.imamzain.org/media/variants/<uuid>/w768.webp' })
+  url: string;
+
+  @ApiProperty({ example: 24576, description: 'Variant file size in bytes' })
+  file_size: number;
+
+  @ApiProperty({ example: 'webp' })
+  format: string;
+}
+
 class MediaDto {
   @ApiProperty({ example: 'uuid-...' })
   id: string;
@@ -30,7 +44,7 @@ class MediaDto {
   @ApiProperty({ example: 'image.jpg' })
   filename: string;
 
-  @ApiProperty({ example: 'https://cdn.imamzain.org/uploads/image.jpg' })
+  @ApiProperty({ example: 'https://cdn.imamzain.org/media/<uuid>-image.jpg' })
   url: string;
 
   @ApiProperty({ example: 'image/jpeg' })
@@ -50,6 +64,13 @@ class MediaDto {
 
   @ApiProperty({ example: '2024-01-01T00:00:00.000Z' })
   created_at: string;
+
+  @ApiProperty({
+    type: [MediaVariantDto],
+    description:
+      'Pre-generated WebP variants at standard widths (320, 768, 1280, 1920). Up-scaled widths beyond the source resolution are skipped, so smaller originals return fewer variants. Empty array if generation failed and has not been retried via POST /media/:id/regenerate-variants.',
+  })
+  variants: MediaVariantDto[];
 }
 
 class MediaListDataDto {

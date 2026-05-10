@@ -1,7 +1,15 @@
 import { BadRequestException, Injectable, Logger } from '@nestjs/common';
-import { S3Client, PutObjectCommand, DeleteObjectCommand, HeadObjectCommand, ListObjectsV2Command } from '@aws-sdk/client-s3';
+import {
+  S3Client,
+  PutObjectCommand,
+  DeleteObjectCommand,
+  GetObjectCommand,
+  HeadObjectCommand,
+  ListObjectsV2Command,
+} from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { randomUUID } from 'crypto';
+import type { Readable } from 'stream';
 
 const ALLOWED_MIME_TYPES = new Set([
   'image/jpeg',
@@ -134,6 +142,36 @@ export class R2Service {
       this.logger.warn(`HeadObject failed for ${key}: ${err}`);
       return null;
     }
+  }
+
+  /** Fetch an object's body as a Buffer. Used by the variant generator. */
+  async getObjectBuffer(key: string): Promise<Buffer> {
+    const result = await this.client.send(new GetObjectCommand({ Bucket: this.bucket, Key: key }));
+    const body = result.Body as Readable | undefined;
+    if (!body) throw new Error(`R2 object ${key} returned an empty body`);
+    const chunks: Buffer[] = [];
+    for await (const chunk of body) {
+      chunks.push(typeof chunk === 'string' ? Buffer.from(chunk) : Buffer.from(chunk));
+    }
+    return Buffer.concat(chunks);
+  }
+
+  /** Upload a buffer to R2 and return the resulting public URL. */
+  async putObjectBuffer(key: string, body: Buffer, contentType: string): Promise<string> {
+    await this.client.send(
+      new PutObjectCommand({
+        Bucket: this.bucket,
+        Key: key,
+        Body: body,
+        ContentType: contentType,
+      }),
+    );
+    return `${this.publicBaseUrl}/${key}`;
+  }
+
+  /** The variants prefix for a given media row. Mirrored by the cleanup delete. */
+  variantKey(mediaId: string, width: number): string {
+    return `${KEY_PREFIX}variants/${mediaId}/w${width}.webp`;
   }
 
   async checkConnectivity(): Promise<boolean> {

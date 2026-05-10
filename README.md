@@ -40,6 +40,8 @@ REST API powering [imamzain.org](https://imamzain.org) — Islamic content manag
 - Role-based access control (RBAC) with per-permission granularity
 - JWT authentication with bcrypt password hashing, atomic refresh-token rotation, and reuse detection that revokes the whole token chain when an already-rotated token is replayed
 - File uploads via Cloudflare R2 pre-signed URLs, with server-side MIME enforcement and ownership-bound confirmation (the user that requested the URL is the only one who can register the resulting media row)
+- Pre-generated WebP variants (320 / 768 / 1280 / 1920 px) on upload via [`sharp`](https://sharp.pixelplumbing.com/), so the public site can serve responsive images via `<img srcset>` without paying for any per-request transform
+- Server-side HTML sanitisation of rich-text body fields (Tiptap output) using a strict allowlist that mirrors the CMS editor's schema; defends against admin-session compromise and frontend rendering surfaces that use `dangerouslySetInnerHTML`
 - HTML-escaped admin notification emails to defuse stored XSS via form fields
 - Comprehensive audit logging on all write operations
 - Health endpoint for uptime monitoring and load-balancer probes (storage status cached for 60s to avoid amplifying load on the object store)
@@ -131,6 +133,31 @@ See [.env.example](.env.example) for the complete list with inline descriptions.
 
 ---
 
+## Schema Migrations
+
+Prisma is run in introspection-only mode (`prisma db pull`). Schema changes
+are managed as raw SQL files under `prisma/migrations/<timestamp>_<name>/migration.sql`.
+
+To apply a new migration:
+
+```bash
+# 1. Apply the SQL to the database
+psql "$DIRECT_URL" -f prisma/migrations/<folder>/migration.sql
+
+# 2. Re-introspect so schema.prisma reflects the live database
+npm run prisma:pull
+
+# 3. Regenerate the typed client
+#    Stop any long-running node process first (dev server, jest --watch),
+#    or Windows file locks will block the engine swap with EPERM.
+npm run prisma:generate
+```
+
+Migrations are idempotent (`CREATE TABLE IF NOT EXISTS`, `DO`-block guarded
+`CREATE TYPE`), so re-running is a no-op.
+
+---
+
 ## Project Structure
 
 ```bash
@@ -187,7 +214,7 @@ Raw OpenAPI 3.0 spec: `GET /openapi.json`.
 | Users | `/users` | Admin only |
 | Roles | `/roles` | Admin only |
 | Languages | `/languages` | |
-| Media | `/media` | R2 pre-signed upload URLs |
+| Media | `/media` | R2 pre-signed upload URLs; responses include a `variants[]` array with WebP sizes generated at upload time. `POST /media/:id/regenerate-variants` re-runs sharp if a generation step failed |
 | Posts | `/posts` | i18n via translation tables; admin-only `GET /posts/admin/:id` returns drafts |
 | Post Categories | `/post-categories` | |
 | Books | `/books` | |

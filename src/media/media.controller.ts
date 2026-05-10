@@ -120,6 +120,23 @@ export class MediaController {
     return this.mediaService.update(id, dto, user.id);
   }
 
+  @Post(':id/regenerate-variants')
+  @HttpCode(200)
+  @RequirePermission('media:update')
+  @ApiOperation({
+    summary: 'Re-run sharp variant generation for an existing media row',
+    description:
+      'Useful when initial generation failed (network blip, large image), or when the variant width set is changed. ' +
+      'Generates the standard 320 / 768 / 1280 / 1920 webp variants and upserts the corresponding `media_variants` rows. ' +
+      'Requires permission: `media:update`.',
+  })
+  @ApiParam({ name: 'id', format: 'uuid' })
+  @ApiOkResponse({ type: MediaDetailResponseDto, description: 'Media record with the regenerated variants array' })
+  @ApiNotFoundResponse({ type: NotFoundErrorDto, description: 'No media record with that ID exists' })
+  regenerateVariants(@Param('id', new ParseUUIDPipe()) id: string, @CurrentUser() user: CurrentUserPayload) {
+    return this.mediaService.regenerateVariants(id, user.id);
+  }
+
   @Delete(':id')
   @RequirePermission('media:delete')
   @ApiOperation({

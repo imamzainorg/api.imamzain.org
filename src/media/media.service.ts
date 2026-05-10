@@ -3,6 +3,7 @@ import { Cron } from '@nestjs/schedule';
 import { PrismaService } from '../prisma/prisma.service';
 import { R2Service } from '../storage/r2.service';
 import { ConfirmUploadDto, RequestUploadUrlDto, UpdateMediaDto } from './dto/media.dto';
+import { ImageVariantService, VARIANT_WIDTHS } from './image-variant.service';
 
 @Injectable()
 export class MediaService {
@@ -11,6 +12,7 @@ export class MediaService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly r2Service: R2Service,
+    private readonly variants: ImageVariantService,
   ) {}
 
   async requestUploadUrl(dto: RequestUploadUrlDto, userId: string) {
@@ -75,6 +77,12 @@ export class MediaService {
       return created;
     });
 
+    // Generate responsive variants synchronously so the editor can reference
+    // them in the response and start using <img srcset> immediately. Failures
+    // are isolated inside the variant service — the media row is still
+    // created if some / all variants fail.
+    const generatedVariants = await this.variants.generateForMedia(media.id, dto.key);
+
     try {
       await this.prisma.audit_logs.create({
         data: {
@@ -82,14 +90,50 @@ export class MediaService {
           action: 'MEDIA_CREATED',
           resource_type: 'media',
           resource_id: media.id,
-          changes: { method: 'POST', path: '/api/v1/media/confirm' },
+          changes: {
+            method: 'POST',
+            path: '/api/v1/media/confirm',
+            variants_generated: generatedVariants.length,
+          },
         },
       });
     } catch (err) {
       this.logger.warn(`Failed to write MEDIA_CREATED audit: ${err}`);
     }
 
-    return { message: 'Media created', data: media };
+    return { message: 'Media created', data: { ...media, variants: generatedVariants } };
+  }
+
+  /**
+   * Re-run variant generation for an existing media row. Useful when a
+   * variant width set changes, or if generation failed at upload time.
+   */
+  async regenerateVariants(id: string, actorId: string) {
+    const media = await this.prisma.media.findUnique({ where: { id } });
+    if (!media) throw new NotFoundException('Media not found');
+
+    const key = this.r2Service.keyFromPublicUrl(media.url);
+    const variants = await this.variants.generateForMedia(id, key);
+
+    try {
+      await this.prisma.audit_logs.create({
+        data: {
+          user_id: actorId,
+          action: 'MEDIA_VARIANTS_REGENERATED',
+          resource_type: 'media',
+          resource_id: id,
+          changes: {
+            method: 'POST',
+            path: `/api/v1/media/${id}/regenerate-variants`,
+            variants_generated: variants.length,
+          },
+        },
+      });
+    } catch (err) {
+      this.logger.warn(`Failed to write MEDIA_VARIANTS_REGENERATED audit: ${err}`);
+    }
+
+    return { message: 'Variants regenerated', data: { ...media, variants } };
   }
 
   /** Runs every hour at :00. Deletes R2 objects whose presigned URL expired without confirmation. */
@@ -136,16 +180,20 @@ export class MediaService {
       this.prisma.media.count(),
     ]);
 
+    const variantMap = await this.variants.findForMediaIds(items.map((m) => m.id));
+    const itemsWithVariants = items.map((m) => ({ ...m, variants: variantMap.get(m.id) ?? [] }));
+
     return {
       message: 'Media fetched',
-      data: { items, pagination: { page, limit, total, pages: Math.ceil(total / limit) } },
+      data: { items: itemsWithVariants, pagination: { page, limit, total, pages: Math.ceil(total / limit) } },
     };
   }
 
   async findOne(id: string) {
     const media = await this.prisma.media.findUnique({ where: { id } });
     if (!media) throw new NotFoundException('Media not found');
-    return { message: 'Media fetched', data: media };
+    const variants = await this.variants.findForMedia(id);
+    return { message: 'Media fetched', data: { ...media, variants } };
   }
 
   async update(id: string, dto: UpdateMediaDto, userId: string) {
@@ -189,15 +237,17 @@ export class MediaService {
     // Delete the DB row first so a downstream R2 failure leaves only a
     // detectable orphan blob (which the cleanup cron can sweep), instead
     // of the previous order which kept the DB row pointing at a key that
-    // could already have been deleted in R2.
+    // could already have been deleted in R2. media_variants rows cascade
+    // automatically via the FK; we only have to clean up R2 ourselves.
     await this.prisma.media.delete({ where: { id } });
 
     const key = this.r2Service.keyFromPublicUrl(media.url);
-    try {
-      await this.r2Service.deleteObject(key);
-    } catch (err) {
-      this.logger.warn(`R2 delete failed for ${key}: ${err}`);
-    }
+    await Promise.all([
+      this.r2Service.deleteObject(key).catch((err) => {
+        this.logger.warn(`R2 delete failed for ${key}: ${err}`);
+      }),
+      this.variants.deleteR2Variants(id),
+    ]);
 
     try {
       await this.prisma.audit_logs.create({

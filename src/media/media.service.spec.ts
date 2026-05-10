@@ -3,6 +3,7 @@ import { ConflictException, NotFoundException } from '@nestjs/common';
 import { MediaService } from './media.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { R2Service } from '../storage/r2.service';
+import { ImageVariantService } from './image-variant.service';
 
 const baseMedia = {
   id: 'media-1',
@@ -72,6 +73,15 @@ describe('MediaService', () => {
               u.replace('https://cdn.imamzain.org/', ''),
             ),
             deleteObject: jest.fn().mockResolvedValue(undefined),
+          },
+        },
+        {
+          provide: ImageVariantService,
+          useValue: {
+            generateForMedia: jest.fn().mockResolvedValue([]),
+            findForMedia: jest.fn().mockResolvedValue([]),
+            findForMediaIds: jest.fn().mockResolvedValue(new Map()),
+            deleteR2Variants: jest.fn().mockResolvedValue(undefined),
           },
         },
       ],
