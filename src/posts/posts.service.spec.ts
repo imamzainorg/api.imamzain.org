@@ -399,4 +399,43 @@ describe("PostsService", () => {
       );
     });
   });
+
+  describe("runScheduledPublish", () => {
+    it("does nothing when no posts are due", async () => {
+      prisma.posts.findMany.mockResolvedValue([]);
+
+      await service.runScheduledPublish();
+
+      expect(prisma.$transaction).not.toHaveBeenCalled();
+    });
+
+    it("flips is_published and writes a scheduled audit entry per due post", async () => {
+      prisma.posts.findMany.mockResolvedValue([{ id: "post-1" }, { id: "post-2" }]);
+      prisma.$transaction.mockResolvedValue([{}, {}]);
+
+      await service.runScheduledPublish();
+
+      expect(prisma.posts.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({
+            deleted_at: null,
+            is_published: false,
+            published_at: expect.objectContaining({ not: null, lte: expect.any(Date) }),
+          }),
+        }),
+      );
+      expect(prisma.$transaction).toHaveBeenCalledTimes(2);
+    });
+
+    it("continues when one transaction fails", async () => {
+      prisma.posts.findMany.mockResolvedValue([{ id: "post-1" }, { id: "post-2" }]);
+      prisma.$transaction
+        .mockRejectedValueOnce(new Error("DB error"))
+        .mockResolvedValueOnce([{}, {}]);
+
+      await service.runScheduledPublish();
+
+      expect(prisma.$transaction).toHaveBeenCalledTimes(2);
+    });
+  });
 });

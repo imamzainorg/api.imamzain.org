@@ -1,4 +1,5 @@
-import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { Cron, CronExpression } from '@nestjs/schedule';
 import { PrismaService } from '../prisma/prisma.service';
 import { sanitizeEditorHtml } from '../common/utils/html-sanitize.util';
 import { resolveTranslation } from '../common/utils/translation.util';
@@ -6,6 +7,8 @@ import { CreatePostDto, PostQueryDto, TogglePublishDto, UpdatePostDto } from './
 
 @Injectable()
 export class PostsService {
+  private readonly logger = new Logger(PostsService.name);
+
   constructor(private readonly prisma: PrismaService) {}
 
   async findAll(query: PostQueryDto, lang: string | null, isAdmin = false) {
@@ -289,6 +292,57 @@ export class PostsService {
     } catch {}
 
     return { message: `Post ${dto.is_published ? 'published' : 'unpublished'}`, data: null };
+  }
+
+  /**
+   * Auto-publish posts whose `published_at` has arrived.
+   *
+   * Editors set a future `published_at` and leave `is_published=false`; this
+   * cron flips them to `is_published=true` once the timestamp is reached.
+   * Runs every minute — cheap query (indexed on deleted_at + is_published)
+   * with a tight WHERE clause.
+   *
+   * Audit-logs each transition as POST_PUBLISHED with a `scheduled: true`
+   * marker so editor-driven publishes can be distinguished from automatic
+   * ones in the audit trail.
+   */
+  @Cron(CronExpression.EVERY_MINUTE)
+  async runScheduledPublish() {
+    const now = new Date();
+    const due = await this.prisma.posts.findMany({
+      where: {
+        deleted_at: null,
+        is_published: false,
+        published_at: { not: null, lte: now },
+      },
+      select: { id: true },
+    });
+
+    if (due.length === 0) return;
+
+    this.logger.log(`Auto-publishing ${due.length} scheduled post(s)`);
+
+    for (const { id } of due) {
+      try {
+        await this.prisma.$transaction([
+          this.prisma.posts.update({
+            where: { id },
+            data: { is_published: true, updated_at: now },
+          }),
+          this.prisma.audit_logs.create({
+            data: {
+              user_id: null,
+              action: 'POST_PUBLISHED',
+              resource_type: 'post',
+              resource_id: id,
+              changes: { scheduled: true, by: 'cron' },
+            },
+          }),
+        ]);
+      } catch (err) {
+        this.logger.warn(`Scheduled publish failed for post ${id}: ${err}`);
+      }
+    }
   }
 
   async trackView(id: string) {
