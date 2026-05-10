@@ -247,11 +247,26 @@ model media {
   uploaded_by      String?            @db.Uuid
   books            books[]
   gallery_images   gallery_images?
+  media_variants   media_variants[]
   users            users?             @relation(fields: [uploaded_by], references: [id], onUpdate: NoAction)
   post_attachments post_attachments[]
   posts            posts?
 
   @@index([uploaded_by], map: "idx_media_uploaded_by")
+}
+
+model media_variants {
+  id         String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  media_id   String   @db.Uuid
+  width      Int
+  url        String
+  file_size  BigInt
+  format     String   @default("webp")
+  created_at DateTime @default(now()) @db.Timestamptz(6)
+  media      media    @relation(fields: [media_id], references: [id], onDelete: Cascade)
+
+  @@unique([media_id, width])
+  @@index([media_id], map: "idx_media_variants_media_id")
 }
 
 /// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
