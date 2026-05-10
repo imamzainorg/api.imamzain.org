@@ -306,11 +306,29 @@ const PERMISSIONS: { name: string; translations: Translations }[] = [
     },
   },
   {
+    name: 'newsletter:update',
+    translations: {
+      ar: { title: 'تعديل المشتركين', description: 'تفعيل أو إلغاء اشتراك المشتركين عبر لوحة الإدارة' },
+      en: { title: 'Update Newsletter Subscribers', description: 'Admin-side activate / deactivate of subscribers' },
+      fa: { title: 'به‌روزرسانی مشترکین خبرنامه', description: 'فعال‌سازی یا غیرفعال کردن مشترکین از طرف مدیر' },
+    },
+  },
+  {
     name: 'newsletter:delete',
     translations: {
       ar: { title: 'إزالة المشتركين', description: 'إلغاء اشتراك أو حذف مشتركي النشرة' },
       en: { title: 'Remove Newsletter Subscribers', description: 'Unsubscribe or remove newsletter subscribers' },
       fa: { title: 'حذف مشترکین خبرنامه', description: 'لغو اشتراک یا حذف مشترکین خبرنامه' },
+    },
+  },
+
+  // Dashboard
+  {
+    name: 'dashboard:read',
+    translations: {
+      ar: { title: 'عرض لوحة التحكم', description: 'الوصول إلى الإحصائيات الرئيسية للنظام' },
+      en: { title: 'View Dashboard', description: 'Access aggregated CMS dashboard counts' },
+      fa: { title: 'مشاهده داشبورد', description: 'دسترسی به آمار کلی سامانه' },
     },
   },
 
@@ -502,6 +520,7 @@ const ROLES: { name: string; permissions: string[]; translations: RoleTranslatio
       'media:read',
       'media:update',
       'media:delete',
+      'dashboard:read',
     ],
     translations: {
       ar: {
@@ -521,7 +540,16 @@ const ROLES: { name: string; permissions: string[]; translations: RoleTranslatio
   {
     name: 'moderator',
     // Handles inbound contact messages and proxy visit requests; read-only on posts for context
-    permissions: ['forms:read', 'forms:update', 'forms:delete', 'newsletter:read', 'newsletter:delete', 'posts:read'],
+    permissions: [
+      'forms:read',
+      'forms:update',
+      'forms:delete',
+      'newsletter:read',
+      'newsletter:update',
+      'newsletter:delete',
+      'posts:read',
+      'dashboard:read',
+    ],
     translations: {
       ar: {
         title: 'مشرف',
