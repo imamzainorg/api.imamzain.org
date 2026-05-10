@@ -37,12 +37,6 @@ export class ImageVariantService {
    * rows. Failures are logged but do not throw — the original media row is
    * still useful even when variants are missing, and the editor can call the
    * regenerate endpoint later.
-   *
-   * Implementation note: `prisma.media_variants` is not yet present on the
-   * generated client (the user runs `prisma:pull` after applying the SQL
-   * migration). We use raw queries here so this code compiles before
-   * regeneration. Once the typed model is available, both calls can be
-   * refactored to `this.prisma.media_variants.create(...)`.
    */
   async generateForMedia(mediaId: string, originalKey: string): Promise<VariantRow[]> {
     const original = await this.r2.getObjectBuffer(originalKey).catch((err) => {
@@ -74,17 +68,13 @@ export class ImageVariantService {
         const key = this.r2.variantKey(mediaId, width);
         const url = await this.r2.putObjectBuffer(key, buffer, 'image/webp');
 
-        // Insert via raw SQL (see class doc-block).
-        await this.prisma.$executeRaw`
-          INSERT INTO media_variants (media_id, width, url, file_size, format)
-          VALUES (${mediaId}::uuid, ${width}, ${url}, ${buffer.length}::bigint, 'webp')
-          ON CONFLICT (media_id, width) DO UPDATE
-            SET url = EXCLUDED.url,
-                file_size = EXCLUDED.file_size,
-                format = EXCLUDED.format
-        `;
+        const row = await this.prisma.media_variants.upsert({
+          where: { media_id_width: { media_id: mediaId, width } },
+          create: { media_id: mediaId, width, url, file_size: buffer.length, format: 'webp' },
+          update: { url, file_size: buffer.length, format: 'webp' },
+        });
 
-        return { width, url, fileSize: buffer.length };
+        return row;
       }),
     );
 
@@ -92,13 +82,7 @@ export class ImageVariantService {
     for (let i = 0; i < results.length; i++) {
       const r = results[i];
       if (r.status === 'fulfilled') {
-        rows.push({
-          id: '',
-          width: r.value.width,
-          url: r.value.url,
-          file_size: BigInt(r.value.fileSize),
-          format: 'webp',
-        });
+        rows.push(r.value);
       } else {
         this.logger.warn(
           `Variant ${targetWidths[i]}px failed for media ${mediaId}: ${r.reason}`,
@@ -111,28 +95,23 @@ export class ImageVariantService {
 
   /** Read all variants for a media id. Used by media response shaping. */
   async findForMedia(mediaId: string): Promise<VariantRow[]> {
-    return this.prisma.$queryRaw<VariantRow[]>`
-      SELECT id::text AS id, width, url, file_size, format
-      FROM media_variants
-      WHERE media_id = ${mediaId}::uuid
-      ORDER BY width ASC
-    `;
+    return this.prisma.media_variants.findMany({
+      where: { media_id: mediaId },
+      orderBy: { width: 'asc' },
+    });
   }
 
   /** Read variants for a batch of media ids in one query. */
   async findForMediaIds(mediaIds: string[]): Promise<Map<string, VariantRow[]>> {
     const map = new Map<string, VariantRow[]>();
     if (mediaIds.length === 0) return map;
-    const rows = await this.prisma.$queryRaw<Array<VariantRow & { media_id: string }>>`
-      SELECT id::text AS id, media_id::text AS media_id, width, url, file_size, format
-      FROM media_variants
-      WHERE media_id = ANY(${mediaIds}::uuid[])
-      ORDER BY media_id, width ASC
-    `;
+    const rows = await this.prisma.media_variants.findMany({
+      where: { media_id: { in: mediaIds } },
+      orderBy: [{ media_id: 'asc' }, { width: 'asc' }],
+    });
     for (const r of rows) {
       const list = map.get(r.media_id) ?? [];
-      const { media_id: _omit, ...rest } = r;
-      list.push(rest);
+      list.push(r);
       map.set(r.media_id, list);
     }
     return map;
