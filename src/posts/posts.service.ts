@@ -1,5 +1,6 @@
 import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
+import { sanitizeEditorHtml } from '../common/utils/html-sanitize.util';
 import { resolveTranslation } from '../common/utils/translation.util';
 import { CreatePostDto, PostQueryDto, TogglePublishDto, UpdatePostDto } from './dto/post.dto';
 
@@ -139,7 +140,7 @@ export class PostsService {
           lang: t.lang,
           title: t.title,
           summary: t.summary ?? null,
-          body: t.body,
+          body: sanitizeEditorHtml(t.body),
           slug: t.slug,
           is_default: t.is_default ?? false,
         })),
@@ -214,10 +215,11 @@ export class PostsService {
             throw new ConflictException(`Slug "${t.slug}" is already in use for language ${t.lang}`);
           }
 
+          const cleanBody = sanitizeEditorHtml(t.body);
           await tx.post_translations.upsert({
             where: { post_id_lang: { post_id: id, lang: t.lang } },
-            create: { post_id: id, lang: t.lang, title: t.title, summary: t.summary ?? null, body: t.body, slug: t.slug, is_default: t.is_default ?? false },
-            update: { title: t.title, summary: t.summary ?? null, body: t.body, slug: t.slug, is_default: t.is_default ?? false },
+            create: { post_id: id, lang: t.lang, title: t.title, summary: t.summary ?? null, body: cleanBody, slug: t.slug, is_default: t.is_default ?? false },
+            update: { title: t.title, summary: t.summary ?? null, body: cleanBody, slug: t.slug, is_default: t.is_default ?? false },
           });
         }
 

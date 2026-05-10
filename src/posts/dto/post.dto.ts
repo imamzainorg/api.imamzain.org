@@ -14,6 +14,7 @@ import {
   ValidateNested,
 } from "class-validator";
 import { PaginationDto } from "../../common/dto/pagination.dto";
+import { MaxBytes } from "../../common/validators/max-bytes.validator";
 
 export class PostTranslationDto {
   @ApiProperty({
@@ -36,9 +37,16 @@ export class PostTranslationDto {
   @IsString()
   summary?: string;
 
-  @ApiProperty({ example: "نص المقالة الكاملة..." })
+  @ApiProperty({
+    example: "<p>نص المقالة الكاملة...</p>",
+    description:
+      "Rich-text HTML produced by the CMS editor (Tiptap StarterKit allowlist). " +
+      "Server-side sanitisation strips javascript:/vbscript: URLs, inline event " +
+      "handlers, and any tag outside the allowlist. Maximum 200 KB UTF-8.",
+  })
   @IsString()
   @MinLength(1)
+  @MaxBytes()
   body!: string;
 
   @ApiProperty({
