@@ -225,11 +225,109 @@ future maintainers.
 
 ---
 
-## 6. Open follow-ups (not in this round)
+## 6. Round 2 changes (this push)
+
+The four code-only items below shipped without any DB migration.
+They use the existing schema (no new tables / no new columns).
+
+### a. Scheduled publishing cron
+
+Editors can now schedule posts. Set `is_published: false` and
+`published_at: "2026-06-01T09:00:00Z"`; the API auto-publishes when
+`published_at <= now()` (cron runs every minute).
+
+The CMS UI implication: stop forcing editors to "publish now" — let
+them pick a future time and trust the cron. The audit log entry on
+the auto-flip carries `{ scheduled: true, by: 'cron' }` so admin
+history clearly tells editor-driven publishes apart from automatic
+ones.
+
+### b. Audit-log filter by `resource_id`
+
+`GET /audit-logs?resource_type=post&resource_id=<uuid>` returns the
+full event history for one specific record. The CMS can render a
+"Recent activity" panel on each post / book / paper detail page by
+hitting this endpoint.
+
+### c. `GET /dashboard/stats`
+
+One round-trip → all the headline counts the CMS home screen needs.
+Permission: `dashboard:read` (seeded; assigned to super-admin, admin,
+editor, moderator). Response shape:
+
+```jsonc
+{
+  "recent_window_days": 7,
+  "posts":   { "total": 142, "published": 128, "drafts": 14, "recent": 6 },
+  "library": { "books": 87, "academic_papers": 23, "gallery_images": 412, "media_assets": 504 },
+  "users":   { "total": 9 },
+  "newsletter": { "active_subscribers": 1280, "inactive_subscribers": 47, "recent_subscribers": 12 },
+  "forms":   { "contact_new": 4, "contact_recent": 11, "proxy_visit_pending": 2, "proxy_visit_recent": 5 },
+  "contest": { "attempts_recent": 318 }
+}
+```
+
+Use `recent_window_days` to label the "this week" cards; the field is
+hardcoded server-side so the CMS doesn't have to mirror the constant.
+
+### d. Trash + restore
+
+Every soft-deletable resource now has:
+
+```text
+GET  /<resource>/trash          — paginated list of trashed records
+POST /<resource>/:id/restore    — undo the soft-delete
+```
+
+Resources: `posts`, `books`, `academic-papers`, `gallery`,
+`post-categories`, `book-categories`, `gallery-categories`,
+`academic-paper-categories`. Permission: the existing
+`<resource>:delete` (anyone who can delete should be able to recover).
+
+**Restore conflict semantics.** Posts and books used the
+`__del_<timestamp>` suffix scheme on soft-delete to free up unique
+slugs / ISBNs. Restore reverses the suffix:
+
+- If a *live* post has taken the original `(lang, slug)` since the
+  delete → 409 Conflict; the operator must rename one side and retry.
+- If a live book has taken the original `isbn` since the delete →
+  same 409 path.
+
+The trash listing endpoints already strip the suffix from `slug` /
+`isbn` in the response, so the CMS can show the original value
+without doing the regex itself.
+
+Categories don't have the suffix scheme (a pre-existing
+inconsistency), so their restore is a simple `deleted_at = null`
+toggle.
+
+### e. Permission seed updates
+
+Two permissions were used by code but not previously seeded; the
+seed file now covers them:
+
+- `dashboard:read` — assigned to super-admin, admin, editor, moderator.
+- `newsletter:update` — used by the admin unsubscribe / resubscribe
+  routes from round 1; assigned to super-admin, admin, moderator.
+
+Re-run `npm run prisma:seed` to pick them up. The seed uses upsert
+so re-running on a populated DB is safe — it just adds the new
+permission rows and their role assignments without touching anything
+else.
+
+---
+
+## 7. Open follow-ups (still not in this push)
 
 - Newsletter **campaign send** endpoints — only the schema is in.
-- Variant URL exposure on **already-uploaded** media (run `regenerate-variants` on each).
-- `meta_title` / `meta_description` / `og_image_id` fields on posts (Tier 1, separate task).
-- Site settings table (Tier 1, separate task).
-- Trash + restore endpoints (Tier 1, separate task).
+- Variant URL exposure on **already-uploaded** media (run
+  `POST /media/:id/regenerate-variants` on each, or write a one-off
+  script that loops the existing `media` rows).
+- `meta_title` / `meta_description` / `og_image_id` fields on posts
+  (needs a schema migration — Tier 1).
+- Site settings table (needs a new table — Tier 1).
+- Password reset flow (likely needs a `password_reset_tokens` table
+  or two new columns on `users` — Tier 1).
 - Tags many-to-many (deferred — structural decision).
+- Soft-delete suffix on category translation slugs (pre-existing
+  inconsistency exposed by the trash-restore work; not blocking).

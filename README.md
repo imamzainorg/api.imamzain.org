@@ -43,7 +43,10 @@ REST API powering [imamzain.org](https://imamzain.org) — Islamic content manag
 - Pre-generated WebP variants (320 / 768 / 1280 / 1920 px) on upload via [`sharp`](https://sharp.pixelplumbing.com/), so the public site can serve responsive images via `<img srcset>` without paying for any per-request transform
 - Server-side HTML sanitisation of rich-text body fields (Tiptap output) using a strict allowlist that mirrors the CMS editor's schema; defends against admin-session compromise and frontend rendering surfaces that use `dangerouslySetInnerHTML`
 - HTML-escaped admin notification emails to defuse stored XSS via form fields
-- Comprehensive audit logging on all write operations
+- Comprehensive audit logging on all write operations, filterable by user / action / resource type / resource id / date range
+- Single-call CMS dashboard endpoint for home-screen counts (`GET /dashboard/stats`)
+- Trash & restore on every soft-deletable resource — accidental deletions can be reversed up until a hard purge
+- Scheduled publishing for posts: editors set a future `published_at`, an EVERY_MINUTE cron flips them to live when the time arrives
 - Health endpoint for uptime monitoring and load-balancer probes (storage status cached for 60s to avoid amplifying load on the object store)
 - Interactive API explorer at `/docs` (toggleable via `EXPOSE_DOCS`; off by default in production)
 - Globally enforced rate limiting via `@nestjs/throttler` with stricter caps on auth and view-counter endpoints, Helmet security headers, strict CORS allowlist in production, and response compression
@@ -211,11 +214,12 @@ Raw OpenAPI 3.0 spec: `GET /openapi.json`.
 
 | Resource | Base path | Notes |
 | --- | --- | --- |
+| Dashboard | `/dashboard/stats` | Single-call aggregator for the CMS home screen; counts posts / library / users / newsletter / forms / contest |
 | Users | `/users` | Admin only |
 | Roles | `/roles` | Admin only |
 | Languages | `/languages` | |
 | Media | `/media` | R2 pre-signed upload URLs; responses include a `variants[]` array with WebP sizes generated at upload time. `POST /media/:id/regenerate-variants` re-runs sharp if a generation step failed |
-| Posts | `/posts` | i18n via translation tables; admin-only `GET /posts/admin/:id` returns drafts |
+| Posts | `/posts` | i18n via translation tables; admin-only `GET /posts/admin/:id` returns drafts. Posts whose `published_at` is in the past are auto-published by an EVERY_MINUTE cron |
 | Post Categories | `/post-categories` | |
 | Books | `/books` | |
 | Book Categories | `/book-categories` | |
@@ -224,6 +228,17 @@ Raw OpenAPI 3.0 spec: `GET /openapi.json`.
 | Academic Papers | `/academic-papers` | |
 | Academic Paper Categories | `/academic-paper-categories` | |
 | Newsletter Subscribers | `/newsletter/subscribers` | List, soft-delete, plus admin `POST /:id/unsubscribe` and `POST /:id/resubscribe` for flipping `is_active` without going through the public token-based flow |
+| Audit logs | `/audit-logs` | Filterable by `user_id`, `action`, `resource_type`, `resource_id`, and date range |
+
+Every soft-deletable resource (posts / books / academic-papers / gallery and their categories) also exposes:
+
+```text
+GET  /<resource>/trash          — paginated list of soft-deleted records
+POST /<resource>/:id/restore    — undo a soft delete (404 if id not in trash;
+                                  409 if a unique slug/ISBN was taken since)
+```
+
+Both routes are gated by the existing `<resource>:delete` permission.
 
 ### Public Endpoints
 
