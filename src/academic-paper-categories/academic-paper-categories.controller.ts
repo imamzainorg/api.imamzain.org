@@ -1,4 +1,4 @@
-import { Body, Controller, Delete, Get, Param, Patch, Post, Query, UseGuards } from '@nestjs/common';
+import { Body, Controller, Delete, Get, HttpCode, Param, Patch, Post, Query, UseGuards } from '@nestjs/common';
 import {
   ApiBadRequestResponse,
   ApiBearerAuth,
@@ -43,6 +43,31 @@ export class AcademicPaperCategoriesController {
   @ApiOkResponse({ type: AcademicPaperCategoryListResponseDto, description: 'Paginated list of academic paper categories' })
   findAll(@Lang() lang: string | null, @Query() query: PaginationDto) {
     return this.service.findAll(lang, query.page ?? 1, query.limit ?? 100);
+  }
+
+  @Get('trash')
+  @UseGuards(JwtAuthGuard, PermissionGuard)
+  @ApiBearerAuth('jwt')
+  @RequirePermission('academic-paper-categories:delete')
+  @ApiOperation({ summary: 'List soft-deleted academic paper categories (CMS trash view)' })
+  @ApiQuery({ name: 'page', required: false, type: Number, example: 1 })
+  @ApiQuery({ name: 'limit', required: false, type: Number, example: 20 })
+  @ApiOkResponse({ type: AcademicPaperCategoryListResponseDto, description: 'Paginated list of trashed academic paper categories' })
+  findTrash(@Query() query: PaginationDto) {
+    return this.service.findTrash(query.page ?? 1, query.limit ?? 20);
+  }
+
+  @Post(':id/restore')
+  @HttpCode(200)
+  @UseGuards(JwtAuthGuard, PermissionGuard)
+  @ApiBearerAuth('jwt')
+  @RequirePermission('academic-paper-categories:delete')
+  @ApiOperation({ summary: 'Restore a soft-deleted academic paper category' })
+  @ApiParam({ name: 'id', format: 'uuid' })
+  @ApiOkResponse({ type: AcademicPaperCategoryMessageResponseDto, description: 'Category restored' })
+  @ApiNotFoundResponse({ type: NotFoundErrorDto, description: 'No soft-deleted category with that ID exists' })
+  restore(@Param('id') id: string, @CurrentUser() user: CurrentUserPayload) {
+    return this.service.restore(id, user.id);
   }
 
   @Get(':id')

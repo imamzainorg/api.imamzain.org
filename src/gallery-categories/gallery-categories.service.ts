@@ -1,10 +1,12 @@
-import { ConflictException, Injectable, NotFoundException } from '@nestjs/common';
+import { ConflictException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { resolveTranslation } from '../common/utils/translation.util';
 import { CreateGalleryCategoryDto, UpdateGalleryCategoryDto } from './dto/gallery-category.dto';
 
 @Injectable()
 export class GalleryCategoriesService {
+  private readonly logger = new Logger(GalleryCategoriesService.name);
+
   constructor(private readonly prisma: PrismaService) {}
 
   async findAll(lang: string | null, page: number, limit: number) {
@@ -83,6 +85,46 @@ export class GalleryCategoriesService {
     } catch {}
 
     return { message: 'Category updated', data: null };
+  }
+
+  /** List soft-deleted gallery categories. */
+  async findTrash(page: number, limit: number) {
+    const skip = (page - 1) * limit;
+    const where = { deleted_at: { not: null } };
+    const [items, total] = await Promise.all([
+      this.prisma.gallery_categories.findMany({
+        where,
+        include: { gallery_category_translations: true },
+        orderBy: [{ deleted_at: 'desc' }, { id: 'asc' }],
+        skip,
+        take: limit,
+      }),
+      this.prisma.gallery_categories.count({ where }),
+    ]);
+    return {
+      message: 'Trash fetched',
+      data: { items, pagination: { page, limit, total, pages: Math.ceil(total / limit) } },
+    };
+  }
+
+  /** Restore a soft-deleted gallery category. */
+  async restore(id: string, actorId: string) {
+    const category = await this.prisma.gallery_categories.findFirst({
+      where: { id, deleted_at: { not: null } },
+    });
+    if (!category) throw new NotFoundException('Deleted category not found');
+
+    await this.prisma.gallery_categories.update({ where: { id }, data: { deleted_at: null } });
+
+    try {
+      await this.prisma.audit_logs.create({
+        data: { user_id: actorId, action: 'GALLERY_CATEGORY_RESTORED', resource_type: 'gallery_category', resource_id: id, changes: { method: 'POST', path: `/api/v1/gallery-categories/${id}/restore` } },
+      });
+    } catch (err) {
+      this.logger.warn(`Failed to write GALLERY_CATEGORY_RESTORED audit: ${err}`);
+    }
+
+    return { message: 'Category restored', data: null };
   }
 
   async softDelete(id: string, actorId: string) {

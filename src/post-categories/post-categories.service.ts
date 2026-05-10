@@ -1,10 +1,12 @@
-import { ConflictException, Injectable, NotFoundException } from '@nestjs/common';
+import { ConflictException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { resolveTranslation } from '../common/utils/translation.util';
 import { CreatePostCategoryDto, UpdatePostCategoryDto } from './dto/post-category.dto';
 
 @Injectable()
 export class PostCategoriesService {
+  private readonly logger = new Logger(PostCategoriesService.name);
+
   constructor(private readonly prisma: PrismaService) {}
 
   async findAll(lang: string | null, page: number, limit: number) {
@@ -95,6 +97,52 @@ export class PostCategoriesService {
     } catch {}
 
     return { message: 'Category updated', data: null };
+  }
+
+  /** List soft-deleted post categories. */
+  async findTrash(page: number, limit: number) {
+    const skip = (page - 1) * limit;
+    const where = { deleted_at: { not: null } };
+    const [items, total] = await Promise.all([
+      this.prisma.post_categories.findMany({
+        where,
+        include: { post_category_translations: true },
+        orderBy: [{ deleted_at: 'desc' }, { id: 'asc' }],
+        skip,
+        take: limit,
+      }),
+      this.prisma.post_categories.count({ where }),
+    ]);
+    return {
+      message: 'Trash fetched',
+      data: { items, pagination: { page, limit, total, pages: Math.ceil(total / limit) } },
+    };
+  }
+
+  /** Restore a soft-deleted post category. */
+  async restore(id: string, actorId: string) {
+    const category = await this.prisma.post_categories.findFirst({
+      where: { id, deleted_at: { not: null } },
+    });
+    if (!category) throw new NotFoundException('Deleted category not found');
+
+    await this.prisma.post_categories.update({ where: { id }, data: { deleted_at: null } });
+
+    try {
+      await this.prisma.audit_logs.create({
+        data: {
+          user_id: actorId,
+          action: 'POST_CATEGORY_RESTORED',
+          resource_type: 'post_category',
+          resource_id: id,
+          changes: { method: 'POST', path: `/api/v1/post-categories/${id}/restore` },
+        },
+      });
+    } catch (err) {
+      this.logger.warn(`Failed to write POST_CATEGORY_RESTORED audit: ${err}`);
+    }
+
+    return { message: 'Category restored', data: null };
   }
 
   async softDelete(id: string, actorId: string) {
