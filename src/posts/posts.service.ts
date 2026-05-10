@@ -2,6 +2,7 @@ import { BadRequestException, ConflictException, Injectable, Logger, NotFoundExc
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { PrismaService } from '../prisma/prisma.service';
 import { sanitizeEditorHtml } from '../common/utils/html-sanitize.util';
+import { softDeleteSuffix, stripSoftDeleteSuffix } from '../common/utils/soft-delete.util';
 import { resolveTranslation } from '../common/utils/translation.util';
 import { CreatePostDto, PostQueryDto, TogglePublishDto, UpdatePostDto } from './dto/post.dto';
 
@@ -352,15 +353,117 @@ export class PostsService {
     return { message: 'View tracked', data: null };
   }
 
+  /**
+   * List soft-deleted posts (admin trash view). Translations and the
+   * suffixed slug come back as-is so the CMS can show the original slug
+   * by stripping `__del_<timestamp>` client-side if needed.
+   */
+  async findTrash(page: number, limit: number) {
+    const skip = (page - 1) * limit;
+    const where = { deleted_at: { not: null } };
+
+    const [items, total] = await Promise.all([
+      this.prisma.posts.findMany({
+        where,
+        include: {
+          post_translations: true,
+          post_categories: { include: { post_category_translations: true } },
+        },
+        orderBy: [{ deleted_at: 'desc' }, { id: 'asc' }],
+        skip,
+        take: limit,
+      }),
+      this.prisma.posts.count({ where }),
+    ]);
+
+    const mapped = items.map((post) => ({
+      ...post,
+      // Show the original slug in the response so the CMS doesn't have to
+      // strip the suffix itself when listing trash.
+      post_translations: post.post_translations.map((t) => ({
+        ...t,
+        slug: stripSoftDeleteSuffix(t.slug),
+      })),
+    }));
+
+    return {
+      message: 'Trash fetched',
+      data: { items: mapped, pagination: { page, limit, total, pages: Math.ceil(total / limit) } },
+    };
+  }
+
+  /**
+   * Restore a soft-deleted post. Reverses the slug-suffix trick from
+   * `softDelete`. If a non-deleted post has taken the original slug in
+   * the meantime, the restore is refused with 409 — the editor must
+   * rename either side and retry.
+   */
+  async restore(id: string, userId: string) {
+    const post = await this.prisma.posts.findFirst({
+      where: { id, deleted_at: { not: null } },
+      include: { post_translations: true },
+    });
+    if (!post) throw new NotFoundException('Deleted post not found');
+
+    const restoredSlugs = post.post_translations.map((t) => ({
+      lang: t.lang,
+      original: stripSoftDeleteSuffix(t.slug),
+    }));
+
+    await this.prisma.$transaction(async (tx) => {
+      // Conflict-check each (lang, original_slug) against live rows before
+      // any update — a single conflict aborts the whole restore.
+      for (const { lang, original } of restoredSlugs) {
+        const conflict = await tx.post_translations.findFirst({
+          where: { lang, slug: original, NOT: { post_id: id } },
+        });
+        if (conflict) {
+          throw new ConflictException(
+            `Cannot restore: slug "${original}" (${lang}) is now used by another post`,
+          );
+        }
+      }
+
+      for (const { lang, original } of restoredSlugs) {
+        await tx.post_translations.update({
+          where: { post_id_lang: { post_id: id, lang } },
+          data: { slug: original },
+        });
+      }
+
+      await tx.posts.update({
+        where: { id },
+        data: { deleted_at: null, updated_at: new Date() },
+      });
+    });
+
+    try {
+      await this.prisma.audit_logs.create({
+        data: {
+          user_id: userId,
+          action: 'POST_RESTORED',
+          resource_type: 'post',
+          resource_id: id,
+          changes: { method: 'POST', path: `/api/v1/posts/${id}/restore` },
+        },
+      });
+    } catch (err) {
+      this.logger.warn(`Failed to write POST_RESTORED audit: ${err}`);
+    }
+
+    return { message: 'Post restored', data: null };
+  }
+
   async softDelete(id: string, userId: string) {
     const post = await this.prisma.posts.findFirst({ where: { id, deleted_at: null } });
     if (!post) throw new NotFoundException('Post not found');
 
     // Free up the (lang, slug) unique constraint by suffixing each translation
     // slug with a marker that points back to the deletion. Without this, a
-    // soft-deleted post's slug stays reserved forever.
+    // soft-deleted post's slug stays reserved forever. Restore strips the
+    // suffix back off (see `restore`).
     const deletedAt = new Date();
-    const suffix = `__del_${deletedAt.getTime()}`;
+    const suffix = softDeleteSuffix(deletedAt);
 
     await this.prisma.$transaction(async (tx) => {
       const translations = await tx.post_translations.findMany({ where: { post_id: id } });

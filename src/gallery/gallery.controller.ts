@@ -1,4 +1,4 @@
-import { Body, Controller, Delete, Get, Param, Patch, Post, Query, UseGuards } from '@nestjs/common';
+import { Body, Controller, Delete, Get, HttpCode, Param, Patch, Post, Query, UseGuards } from '@nestjs/common';
 import {
   ApiBadRequestResponse,
   ApiBearerAuth,
@@ -18,6 +18,7 @@ import { CurrentUser, CurrentUserPayload } from '../common/decorators/current-us
 import { Lang } from '../common/decorators/language.decorator';
 import { RequirePermission } from '../common/decorators/require-permission.decorator';
 import { ForbiddenErrorDto, NotFoundErrorDto, UnauthorizedErrorDto, ValidationErrorDto } from '../common/dto/api-response.dto';
+import { PaginationDto } from '../common/dto/pagination.dto';
 import { PermissionGuard } from '../common/guards/permission.guard';
 import { CreateGalleryImageDto, GalleryQueryDto, UpdateGalleryImageDto } from './dto/gallery.dto';
 import {
@@ -44,6 +45,37 @@ export class GalleryController {
   @ApiOkResponse({ type: GalleryListResponseDto, description: 'Paginated list of gallery images' })
   findAll(@Query() query: GalleryQueryDto, @Lang() lang: string | null) {
     return this.galleryService.findAll(query, lang);
+  }
+
+  @Get('trash')
+  @UseGuards(JwtAuthGuard, PermissionGuard)
+  @ApiBearerAuth('jwt')
+  @RequirePermission('gallery:delete')
+  @ApiOperation({
+    summary: 'List soft-deleted gallery images (CMS trash view)',
+    description: 'Returns images with `deleted_at` set, paginated. Requires permission: `gallery:delete`.',
+  })
+  @ApiQuery({ name: 'page', required: false, type: Number, example: 1 })
+  @ApiQuery({ name: 'limit', required: false, type: Number, example: 20 })
+  @ApiOkResponse({ type: GalleryListResponseDto, description: 'Paginated list of trashed gallery images' })
+  findTrash(@Query() query: PaginationDto) {
+    return this.galleryService.findTrash(query.page ?? 1, query.limit ?? 20);
+  }
+
+  @Post(':id/restore')
+  @HttpCode(200)
+  @UseGuards(JwtAuthGuard, PermissionGuard)
+  @ApiBearerAuth('jwt')
+  @RequirePermission('gallery:delete')
+  @ApiOperation({
+    summary: 'Restore a soft-deleted gallery image',
+    description: 'Sets `deleted_at` back to null. Requires permission: `gallery:delete`.',
+  })
+  @ApiParam({ name: 'id', format: 'uuid', description: 'Media ID (serves as the gallery image primary key)' })
+  @ApiOkResponse({ type: GalleryMessageResponseDto, description: 'Gallery image restored' })
+  @ApiNotFoundResponse({ type: NotFoundErrorDto, description: 'No soft-deleted gallery image with that media ID exists' })
+  restore(@Param('id') id: string, @CurrentUser() user: CurrentUserPayload) {
+    return this.galleryService.restore(id, user.id);
   }
 
   @Get(':id')

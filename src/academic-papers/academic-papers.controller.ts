@@ -1,4 +1,4 @@
-import { Body, Controller, Delete, Get, Param, Patch, Post, Query, UseGuards } from '@nestjs/common';
+import { Body, Controller, Delete, Get, HttpCode, Param, Patch, Post, Query, UseGuards } from '@nestjs/common';
 import {
   ApiBadRequestResponse,
   ApiBearerAuth,
@@ -18,6 +18,7 @@ import { CurrentUser, CurrentUserPayload } from '../common/decorators/current-us
 import { Lang } from '../common/decorators/language.decorator';
 import { RequirePermission } from '../common/decorators/require-permission.decorator';
 import { ForbiddenErrorDto, NotFoundErrorDto, UnauthorizedErrorDto, ValidationErrorDto } from '../common/dto/api-response.dto';
+import { PaginationDto } from '../common/dto/pagination.dto';
 import { PermissionGuard } from '../common/guards/permission.guard';
 import { AcademicPapersService } from './academic-papers.service';
 import { AcademicPaperQueryDto, CreateAcademicPaperDto, UpdateAcademicPaperDto } from './dto/academic-paper.dto';
@@ -43,6 +44,37 @@ export class AcademicPapersController {
   @ApiOkResponse({ type: AcademicPaperListResponseDto, description: 'Paginated list of academic papers' })
   findAll(@Query() query: AcademicPaperQueryDto, @Lang() lang: string | null) {
     return this.service.findAll(query, lang);
+  }
+
+  @Get('trash')
+  @UseGuards(JwtAuthGuard, PermissionGuard)
+  @ApiBearerAuth('jwt')
+  @RequirePermission('academic-papers:delete')
+  @ApiOperation({
+    summary: 'List soft-deleted academic papers (CMS trash view)',
+    description: 'Returns papers with `deleted_at` set, paginated. Requires permission: `academic-papers:delete`.',
+  })
+  @ApiQuery({ name: 'page', required: false, type: Number, example: 1 })
+  @ApiQuery({ name: 'limit', required: false, type: Number, example: 20 })
+  @ApiOkResponse({ type: AcademicPaperListResponseDto, description: 'Paginated list of trashed academic papers' })
+  findTrash(@Query() query: PaginationDto) {
+    return this.service.findTrash(query.page ?? 1, query.limit ?? 20);
+  }
+
+  @Post(':id/restore')
+  @HttpCode(200)
+  @UseGuards(JwtAuthGuard, PermissionGuard)
+  @ApiBearerAuth('jwt')
+  @RequirePermission('academic-papers:delete')
+  @ApiOperation({
+    summary: 'Restore a soft-deleted academic paper',
+    description: 'Sets `deleted_at` back to null. Requires permission: `academic-papers:delete`.',
+  })
+  @ApiParam({ name: 'id', format: 'uuid' })
+  @ApiOkResponse({ type: AcademicPaperMessageResponseDto, description: 'Academic paper restored' })
+  @ApiNotFoundResponse({ type: NotFoundErrorDto, description: 'No soft-deleted paper with that ID exists' })
+  restore(@Param('id') id: string, @CurrentUser() user: CurrentUserPayload) {
+    return this.service.restore(id, user.id);
   }
 
   @Get(':id')

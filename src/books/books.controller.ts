@@ -1,4 +1,4 @@
-import { Body, Controller, Delete, Get, Param, Patch, Post, Query, UseGuards } from '@nestjs/common';
+import { Body, Controller, Delete, Get, HttpCode, Param, Patch, Post, Query, UseGuards } from '@nestjs/common';
 import {
   ApiBadRequestResponse,
   ApiBearerAuth,
@@ -20,6 +20,7 @@ import { CurrentUser, CurrentUserPayload } from '../common/decorators/current-us
 import { Lang } from '../common/decorators/language.decorator';
 import { RequirePermission } from '../common/decorators/require-permission.decorator';
 import { ConflictErrorDto, ForbiddenErrorDto, NotFoundErrorDto, UnauthorizedErrorDto, ValidationErrorDto } from '../common/dto/api-response.dto';
+import { PaginationDto } from '../common/dto/pagination.dto';
 import { PermissionGuard } from '../common/guards/permission.guard';
 import { BookQueryDto, CreateBookDto, UpdateBookDto } from './dto/book.dto';
 import {
@@ -45,6 +46,40 @@ export class BooksController {
   @ApiOkResponse({ type: BookListResponseDto, description: 'Paginated list of books' })
   findAll(@Query() query: BookQueryDto, @Lang() lang: string | null) {
     return this.booksService.findAll(query, lang);
+  }
+
+  @Get('trash')
+  @UseGuards(JwtAuthGuard, PermissionGuard)
+  @ApiBearerAuth('jwt')
+  @RequirePermission('books:delete')
+  @ApiOperation({
+    summary: 'List soft-deleted books (CMS trash view)',
+    description:
+      'Returns books with `deleted_at` set, paginated. ISBN is returned with the `__del_<timestamp>` suffix already stripped, so the CMS can show the original ISBN. Requires permission: `books:delete`.',
+  })
+  @ApiQuery({ name: 'page', required: false, type: Number, example: 1 })
+  @ApiQuery({ name: 'limit', required: false, type: Number, example: 20 })
+  @ApiOkResponse({ type: BookListResponseDto, description: 'Paginated list of trashed books' })
+  findTrash(@Query() query: PaginationDto) {
+    return this.booksService.findTrash(query.page ?? 1, query.limit ?? 20);
+  }
+
+  @Post(':id/restore')
+  @HttpCode(200)
+  @UseGuards(JwtAuthGuard, PermissionGuard)
+  @ApiBearerAuth('jwt')
+  @RequirePermission('books:delete')
+  @ApiOperation({
+    summary: 'Restore a soft-deleted book',
+    description:
+      'Sets `deleted_at` back to null and unsuffixes the ISBN. Fails with 409 if the original ISBN is now used by another book. Requires permission: `books:delete`.',
+  })
+  @ApiParam({ name: 'id', format: 'uuid' })
+  @ApiOkResponse({ type: BookMessageResponseDto, description: 'Book restored' })
+  @ApiNotFoundResponse({ type: NotFoundErrorDto, description: 'No soft-deleted book with that ID exists' })
+  @ApiConflictResponse({ type: ConflictErrorDto, description: 'A live book has taken the restored ISBN' })
+  restore(@Param('id') id: string, @CurrentUser() user: CurrentUserPayload) {
+    return this.booksService.restore(id, user.id);
   }
 
   @Get(':id')

@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateGalleryImageDto, GalleryQueryDto, UpdateGalleryImageDto } from './dto/gallery.dto';
 
@@ -13,6 +13,8 @@ function resolveTranslation(translations: any[], lang: string | null) {
 
 @Injectable()
 export class GalleryService {
+  private readonly logger = new Logger(GalleryService.name);
+
   constructor(private readonly prisma: PrismaService) {}
 
   async findAll(query: GalleryQueryDto, lang: string | null) {
@@ -146,6 +148,61 @@ export class GalleryService {
     } catch {}
 
     return { message: 'Gallery image updated', data: null };
+  }
+
+  /** List soft-deleted gallery images (admin trash view). */
+  async findTrash(page: number, limit: number) {
+    const skip = (page - 1) * limit;
+    const where = { deleted_at: { not: null } };
+
+    const [items, total] = await Promise.all([
+      this.prisma.gallery_images.findMany({
+        where,
+        include: {
+          gallery_image_translations: true,
+          media: true,
+          gallery_categories: { include: { gallery_category_translations: true } },
+        },
+        orderBy: [{ deleted_at: 'desc' }, { media_id: 'asc' }],
+        skip,
+        take: limit,
+      }),
+      this.prisma.gallery_images.count({ where }),
+    ]);
+
+    return {
+      message: 'Trash fetched',
+      data: { items, pagination: { page, limit, total, pages: Math.ceil(total / limit) } },
+    };
+  }
+
+  /** Restore a soft-deleted gallery image. */
+  async restore(id: string, userId: string) {
+    const image = await this.prisma.gallery_images.findFirst({
+      where: { media_id: id, deleted_at: { not: null } },
+    });
+    if (!image) throw new NotFoundException('Deleted gallery image not found');
+
+    await this.prisma.gallery_images.update({
+      where: { media_id: id },
+      data: { deleted_at: null, updated_at: new Date() },
+    });
+
+    try {
+      await this.prisma.audit_logs.create({
+        data: {
+          user_id: userId,
+          action: 'GALLERY_IMAGE_RESTORED',
+          resource_type: 'gallery_image',
+          resource_id: id,
+          changes: { method: 'POST', path: `/api/v1/gallery/${id}/restore` },
+        },
+      });
+    } catch (err) {
+      this.logger.warn(`Failed to write GALLERY_IMAGE_RESTORED audit: ${err}`);
+    }
+
+    return { message: 'Gallery image restored', data: null };
   }
 
   async softDelete(id: string, userId: string) {

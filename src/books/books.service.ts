@@ -1,10 +1,13 @@
-import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
+import { softDeleteSuffix, stripSoftDeleteSuffix } from '../common/utils/soft-delete.util';
 import { resolveTranslation } from '../common/utils/translation.util';
 import { BookQueryDto, CreateBookDto, UpdateBookDto } from './dto/book.dto';
 
 @Injectable()
 export class BooksService {
+  private readonly logger = new Logger(BooksService.name);
+
   constructor(private readonly prisma: PrismaService) {}
 
   async findAll(query: BookQueryDto, lang: string | null) {
@@ -164,14 +167,97 @@ export class BooksService {
     return { message: 'Book updated', data: null };
   }
 
+  /** List soft-deleted books (admin trash view). */
+  async findTrash(page: number, limit: number) {
+    const skip = (page - 1) * limit;
+    const where = { deleted_at: { not: null } };
+
+    const [items, total] = await Promise.all([
+      this.prisma.books.findMany({
+        where,
+        include: {
+          book_translations: true,
+          media: true,
+          book_categories: { include: { book_category_translations: true } },
+        },
+        orderBy: [{ deleted_at: 'desc' }, { id: 'asc' }],
+        skip,
+        take: limit,
+      }),
+      this.prisma.books.count({ where }),
+    ]);
+
+    // Strip the ISBN suffix in the response so the CMS shows the original.
+    const mapped = items.map((b) => ({
+      ...b,
+      isbn: b.isbn ? stripSoftDeleteSuffix(b.isbn) : b.isbn,
+    }));
+
+    return {
+      message: 'Trash fetched',
+      data: { items: mapped, pagination: { page, limit, total, pages: Math.ceil(total / limit) } },
+    };
+  }
+
+  /**
+   * Restore a soft-deleted book. Reverses the ISBN suffix from `softDelete`.
+   * Refused with 409 if a non-deleted book has taken the original ISBN
+   * in the meantime — operator must rename one side and retry.
+   */
+  async restore(id: string, userId: string) {
+    const book = await this.prisma.books.findFirst({
+      where: { id, deleted_at: { not: null } },
+    });
+    if (!book) throw new NotFoundException('Deleted book not found');
+
+    const restoredIsbn = book.isbn ? stripSoftDeleteSuffix(book.isbn) : null;
+
+    if (restoredIsbn) {
+      const conflict = await this.prisma.books.findFirst({
+        where: { isbn: restoredIsbn, deleted_at: null },
+      });
+      if (conflict) {
+        throw new ConflictException(
+          `Cannot restore: ISBN ${restoredIsbn} is now used by another book`,
+        );
+      }
+    }
+
+    await this.prisma.books.update({
+      where: { id },
+      data: {
+        deleted_at: null,
+        ...(restoredIsbn ? { isbn: restoredIsbn } : {}),
+        updated_at: new Date(),
+      },
+    });
+
+    try {
+      await this.prisma.audit_logs.create({
+        data: {
+          user_id: userId,
+          action: 'BOOK_RESTORED',
+          resource_type: 'book',
+          resource_id: id,
+          changes: { method: 'POST', path: `/api/v1/books/${id}/restore` },
+        },
+      });
+    } catch (err) {
+      this.logger.warn(`Failed to write BOOK_RESTORED audit: ${err}`);
+    }
+
+    return { message: 'Book restored', data: null };
+  }
+
   async softDelete(id: string, userId: string) {
     const book = await this.prisma.books.findFirst({ where: { id, deleted_at: null } });
     if (!book) throw new NotFoundException('Book not found');
 
     // Free the unique ISBN by suffixing it; without this, recreating a book
     // with the same ISBN after deletion fails with a P2002 from the DB.
+    // Restore strips the suffix back off (see `restore`).
     const deletedAt = new Date();
-    const isbnUpdate = book.isbn ? { isbn: `${book.isbn}__del_${deletedAt.getTime()}` } : {};
+    const isbnUpdate = book.isbn ? { isbn: `${book.isbn}${softDeleteSuffix(deletedAt)}` } : {};
 
     await this.prisma.books.update({
       where: { id },

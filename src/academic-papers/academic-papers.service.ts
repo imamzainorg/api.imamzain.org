@@ -1,10 +1,12 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { resolveTranslation } from '../common/utils/translation.util';
 import { AcademicPaperQueryDto, CreateAcademicPaperDto, UpdateAcademicPaperDto } from './dto/academic-paper.dto';
 
 @Injectable()
 export class AcademicPapersService {
+  private readonly logger = new Logger(AcademicPapersService.name);
+
   constructor(private readonly prisma: PrismaService) {}
 
   async findAll(query: AcademicPaperQueryDto, lang: string | null) {
@@ -134,6 +136,60 @@ export class AcademicPapersService {
     } catch {}
 
     return { message: 'Paper updated', data: null };
+  }
+
+  /** List soft-deleted academic papers (admin trash view). */
+  async findTrash(page: number, limit: number) {
+    const skip = (page - 1) * limit;
+    const where = { deleted_at: { not: null } };
+
+    const [items, total] = await Promise.all([
+      this.prisma.academic_papers.findMany({
+        where,
+        include: {
+          academic_paper_translations: true,
+          academic_paper_categories: { include: { academic_paper_category_translations: true } },
+        },
+        orderBy: [{ deleted_at: 'desc' }, { id: 'asc' }],
+        skip,
+        take: limit,
+      }),
+      this.prisma.academic_papers.count({ where }),
+    ]);
+
+    return {
+      message: 'Trash fetched',
+      data: { items, pagination: { page, limit, total, pages: Math.ceil(total / limit) } },
+    };
+  }
+
+  /** Restore a soft-deleted academic paper. */
+  async restore(id: string, userId: string) {
+    const paper = await this.prisma.academic_papers.findFirst({
+      where: { id, deleted_at: { not: null } },
+    });
+    if (!paper) throw new NotFoundException('Deleted paper not found');
+
+    await this.prisma.academic_papers.update({
+      where: { id },
+      data: { deleted_at: null, updated_at: new Date() },
+    });
+
+    try {
+      await this.prisma.audit_logs.create({
+        data: {
+          user_id: userId,
+          action: 'ACADEMIC_PAPER_RESTORED',
+          resource_type: 'academic_paper',
+          resource_id: id,
+          changes: { method: 'POST', path: `/api/v1/academic-papers/${id}/restore` },
+        },
+      });
+    } catch (err) {
+      this.logger.warn(`Failed to write ACADEMIC_PAPER_RESTORED audit: ${err}`);
+    }
+
+    return { message: 'Paper restored', data: null };
   }
 
   async softDelete(id: string, userId: string) {

@@ -3,6 +3,7 @@ import {
   Controller,
   Delete,
   Get,
+  HttpCode,
   Param,
   Patch,
   Post,
@@ -30,6 +31,7 @@ import { CurrentUser, CurrentUserPayload } from '../common/decorators/current-us
 import { Lang } from '../common/decorators/language.decorator';
 import { RequirePermission } from '../common/decorators/require-permission.decorator';
 import { ConflictErrorDto, ForbiddenErrorDto, NotFoundErrorDto, UnauthorizedErrorDto, ValidationErrorDto } from '../common/dto/api-response.dto';
+import { PaginationDto } from '../common/dto/pagination.dto';
 import { PermissionGuard } from '../common/guards/permission.guard';
 import { CreatePostDto, PostQueryDto, TogglePublishDto, UpdatePostDto } from './dto/post.dto';
 import {
@@ -94,6 +96,40 @@ export class PostsController {
   @ApiForbiddenResponse({ type: ForbiddenErrorDto, description: 'Insufficient permissions' })
   findAdminOne(@Param('id') id: string, @Lang() lang: string | null) {
     return this.postsService.findOne(id, lang, true);
+  }
+
+  @Get('trash')
+  @UseGuards(JwtAuthGuard, PermissionGuard)
+  @ApiBearerAuth('jwt')
+  @RequirePermission('posts:delete')
+  @ApiOperation({
+    summary: 'List soft-deleted posts (CMS trash view)',
+    description:
+      'Returns posts whose `deleted_at` is set, paginated. Translation slugs are returned with the `__del_<timestamp>` suffix already stripped, so the CMS can show the original slug. Requires permission: `posts:delete`.',
+  })
+  @ApiQuery({ name: 'page', required: false, type: Number, example: 1 })
+  @ApiQuery({ name: 'limit', required: false, type: Number, example: 20 })
+  @ApiOkResponse({ type: PostListResponseDto, description: 'Paginated list of trashed posts' })
+  findTrash(@Query() query: PaginationDto) {
+    return this.postsService.findTrash(query.page ?? 1, query.limit ?? 20);
+  }
+
+  @Post(':id/restore')
+  @HttpCode(200)
+  @UseGuards(JwtAuthGuard, PermissionGuard)
+  @ApiBearerAuth('jwt')
+  @RequirePermission('posts:delete')
+  @ApiOperation({
+    summary: 'Restore a soft-deleted post',
+    description:
+      'Sets `deleted_at` back to null and unsuffixes each translation slug. Fails with 409 if any of the original slugs has been taken by another post in the meantime — rename the conflicting one first. Requires permission: `posts:delete`.',
+  })
+  @ApiParam({ name: 'id', format: 'uuid' })
+  @ApiOkResponse({ type: PostMessageResponseDto, description: 'Post restored' })
+  @ApiNotFoundResponse({ type: NotFoundErrorDto, description: 'No soft-deleted post with that ID exists' })
+  @ApiConflictResponse({ type: ConflictErrorDto, description: 'A live post has taken one of the restored slugs' })
+  restore(@Param('id') id: string, @CurrentUser() user: CurrentUserPayload) {
+    return this.postsService.restore(id, user.id);
   }
 
   @Get(':id')
