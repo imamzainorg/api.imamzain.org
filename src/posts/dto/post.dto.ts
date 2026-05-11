@@ -205,6 +205,29 @@ export class TogglePublishDto {
   is_published!: boolean;
 }
 
+export class BulkIdsDto {
+  @ApiProperty({
+    type: [String],
+    format: 'uuid',
+    minItems: 1,
+    maxItems: 200,
+    description: 'Post IDs to act on (1–200 per request).',
+  })
+  @IsArray()
+  @ArrayMinSize(1)
+  @IsUUID('all', { each: true })
+  ids!: string[];
+}
+
+export class BulkPublishDto extends BulkIdsDto {
+  @ApiProperty({
+    example: true,
+    description: 'Target publish state. Posts already in this state are counted as skipped.',
+  })
+  @IsBoolean()
+  is_published!: boolean;
+}
+
 export enum PostSort {
   Newest = "newest",
   Views = "views",

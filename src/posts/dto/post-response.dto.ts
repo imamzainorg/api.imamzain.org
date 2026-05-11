@@ -160,3 +160,31 @@ export class PostMessageResponseDto {
   @ApiProperty({ type: Object, nullable: true, example: null })
   data: null;
 }
+
+class BulkActionDataDto {
+  @ApiProperty({ example: 8, description: 'Number of rows that actually changed' })
+  affected: number;
+
+  @ApiProperty({
+    type: [String],
+    format: 'uuid',
+    example: [],
+    description:
+      'IDs that were not changed: not found, already soft-deleted, or already in the requested state',
+  })
+  skipped: string[];
+}
+
+export class PostBulkResponseDto {
+  @ApiProperty({ example: true })
+  success: boolean;
+
+  @ApiProperty({ example: '2026-05-11T12:00:00.000Z' })
+  timestamp: string;
+
+  @ApiProperty({ example: '8 post(s) published' })
+  message: string;
+
+  @ApiProperty({ type: BulkActionDataDto })
+  data: BulkActionDataDto;
+}

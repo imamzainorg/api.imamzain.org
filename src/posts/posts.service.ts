@@ -5,7 +5,7 @@ import { sanitizeEditorHtml } from '../common/utils/html-sanitize.util';
 import { readingTimeMinutes } from '../common/utils/reading-time.util';
 import { softDeleteSuffix, stripSoftDeleteSuffix } from '../common/utils/soft-delete.util';
 import { resolveTranslation } from '../common/utils/translation.util';
-import { CreatePostDto, PostQueryDto, PostSort, TogglePublishDto, UpdatePostDto } from './dto/post.dto';
+import { BulkIdsDto, BulkPublishDto, CreatePostDto, PostQueryDto, PostSort, TogglePublishDto, UpdatePostDto } from './dto/post.dto';
 
 /** Decorate a translation row with the derived `reading_time_minutes`. */
 function withReadingTime<T extends { body?: string | null }>(t: T): T & { reading_time_minutes: number } {
@@ -507,6 +507,121 @@ export class PostsService {
     }
 
     return { message: 'Post restored', data: null };
+  }
+
+  /**
+   * Bulk publish / unpublish. Iterates the requested ids, applies the same
+   * `togglePublish` semantics per row (auto-fill `published_at` on first
+   * publish), and audit-logs each transition. Posts that are missing,
+   * soft-deleted, or already in the target state are returned in
+   * `skipped` so the CMS can show "8 published, 2 already published".
+   *
+   * The whole batch runs inside a single transaction — partial failure
+   * rolls back every row. ID cap is enforced by the DTO (200).
+   */
+  async bulkSetPublish(dto: BulkPublishDto, userId: string) {
+    const uniqueIds = Array.from(new Set(dto.ids));
+    const existing = await this.prisma.posts.findMany({
+      where: { id: { in: uniqueIds }, deleted_at: null },
+      select: { id: true, is_published: true, published_at: true },
+    });
+    const existingById = new Map(existing.map((p) => [p.id, p]));
+
+    const skipped: string[] = [];
+    const targets: Array<{ id: string; published_at: Date | null }> = [];
+
+    for (const id of uniqueIds) {
+      const row = existingById.get(id);
+      if (!row || row.is_published === dto.is_published) {
+        skipped.push(id);
+        continue;
+      }
+      targets.push({ id, published_at: row.published_at });
+    }
+
+    if (targets.length === 0) {
+      return { message: 'No posts updated', data: { affected: 0, skipped } };
+    }
+
+    const now = new Date();
+    const action = dto.is_published ? 'POST_PUBLISHED' : 'POST_UNPUBLISHED';
+
+    await this.prisma.$transaction(async (tx) => {
+      for (const t of targets) {
+        const data: any = { is_published: dto.is_published, updated_at: now };
+        if (dto.is_published && !t.published_at) data.published_at = now;
+        await tx.posts.update({ where: { id: t.id }, data });
+        await tx.audit_logs.create({
+          data: {
+            user_id: userId,
+            action,
+            resource_type: 'post',
+            resource_id: t.id,
+            changes: { method: 'POST', path: '/api/v1/posts/bulk/publish', is_published: dto.is_published, bulk: true },
+          },
+        });
+      }
+    });
+
+    return {
+      message: `${targets.length} post(s) ${dto.is_published ? 'published' : 'unpublished'}`,
+      data: { affected: targets.length, skipped },
+    };
+  }
+
+  /**
+   * Bulk soft-delete. Same per-row semantics as `softDelete` (suffix every
+   * translation slug to free the unique constraint, audit-log each row).
+   * Already-deleted or missing ids are returned in `skipped`.
+   *
+   * Slug suffixing has to be a per-row update because each translation row
+   * holds its own slug; we loop within a single transaction so the cost
+   * scales linearly with the batch size but the whole batch is atomic.
+   */
+  async bulkDelete(dto: BulkIdsDto, userId: string) {
+    const uniqueIds = Array.from(new Set(dto.ids));
+    const existing = await this.prisma.posts.findMany({
+      where: { id: { in: uniqueIds }, deleted_at: null },
+      select: { id: true },
+    });
+    const existingIds = new Set(existing.map((p) => p.id));
+
+    const skipped = uniqueIds.filter((id) => !existingIds.has(id));
+    const targetIds = uniqueIds.filter((id) => existingIds.has(id));
+
+    if (targetIds.length === 0) {
+      return { message: 'No posts deleted', data: { affected: 0, skipped } };
+    }
+
+    const deletedAt = new Date();
+    const suffix = softDeleteSuffix(deletedAt);
+
+    await this.prisma.$transaction(async (tx) => {
+      for (const id of targetIds) {
+        const translations = await tx.post_translations.findMany({ where: { post_id: id } });
+        for (const t of translations) {
+          await tx.post_translations.update({
+            where: { post_id_lang: { post_id: id, lang: t.lang } },
+            data: { slug: `${t.slug}${suffix}` },
+          });
+        }
+        await tx.posts.update({ where: { id }, data: { deleted_at: deletedAt } });
+        await tx.audit_logs.create({
+          data: {
+            user_id: userId,
+            action: 'POST_DELETED',
+            resource_type: 'post',
+            resource_id: id,
+            changes: { method: 'POST', path: '/api/v1/posts/bulk/delete', bulk: true },
+          },
+        });
+      }
+    });
+
+    return {
+      message: `${targetIds.length} post(s) deleted`,
+      data: { affected: targetIds.length, skipped },
+    };
   }
 
   async softDelete(id: string, userId: string) {

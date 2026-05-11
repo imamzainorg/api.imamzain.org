@@ -33,8 +33,9 @@ import { RequirePermission } from '../common/decorators/require-permission.decor
 import { ConflictErrorDto, ForbiddenErrorDto, NotFoundErrorDto, UnauthorizedErrorDto, ValidationErrorDto } from '../common/dto/api-response.dto';
 import { PaginationDto } from '../common/dto/pagination.dto';
 import { PermissionGuard } from '../common/guards/permission.guard';
-import { CreatePostDto, PostQueryDto, TogglePublishDto, UpdatePostDto } from './dto/post.dto';
+import { BulkIdsDto, BulkPublishDto, CreatePostDto, PostQueryDto, TogglePublishDto, UpdatePostDto } from './dto/post.dto';
 import {
+  PostBulkResponseDto,
   PostCreatedResponseDto,
   PostDetailResponseDto,
   PostListResponseDto,
@@ -206,6 +207,42 @@ export class PostsController {
     @CurrentUser() user: CurrentUserPayload,
   ) {
     return this.postsService.togglePublish(id, dto, user.id);
+  }
+
+  @Post('bulk/publish')
+  @HttpCode(200)
+  @UseGuards(JwtAuthGuard, PermissionGuard)
+  @ApiBearerAuth('jwt')
+  @RequirePermission('posts:update')
+  @ApiOperation({
+    summary: 'Bulk publish / unpublish posts',
+    description:
+      'Sets `is_published` on every post in `ids` whose current state differs. `published_at` is auto-filled on first publish (per row). Posts that are missing, already deleted, or already in the requested state are returned in `skipped`. Requires permission: `posts:update`. Max 200 ids per call.',
+  })
+  @ApiOkResponse({ type: PostBulkResponseDto, description: 'Counts of updated and skipped posts' })
+  @ApiBadRequestResponse({ type: ValidationErrorDto, description: 'Validation failed (empty ids, more than 200 ids, etc.)' })
+  @ApiUnauthorizedResponse({ type: UnauthorizedErrorDto, description: 'Missing or invalid JWT' })
+  @ApiForbiddenResponse({ type: ForbiddenErrorDto, description: 'Insufficient permissions' })
+  bulkPublish(@Body() dto: BulkPublishDto, @CurrentUser() user: CurrentUserPayload) {
+    return this.postsService.bulkSetPublish(dto, user.id);
+  }
+
+  @Post('bulk/delete')
+  @HttpCode(200)
+  @UseGuards(JwtAuthGuard, PermissionGuard)
+  @ApiBearerAuth('jwt')
+  @RequirePermission('posts:delete')
+  @ApiOperation({
+    summary: 'Bulk soft-delete posts',
+    description:
+      'Soft-deletes every post in `ids` that is still live. Translation slugs are suffixed with `__del_<timestamp>` exactly like single-row delete, so the slugs become reusable. Missing / already-deleted ids are returned in `skipped`. Requires permission: `posts:delete`. Max 200 ids per call.',
+  })
+  @ApiOkResponse({ type: PostBulkResponseDto, description: 'Counts of deleted and skipped posts' })
+  @ApiBadRequestResponse({ type: ValidationErrorDto, description: 'Validation failed (empty ids, more than 200 ids, etc.)' })
+  @ApiUnauthorizedResponse({ type: UnauthorizedErrorDto, description: 'Missing or invalid JWT' })
+  @ApiForbiddenResponse({ type: ForbiddenErrorDto, description: 'Insufficient permissions' })
+  bulkDelete(@Body() dto: BulkIdsDto, @CurrentUser() user: CurrentUserPayload) {
+    return this.postsService.bulkDelete(dto, user.id);
   }
 
   @Delete(':id')

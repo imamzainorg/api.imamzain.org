@@ -28,6 +28,8 @@ import { ContestModule } from "./contest/contest.module";
 import { AuditLogsModule } from "./audit-logs/audit-logs.module";
 import { DashboardModule } from "./dashboard/dashboard.module";
 import { SettingsModule } from "./settings/settings.module";
+import { SearchModule } from "./search/search.module";
+import { FeedsModule } from "./feeds/feeds.module";
 import { HealthController } from "./health/health.controller";
 import { LanguageMiddleware } from "./common/middleware/language.middleware";
 import { SentryModule } from "@sentry/nestjs/setup";
@@ -90,6 +92,8 @@ import { SentryModule } from "@sentry/nestjs/setup";
     AuditLogsModule,
     DashboardModule,
     SettingsModule,
+    SearchModule,
+    FeedsModule,
   ],
   controllers: [HealthController],
   providers: [{ provide: APP_GUARD, useClass: ThrottlerGuard }],
