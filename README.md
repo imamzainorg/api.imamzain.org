@@ -137,6 +137,8 @@ See [.env.example](.env.example) for the complete list with inline descriptions.
 | `npm run prisma:pull` | Sync Prisma schema from the live database |
 | `npm run prisma:generate` | Regenerate the Prisma client |
 | `npm run prisma:studio` | Open Prisma Studio GUI |
+| `npm run prisma:seed` | Seed permissions, roles, languages, bootstrap super-admin, and starter site settings |
+| `npm run prisma:backfill-variants` | One-off: generate sharp WebP variants for media uploaded before the variant pipeline shipped |
 
 ---
 
@@ -224,7 +226,7 @@ Raw OpenAPI 3.0 spec: `GET /openapi.json`.
 | Roles | `/roles` | Admin only |
 | Languages | `/languages` | |
 | Media | `/media` | R2 pre-signed upload URLs; responses include a `variants[]` array with WebP sizes generated at upload time. `POST /media/:id/regenerate-variants` re-runs sharp if a generation step failed |
-| Posts | `/posts` | i18n via translation tables (now with `meta_title` / `meta_description` / `og_image_id` SEO fields per translation); admin-only `GET /posts/admin/:id` returns drafts. Posts whose `published_at` is in the past are auto-published by an EVERY_MINUTE cron |
+| Posts | `/posts` | i18n via translation tables (now with `meta_title` / `meta_description` / `og_image_id` SEO fields + derived `reading_time_minutes` per translation). `?featured=true` filters to flagged posts; `?sort=views` returns the popular sort. Admin-only `GET /posts/admin/:id` returns drafts. Posts whose `published_at` is in the past are auto-published by an EVERY_MINUTE cron |
 | Post Categories | `/post-categories` | |
 | Books | `/books` | |
 | Book Categories | `/book-categories` | |
@@ -234,7 +236,7 @@ Raw OpenAPI 3.0 spec: `GET /openapi.json`.
 | Academic Paper Categories | `/academic-paper-categories` | |
 | Newsletter Subscribers | `/newsletter/subscribers` | List, soft-delete, plus admin `POST /:id/unsubscribe` and `POST /:id/resubscribe` for flipping `is_active` without going through the public token-based flow |
 | Newsletter Campaigns | `/newsletter/campaigns` | Compose, schedule, send, and track per-recipient delivery. Cron-driven batched sender resumes cleanly after process restarts. |
-| Audit logs | `/audit-logs` | Filterable by `user_id`, `action`, `resource_type`, `resource_id`, and date range |
+| Audit logs | `/audit-logs` | List filterable by `user_id`, `action`, `resource_type`, `resource_id`, date range; `GET /audit-logs/:id` returns a single entry with the originating user inlined |
 
 Every soft-deletable resource (posts / books / academic-papers / gallery and their categories) also exposes:
 

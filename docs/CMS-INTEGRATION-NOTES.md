@@ -480,14 +480,91 @@ to the front-end's unsubscribe page (default
 
 ---
 
-## 8. Open follow-ups (still not in this push)
+## 8. Round 4 polish (this push)
 
-- Variant URL exposure on **already-uploaded** media (run
-  `POST /media/:id/regenerate-variants` on each, or write a one-off
-  script that loops the existing `media` rows).
+A small cleanup batch on top of the tier-1 finale.
+
+### a. SQL — apply before the rest
+
+```bash
+psql "$DIRECT_URL" -f prisma/migrations/20260511150000_posts_featured/migration.sql
+npm run prisma:pull && npm run prisma:generate
+```
+
+Adds `posts.is_featured boolean DEFAULT false` plus a partial index
+tuned for the public homepage query.
+
+### b. `is_featured` + sort
+
+`GET /posts` gains two orthogonal query params:
+
+- `?featured=true` — limits to flagged posts (homepage hero / featured rail).
+- `?sort=newest` (default) or `?sort=views` — popular sort.
+
+`CreatePostDto` / `UpdatePostDto` accept `is_featured` (writable via
+the existing `posts:create` / `posts:update` permissions). Every post
+response includes the flag.
+
+Homepage hero query: `GET /posts?featured=true&sort=newest&limit=5`.
+Popular sidebar: `GET /posts?sort=views&limit=5`.
+
+### c. `reading_time_minutes` on post translations
+
+Every post translation in list / detail responses now carries a
+`reading_time_minutes` integer — server-side derived from body text
+length (~1000 chars / minute, tuned for mixed Arabic + English).
+Minimum 1 for any non-empty body, 0 for empty. No schema change.
+
+Use in the CMS / public site to render "5 min read" tags without
+duplicating the heuristic on every consumer.
+
+### d. `GET /audit-logs/:id` detail endpoint
+
+Pairs with the existing `?resource_id=` filter on the list. Use to
+deep-link from an activity-feed panel into a single audit event.
+
+### e. Soft-delete consistency on categories
+
+Pre-existing gap: posts and books suffixed unique columns
+(`(lang, slug)` and `isbn`) on soft-delete so a new record could
+claim the value while the old one sat in the trash. The four category
+services didn't — a soft-deleted category permanently held its
+`(lang, slug)` and blocked any new category from claiming the slug.
+
+This commit makes all four category services match the post pattern:
+suffix on `softDelete`, strip-back-off on `restore`, refused with 409
+if the original slug was claimed by a live category in the meantime.
+
+No API surface change — the CMS sees the suffixed values only via the
+trash listing (which already strips them in the response).
+
+### f. Media variant backfill
+
+```bash
+npm run prisma:backfill-variants
+```
+
+Walks the `media` table, regenerates WebP variants for any row that
+doesn't yet have them. One-time use for catching up media uploaded
+before the variant pipeline shipped in round 2.
+
+Safe to re-run — idempotent (skips rows that already have variants).
+
+### g. Swagger fix
+
+`POST /newsletter/campaigns/:id/send` advertised `CampaignResponseDto`
+(full campaign) but actually returns `{ id, recipient_count }`. Added
+`CampaignSendResponseDto` so typed clients see the real shape.
+
+---
+
+## 9. Open follow-ups (still not in this push)
+
 - Self-service password reset flow (would need an `email` column on
   `users` plus the `password_reset_tokens` table described in the
   migration header).
 - Tags many-to-many (deferred — structural decision).
-- Soft-delete suffix on category translation slugs (pre-existing
-  inconsistency exposed by the trash-restore work; not blocking).
+- Search across resources (global search bar).
+- 2FA on admin accounts (skipped — high-trust in-house deployment).
+- Personal access tokens (skipped — no automation needs today).
+- Versioning / revision history on content edits.
