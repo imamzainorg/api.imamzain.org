@@ -13,6 +13,7 @@
     "prisma:seed": "ts-node -P tsconfig.base.json prisma/seed.ts",
     "prisma:seed-content": "ts-node -P tsconfig.base.json prisma/seed-content.ts",
     "prisma:hydrate-media": "ts-node -P tsconfig.base.json prisma/hydrate-media.ts",
+    "prisma:backfill-variants": "ts-node -P tsconfig.base.json prisma/backfill-media-variants.ts",
     "prisma:diagnose": "ts-node -P tsconfig.base.json prisma/seed-diagnose.ts",
     "type-check": "tsc --noEmit",
     "test": "jest --config jest.config.js",
