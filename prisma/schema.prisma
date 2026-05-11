@@ -235,22 +235,23 @@ model languages {
 
 /// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
 model media {
-  id               String             @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  filename         String
-  alt_text         String?
-  url              String             @unique
-  mime_type        String
-  file_size        BigInt
-  width            Int?
-  height           Int?
-  created_at       DateTime           @default(now()) @db.Timestamptz(6)
-  uploaded_by      String?            @db.Uuid
-  books            books[]
-  gallery_images   gallery_images?
-  users            users?             @relation(fields: [uploaded_by], references: [id], onUpdate: NoAction)
-  media_variants   media_variants[]
-  post_attachments post_attachments[]
-  posts            posts?
+  id                       String              @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  filename                 String
+  alt_text                 String?
+  url                      String              @unique
+  mime_type                String
+  file_size                BigInt
+  width                    Int?
+  height                   Int?
+  created_at               DateTime            @default(now()) @db.Timestamptz(6)
+  uploaded_by              String?             @db.Uuid
+  books                    books[]
+  gallery_images           gallery_images?
+  users                    users?              @relation(fields: [uploaded_by], references: [id], onUpdate: NoAction)
+  media_variants           media_variants[]
+  post_attachments         post_attachments[]
+  posts                    posts?
+  post_translation_og      post_translations[] @relation("post_translation_og_image")
 
   @@index([uploaded_by], map: "idx_media_uploaded_by")
 }
@@ -332,18 +333,23 @@ model post_category_translations {
 }
 
 model post_translations {
-  post_id    String    @db.Uuid
-  lang       String    @db.Char(2)
-  title      String
-  summary    String?
-  body       String
-  slug       String
-  is_default Boolean   @default(false)
-  languages  languages @relation(fields: [lang], references: [code], onDelete: Cascade, onUpdate: NoAction)
-  posts      posts     @relation(fields: [post_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  post_id          String    @db.Uuid
+  lang             String    @db.Char(2)
+  title            String
+  summary          String?
+  body             String
+  slug             String
+  is_default       Boolean   @default(false)
+  meta_title       String?
+  meta_description String?
+  og_image_id      String?   @db.Uuid
+  languages        languages @relation(fields: [lang], references: [code], onDelete: Cascade, onUpdate: NoAction)
+  posts            posts     @relation(fields: [post_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  og_image         media?    @relation("post_translation_og_image", fields: [og_image_id], references: [id], onUpdate: NoAction, onDelete: SetNull)
 
   @@id([post_id, lang])
   @@unique([lang, slug])
+  @@index([og_image_id], map: "idx_post_translations_og_image")
 }
 
 /// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
@@ -425,25 +431,44 @@ model user_roles {
 }
 
 model users {
-  id                    String                  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  username              String                  @unique
-  password_hash         String
-  created_at            DateTime                @default(now()) @db.Timestamptz(6)
-  updated_at            DateTime                @default(now()) @db.Timestamptz(6)
-  deleted_at            DateTime?               @db.Timestamptz(6)
-  token_version         Int                     @default(1)
-  academic_papers       academic_papers[]
-  audit_logs            audit_logs[]
-  books                 books[]
-  contact_submissions   contact_submissions[]
-  gallery_images        gallery_images[]
-  media                 media[]
-  newsletter_campaigns  newsletter_campaigns[]
-  pending_media_uploads pending_media_uploads[]
-  posts                 posts[]
-  proxy_visit_requests  proxy_visit_requests[]
-  refresh_tokens        refresh_tokens[]
-  user_roles            user_roles[]
+  id                     String                   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  username               String                   @unique
+  password_hash          String
+  created_at             DateTime                 @default(now()) @db.Timestamptz(6)
+  updated_at             DateTime                 @default(now()) @db.Timestamptz(6)
+  deleted_at             DateTime?                @db.Timestamptz(6)
+  token_version          Int                      @default(1)
+  academic_papers        academic_papers[]
+  audit_logs             audit_logs[]
+  books                  books[]
+  contact_submissions    contact_submissions[]
+  gallery_images         gallery_images[]
+  media                  media[]
+  newsletter_campaigns   newsletter_campaigns[]
+  pending_media_uploads  pending_media_uploads[]
+  posts                  posts[]
+  proxy_visit_requests   proxy_visit_requests[]
+  refresh_tokens         refresh_tokens[]
+  site_settings_updated  site_settings[]          @relation("site_settings_updated_by")
+  user_roles             user_roles[]
+}
+
+enum site_setting_type {
+  string
+  number
+  boolean
+  json
+}
+
+model site_settings {
+  key         String            @id
+  value       String
+  type        site_setting_type @default(string)
+  description String?
+  is_public   Boolean           @default(false)
+  updated_at  DateTime          @default(now()) @db.Timestamptz(6)
+  updated_by  String?           @db.Uuid
+  users       users?            @relation("site_settings_updated_by", fields: [updated_by], references: [id], onUpdate: NoAction, onDelete: SetNull)
 }
 
 model qutuf_sajjadiya_contest_attempts {
