@@ -332,6 +332,26 @@ const PERMISSIONS: { name: string; translations: Translations }[] = [
     },
   },
 
+  // Audit logs
+  {
+    name: 'audit-logs:read',
+    translations: {
+      ar: { title: 'عرض سجل التدقيق', description: 'مراجعة جميع العمليات المسجلة في النظام' },
+      en: { title: 'View Audit Logs', description: 'Browse the full audit trail of write operations' },
+      fa: { title: 'مشاهده گزارش حسابرسی', description: 'مرور سابقه عملیات ثبت‌شده در سامانه' },
+    },
+  },
+
+  // Contest
+  {
+    name: 'contest:read',
+    translations: {
+      ar: { title: 'عرض محاولات المسابقة', description: 'مراجعة قائمة محاولات مسابقة قطوف السجادية ونتائجها' },
+      en: { title: 'View Contest Attempts', description: 'Review Qutuf Sajjadiyya contest attempts and scores' },
+      fa: { title: 'مشاهده تلاش‌های مسابقه', description: 'مرور لیست تلاش‌های مسابقه قطوف سجادیه و امتیازات' },
+    },
+  },
+
   // Languages
   {
     name: 'languages:read',
@@ -539,7 +559,8 @@ const ROLES: { name: string; permissions: string[]; translations: RoleTranslatio
   },
   {
     name: 'moderator',
-    // Handles inbound contact messages and proxy visit requests; read-only on posts for context
+    // Handles inbound contact messages, proxy visit requests, newsletter,
+    // and reads contest attempts; read-only on posts for context.
     permissions: [
       'forms:read',
       'forms:update',
@@ -548,6 +569,7 @@ const ROLES: { name: string; permissions: string[]; translations: RoleTranslatio
       'newsletter:update',
       'newsletter:delete',
       'posts:read',
+      'contest:read',
       'dashboard:read',
     ],
     translations: {

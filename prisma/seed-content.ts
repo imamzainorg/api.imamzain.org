@@ -132,62 +132,6 @@ const BOOK_TITLE_EN: Record<string, string> = {
   'asaleeb-al-islahat-al-ijtimaieh':                           "Methods of Social Reform According to Imam Al-Sajjad",
 };
 
-// ── Contest correct answers (index matches question number minus 1) ───────────
-// Answers are based on established Islamic scholarly sources about Imam Zain Al-Abidin.
-
-const CORRECT_ANSWERS = [
-  'B', // Q1  – شاه زنان
-  'B', // Q2  – 38 هـ
-  'A', // Q3  – سنتان
-  'B', // Q4  – السيدة فاطمة بنت الإمام الحسن
-  'B', // Q5  – ابن الخيرتين
-  'B', // Q6  – محمد الباقر
-  'B', // Q7  – لسجوده عند كل نعمة
-  'B', // Q8  – أخفاف الإبل
-  'B', // Q9  – عمر بن عبد العزيز
-  'C', // Q10 – 1000 ركعة
-  'B', // Q11 – لحفظ نسل الإمامة
-  'B', // Q12 – زبور آل محمد
-  'B', // Q13 – 50 حقاً
-  'A', // Q14 – جراب الخبز والطعام
-  'C', // Q15 – عفا عنها وأعتقها
-  'B', // Q16 – جابر بن عبد الله الأنصاري
-  'B', // Q17 – مشهد المحيا
-  'B', // Q18 – عند السيدة أم سلمة
-  'B', // Q19 – وجد لؤلؤتين في بطن سمكة
-  'B', // Q20 – أبو محمد
-  'B', // Q21 – 17 من أهل بيته مقتولين
-  'B', // Q22 – حرملة بن كاهل الأسدي
-  'B', // Q23 – زيارة أمين الله
-  'B', // Q24 – أكرمه ونهى أصحابه عن إيذائه
-  'B', // Q25 – يصفر لونه وتأخذه رعدة
-  'B', // Q26 – حق الأم
-  'B', // Q27 – كسرى
-  'B', // Q28 – الكوفة وقيل المدينة
-  'C', // Q29 – 10 أولاد ذكور
-  'B', // Q30 – المرجعية الروحية والعلمية العليا
-  'B', // Q31 – إكرامه عن الخنا وتعويده الخير
-  'B', // Q32 – تواضعاً ورحمة بالناس
-  'B', // Q33 – ما رأيت هاشمياً أفضل منه
-  'A', // Q34 – بالدعاء والتربية ونشر الوعي
-  'B', // Q35 – ألا تجعله وعاءً للحرام
-  'B', // Q36 – سيدي بحبك لي إلا سقيتهم
-  'B', // Q37 – في بادية الحجاز
-  'B', // Q38 – الصحيفة السجادية
-  'A', // Q39 – مالك بن أنس
-  'B', // Q40 – كيان حي وبديع الصياغة
-  'B', // Q41 – المعاهدون من غير المسلمين
-  'B', // Q42 – أن تلين له جانبك
-  'B', // Q43 – بعبادة جده رسول الله
-  'B', // Q44 – التوحيد والتمجيد والاعتراف بالقدرة الإلهية
-  'B', // Q45 – أزالوه من مكانه
-  'B', // Q46 – طول بكائه على مظلومية والده الحسين
-  'B', // Q47 – إعطاء النصيحة الصادقة له
-  'A', // Q48 – الزهري
-  'B', // Q49 – أن تستعملها في طاعة الله
-  'C', // Q50 – شكراً وحباً
-];
-
 // ── JSON types ────────────────────────────────────────────────────────────────
 
 type BookJson = {
@@ -227,11 +171,6 @@ type StudentJson = {
   id: string;
   translations?: { languageid: number; title: string; authors?: string[]; publicationVenue?: string; category?: string; pagenam?: number }[];
   publishedYear?: string; pdfUrl?: string;
-};
-
-type QuestionRaw = {
-  number: string; question: string;
-  options: { A: string; B: string; C: string; D: string };
 };
 
 // ── Category helpers ──────────────────────────────────────────────────────────
@@ -607,54 +546,26 @@ async function seedStudentTheses(categoryId: string): Promise<void> {
   console.log(`  ✓ ${created} student theses seeded, ${skipped} skipped`);
 }
 
-// ── Contest questions ─────────────────────────────────────────────────────────
-
-async function seedContestQuestions(): Promise<void> {
-  const questions = loadJson<QuestionRaw[]>('contests/qatuf-sajjaddiyya/questions.json');
-  let created = 0;
-  let updated = 0;
-
-  for (let i = 0; i < questions.length; i++) {
-    const q = questions[i];
-    const id = `Q${i + 1}`;
-    const correct = CORRECT_ANSWERS[i] ?? 'A';
-
-    const result = await prisma.qutuf_sajjadiya_contest_questions.upsert({
-      where: { id },
-      create: { id, question: q.question, option_a: q.options.A, option_b: q.options.B, option_c: q.options.C, option_d: q.options.D, correct_answer: correct },
-      update: { question: q.question, option_a: q.options.A, option_b: q.options.B, option_c: q.options.C, option_d: q.options.D, correct_answer: correct },
-    });
-
-    // Prisma upsert doesn't distinguish created vs updated; track via pre-check
-    const wasNew = result.question === q.question && result.option_a === q.options.A;
-    if (wasNew) created++; else updated++;
-  }
-
-  console.log(`  ✓ ${questions.length} contest questions (upserted)`);
-}
-
 // ── Main ──────────────────────────────────────────────────────────────────────
+// Contest questions are no longer seeded by this script — operators manage the
+// `qutuf_sajjadiya_contest_questions` table directly via the DB / CMS.
 
 async function main() {
   console.log('Seeding content…\n');
 
-  // 1. Contest questions (no dependencies)
-  console.log('→ Contest questions (Qutuf Sajjadiyya)');
-  await seedContestQuestions();
-
-  // 2. Books
-  console.log('\n→ Books (with categories)');
+  // 1. Books
+  console.log('→ Books (with categories)');
   await seedBooks();
 
-  // 3. Posts
+  // 2. Posts
   console.log('\n→ Posts (with categories and attachments)');
   await seedPosts();
 
-  // 4. Gallery
+  // 3. Gallery
   console.log('\n→ Gallery images (with categories)');
   await seedGallery();
 
-  // 5. Academic papers
+  // 4. Academic papers
   console.log('\n→ Academic paper categories');
   const academicCatMap = await seedAcademicCategories();
 
