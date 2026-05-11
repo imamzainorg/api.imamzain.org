@@ -1,10 +1,12 @@
-import { ConflictException, Injectable, NotFoundException } from '@nestjs/common';
+import { ConflictException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import * as bcrypt from 'bcryptjs';
 import { PrismaService } from '../prisma/prisma.service';
-import { AssignRoleDto, CreateUserDto, UpdateUserDto } from './dto/user.dto';
+import { AdminResetPasswordDto, AssignRoleDto, CreateUserDto, UpdateUserDto } from './dto/user.dto';
 
 @Injectable()
 export class UsersService {
+  private readonly logger = new Logger(UsersService.name);
+
   constructor(private readonly prisma: PrismaService) {}
 
   async findAll(page: number, limit: number) {
@@ -128,6 +130,58 @@ export class UsersService {
 
     const { password_hash, ...result } = updated as any;
     return { message: 'User updated', data: result };
+  }
+
+  /**
+   * Admin-driven password reset for a user who has forgotten theirs.
+   * No self-service "forgot password" flow exists because the users table
+   * has no email column — recovery is by deliberate admin action. The
+   * admin types a new password into the CMS, the API hashes it, bumps
+   * token_version (invalidates outstanding access tokens), and revokes
+   * every refresh token so the user is forced to re-authenticate.
+   *
+   * The admin who triggered this MUST share the new password with the
+   * user out-of-band (in person / Slack / phone). The plaintext is never
+   * stored.
+   */
+  async adminResetPassword(userId: string, dto: AdminResetPasswordDto, actorId: string) {
+    const user = await this.prisma.users.findFirst({ where: { id: userId, deleted_at: null } });
+    if (!user) throw new NotFoundException('User not found');
+
+    const rounds = parseInt(process.env.BCRYPT_ROUNDS ?? '12', 10);
+    const safeRounds = Number.isFinite(rounds) && rounds >= 4 && rounds <= 15 ? rounds : 12;
+    const password_hash = await bcrypt.hash(dto.new_password, safeRounds);
+
+    await this.prisma.$transaction([
+      this.prisma.users.update({
+        where: { id: userId },
+        data: {
+          password_hash,
+          updated_at: new Date(),
+          token_version: { increment: 1 },
+        },
+      }),
+      this.prisma.refresh_tokens.updateMany({
+        where: { user_id: userId, revoked_at: null },
+        data: { revoked_at: new Date() },
+      }),
+    ]);
+
+    try {
+      await this.prisma.audit_logs.create({
+        data: {
+          user_id: actorId,
+          action: 'USER_PASSWORD_RESET_BY_ADMIN',
+          resource_type: 'user',
+          resource_id: userId,
+          changes: { method: 'POST', path: `/api/v1/users/${userId}/reset-password` },
+        },
+      });
+    } catch (err) {
+      this.logger.warn(`Failed to write USER_PASSWORD_RESET_BY_ADMIN audit: ${err}`);
+    }
+
+    return { message: 'Password reset; user must re-authenticate', data: null };
   }
 
   async softDelete(id: string, actorId: string) {

@@ -37,3 +37,16 @@ export class AssignRoleDto {
   @IsUUID()
   role_id!: string;
 }
+
+export class AdminResetPasswordDto {
+  @ApiProperty({
+    example: "new-strong-password",
+    description: "New password to assign. Min 6 chars; bcrypt truncates at 72 bytes so the max is generously bounded.",
+    minLength: 6,
+    maxLength: 128,
+  })
+  @IsString()
+  @MinLength(6)
+  @MaxLength(128)
+  new_password!: string;
+}

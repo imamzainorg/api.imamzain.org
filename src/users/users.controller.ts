@@ -30,7 +30,7 @@ import { RequirePermission } from '../common/decorators/require-permission.decor
 import { ConflictErrorDto, ForbiddenErrorDto, NotFoundErrorDto, UnauthorizedErrorDto, ValidationErrorDto } from '../common/dto/api-response.dto';
 import { PaginationDto } from '../common/dto/pagination.dto';
 import { PermissionGuard } from '../common/guards/permission.guard';
-import { AssignRoleDto, CreateUserDto, UpdateUserDto } from './dto/user.dto';
+import { AdminResetPasswordDto, AssignRoleDto, CreateUserDto, UpdateUserDto } from './dto/user.dto';
 import {
   UserCreatedResponseDto,
   UserDetailResponseDto,
@@ -130,5 +130,28 @@ export class UsersController {
     @CurrentUser() user: CurrentUserPayload,
   ) {
     return this.usersService.removeRole(id, roleId, user.id);
+  }
+
+  @Post(':id/reset-password')
+  @HttpCode(200)
+  @RequirePermission('users:update')
+  @ApiOperation({
+    summary: 'Admin-driven password reset',
+    description:
+      'Sets a new password for a user who has forgotten theirs (no self-service forgot-password flow — the users table has no email column). ' +
+      'Bumps `token_version` to invalidate every outstanding access token, and revokes every active refresh token so the user must re-authenticate on next use. ' +
+      'The admin who triggered this is responsible for handing the new password to the user out-of-band (in person, Slack, phone). ' +
+      'Requires permission: `users:update`.',
+  })
+  @ApiParam({ name: 'id', format: 'uuid', description: 'User ID' })
+  @ApiOkResponse({ type: UserMessageResponseDto, description: 'Password reset; user must re-authenticate' })
+  @ApiBadRequestResponse({ type: ValidationErrorDto, description: 'Validation failed (password too short / too long)' })
+  @ApiNotFoundResponse({ type: NotFoundErrorDto, description: 'No user with that ID exists or it has been deleted' })
+  resetPassword(
+    @Param('id') id: string,
+    @Body() dto: AdminResetPasswordDto,
+    @CurrentUser() user: CurrentUserPayload,
+  ) {
+    return this.usersService.adminResetPassword(id, dto, user.id);
   }
 }
