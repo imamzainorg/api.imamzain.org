@@ -16,8 +16,12 @@ export class NewsletterService {
    * HMAC of the subscriber id, returned to the client at subscribe time and
    * required at unsubscribe time. Replaces the previous "anyone can
    * unsubscribe anyone by guessing an email" surface.
+   *
+   * Exposed publicly so the campaign sender can build unsubscribe URLs
+   * for each recipient at send time. The secret is server-side only —
+   * the token itself is safe to embed in outbound emails.
    */
-  private signUnsubscribeToken(subscriberId: string): string {
+  signUnsubscribeToken(subscriberId: string): string {
     return crypto
       .createHmac('sha256', UNSUBSCRIBE_SECRET)
       .update(subscriberId)
