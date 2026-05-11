@@ -45,6 +45,7 @@ import {
   CampaignListResponseDto,
   CampaignMessageResponseDto,
   CampaignResponseDto,
+  CampaignSendResponseDto,
 } from './dto/campaign-response.dto';
 
 @ApiTags('Newsletter Campaigns')
@@ -116,7 +117,7 @@ export class CampaignsController {
       'Transitions the campaign to `sending`, populates one recipient row per currently-active subscriber, and returns immediately. A background cron tick (EVERY_MINUTE) works through pending recipients in batches of 50 — this keeps the API responsive and lets the sender resume cleanly after a process crash (the recipient table tells us what is left). When all rows are processed the campaign flips to `sent`. Requires permission: `newsletter:update`.',
   })
   @ApiParam({ name: 'id', format: 'uuid' })
-  @ApiOkResponse({ type: CampaignResponseDto, description: 'Campaign queued; delivery is in progress' })
+  @ApiOkResponse({ type: CampaignSendResponseDto, description: 'Campaign queued; delivery is in progress' })
   @ApiBadRequestResponse({ type: ValidationErrorDto, description: 'No active subscribers to send to' })
   @ApiNotFoundResponse({ type: NotFoundErrorDto, description: 'No campaign with that ID exists' })
   @ApiConflictResponse({ type: ConflictErrorDto, description: 'Campaign is not in a sendable state' })

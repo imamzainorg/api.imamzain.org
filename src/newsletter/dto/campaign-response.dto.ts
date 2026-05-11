@@ -81,6 +81,32 @@ export class CampaignResponseDto {
   data: CampaignDto;
 }
 
+class CampaignSendDataDto {
+  @ApiProperty({ format: 'uuid', description: 'Campaign that was queued' })
+  id: string;
+
+  @ApiProperty({
+    example: 1280,
+    description:
+      'Number of newsletter_campaign_recipients rows created — i.e. the number of active subscribers the campaign will attempt to reach. Watch the campaign detail endpoint to track delivered_count / failed_count as the cron processes the batch.',
+  })
+  recipient_count: number;
+}
+
+export class CampaignSendResponseDto {
+  @ApiProperty({ example: true })
+  success: boolean;
+
+  @ApiProperty({ example: '2026-05-11T10:00:00.000Z' })
+  timestamp: string;
+
+  @ApiProperty({ example: 'Campaign queued for sending' })
+  message: string;
+
+  @ApiProperty({ type: CampaignSendDataDto })
+  data: CampaignSendDataDto;
+}
+
 export class CampaignMessageResponseDto {
   @ApiProperty({ example: true })
   success: boolean;
