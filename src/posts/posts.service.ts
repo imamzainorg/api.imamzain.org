@@ -2,9 +2,15 @@ import { BadRequestException, ConflictException, Injectable, Logger, NotFoundExc
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { PrismaService } from '../prisma/prisma.service';
 import { sanitizeEditorHtml } from '../common/utils/html-sanitize.util';
+import { readingTimeMinutes } from '../common/utils/reading-time.util';
 import { softDeleteSuffix, stripSoftDeleteSuffix } from '../common/utils/soft-delete.util';
 import { resolveTranslation } from '../common/utils/translation.util';
 import { CreatePostDto, PostQueryDto, TogglePublishDto, UpdatePostDto } from './dto/post.dto';
+
+/** Decorate a translation row with the derived `reading_time_minutes`. */
+function withReadingTime<T extends { body?: string | null }>(t: T): T & { reading_time_minutes: number } {
+  return { ...t, reading_time_minutes: readingTimeMinutes(t.body ?? null) };
+}
 
 @Injectable()
 export class PostsService {
@@ -57,10 +63,14 @@ export class PostsService {
       this.prisma.posts.count({ where }),
     ]);
 
-    const mapped = items.map((post) => ({
-      ...post,
-      translation: resolveTranslation(post.post_translations, lang),
-    }));
+    const mapped = items.map((post) => {
+      const decorated = post.post_translations.map(withReadingTime);
+      return {
+        ...post,
+        post_translations: decorated,
+        translation: resolveTranslation(decorated, lang),
+      };
+    });
 
     return {
       message: 'Posts fetched',
@@ -84,9 +94,11 @@ export class PostsService {
 
     if (!post) throw new NotFoundException('Post not found');
 
+    const decorated = post.post_translations.map(withReadingTime);
+
     return {
       message: 'Post fetched',
-      data: { ...post, translation: resolveTranslation(post.post_translations, lang) },
+      data: { ...post, post_translations: decorated, translation: resolveTranslation(decorated, lang) },
     };
   }
 

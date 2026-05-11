@@ -62,3 +62,17 @@ export class AuditLogListResponseDto {
   @ApiProperty({ type: AuditLogListDataDto })
   data: AuditLogListDataDto;
 }
+
+export class AuditLogResponseDto {
+  @ApiProperty({ example: true })
+  success: boolean;
+
+  @ApiProperty({ example: '2024-01-01T00:00:00.000Z' })
+  timestamp: string;
+
+  @ApiProperty({ example: 'Audit log entry fetched' })
+  message: string;
+
+  @ApiProperty({ type: AuditLogDto })
+  data: AuditLogDto;
+}

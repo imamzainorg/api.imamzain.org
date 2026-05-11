@@ -37,6 +37,13 @@ class PostTranslationItemDto {
     description: 'SEO: media id for og:image / twitter:image. Null falls back to the post cover_image_id.',
   })
   og_image_id?: string;
+
+  @ApiProperty({
+    example: 4,
+    description:
+      'Server-side estimated reading time in minutes. Derived from body text length (~1000 characters per minute, tuned for mixed Arabic + English). Minimum 1 for any non-empty body.',
+  })
+  reading_time_minutes: number;
 }
 
 class PostAttachmentDto {

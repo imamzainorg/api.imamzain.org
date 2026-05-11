@@ -1,19 +1,21 @@
-import { Controller, Get, Query, UseGuards } from '@nestjs/common';
+import { Controller, Get, Param, ParseUUIDPipe, Query, UseGuards } from '@nestjs/common';
 import {
   ApiBearerAuth,
   ApiForbiddenResponse,
+  ApiNotFoundResponse,
   ApiOkResponse,
   ApiOperation,
+  ApiParam,
   ApiTags,
   ApiUnauthorizedResponse,
 } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RequirePermission } from '../common/decorators/require-permission.decorator';
-import { ForbiddenErrorDto, UnauthorizedErrorDto } from '../common/dto/api-response.dto';
+import { ForbiddenErrorDto, NotFoundErrorDto, UnauthorizedErrorDto } from '../common/dto/api-response.dto';
 import { PermissionGuard } from '../common/guards/permission.guard';
 import { AuditLogsService } from './audit-logs.service';
 import { AuditLogQueryDto } from './dto/audit-log-query.dto';
-import { AuditLogListResponseDto } from './dto/audit-log-response.dto';
+import { AuditLogListResponseDto, AuditLogResponseDto } from './dto/audit-log-response.dto';
 
 @ApiTags('Audit Logs')
 @Controller('audit-logs')
@@ -41,5 +43,19 @@ export class AuditLogsController {
       from: query.from,
       to: query.to,
     });
+  }
+
+  @Get(':id')
+  @RequirePermission('audit-logs:read')
+  @ApiOperation({
+    summary: 'Get a single audit log entry by ID',
+    description:
+      'Returns one audit row with the originating user inlined. Useful as a deep-link target from the activity-feed UI. Requires permission: `audit-logs:read`.',
+  })
+  @ApiParam({ name: 'id', format: 'uuid' })
+  @ApiOkResponse({ type: AuditLogResponseDto, description: 'Audit log entry' })
+  @ApiNotFoundResponse({ type: NotFoundErrorDto, description: 'No audit log entry with that ID exists' })
+  findOne(@Param('id', new ParseUUIDPipe()) id: string) {
+    return this.auditLogsService.findOne(id);
   }
 }

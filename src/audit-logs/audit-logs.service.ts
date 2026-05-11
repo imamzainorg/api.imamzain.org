@@ -1,9 +1,18 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 
 @Injectable()
 export class AuditLogsService {
   constructor(private readonly prisma: PrismaService) {}
+
+  async findOne(id: string) {
+    const entry = await this.prisma.audit_logs.findUnique({
+      where: { id },
+      include: { users: { select: { id: true, username: true } } },
+    });
+    if (!entry) throw new NotFoundException('Audit log entry not found');
+    return { message: 'Audit log entry fetched', data: entry };
+  }
 
   async findAll(
     page: number,
