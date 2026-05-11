@@ -14,8 +14,13 @@ describe("GalleryCategoriesService", () => {
   let prisma: any;
 
   const mockTx = {
-    gallery_categories: { create: jest.fn() },
-    gallery_category_translations: { createMany: jest.fn() },
+    gallery_categories: { create: jest.fn(), update: jest.fn().mockResolvedValue({}) },
+    gallery_category_translations: {
+      createMany: jest.fn(),
+      findMany: jest.fn().mockResolvedValue([]),
+      update: jest.fn().mockResolvedValue({}),
+      findFirst: jest.fn().mockResolvedValue(null),
+    },
   };
 
   beforeEach(async () => {
@@ -201,10 +206,12 @@ describe("GalleryCategoriesService", () => {
     it("soft-deletes the category when no images reference it", async () => {
       prisma.gallery_categories.findFirst.mockResolvedValue(baseCategory);
       prisma.gallery_images.count.mockResolvedValue(0);
+      mockTx.gallery_category_translations.findMany.mockResolvedValue([]);
+      prisma.$transaction.mockImplementation((cb: any) => cb(mockTx));
 
       const result = await service.softDelete("cat-1", "actor-1");
 
-      expect(prisma.gallery_categories.update).toHaveBeenCalledWith(
+      expect(mockTx.gallery_categories.update).toHaveBeenCalledWith(
         expect.objectContaining({ data: { deleted_at: expect.any(Date) } }),
       );
       expect(result.message).toBe("Category deleted");

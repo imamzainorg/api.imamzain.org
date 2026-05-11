@@ -1,5 +1,6 @@
 import { ConflictException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
+import { softDeleteSuffix, stripSoftDeleteSuffix } from '../common/utils/soft-delete.util';
 import { resolveTranslation } from '../common/utils/translation.util';
 import { CreateGalleryCategoryDto, UpdateGalleryCategoryDto } from './dto/gallery-category.dto';
 
@@ -107,14 +108,41 @@ export class GalleryCategoriesService {
     };
   }
 
-  /** Restore a soft-deleted gallery category. */
+  /**
+   * Restore a soft-deleted gallery category. Reverses the slug suffix
+   * from softDelete; refused with 409 on slug conflict.
+   */
   async restore(id: string, actorId: string) {
     const category = await this.prisma.gallery_categories.findFirst({
       where: { id, deleted_at: { not: null } },
+      include: { gallery_category_translations: true },
     });
     if (!category) throw new NotFoundException('Deleted category not found');
 
-    await this.prisma.gallery_categories.update({ where: { id }, data: { deleted_at: null } });
+    const restoredSlugs = category.gallery_category_translations.map((t) => ({
+      lang: t.lang,
+      original: stripSoftDeleteSuffix(t.slug),
+    }));
+
+    await this.prisma.$transaction(async (tx) => {
+      for (const { lang, original } of restoredSlugs) {
+        const conflict = await tx.gallery_category_translations.findFirst({
+          where: { lang, slug: original, NOT: { category_id: id } },
+        });
+        if (conflict) {
+          throw new ConflictException(
+            `Cannot restore: slug "${original}" (${lang}) is now used by another category`,
+          );
+        }
+      }
+      for (const { lang, original } of restoredSlugs) {
+        await tx.gallery_category_translations.update({
+          where: { category_id_lang: { category_id: id, lang } },
+          data: { slug: original },
+        });
+      }
+      await tx.gallery_categories.update({ where: { id }, data: { deleted_at: null } });
+    });
 
     try {
       await this.prisma.audit_logs.create({
@@ -134,7 +162,20 @@ export class GalleryCategoriesService {
     const imageCount = await this.prisma.gallery_images.count({ where: { category_id: id, deleted_at: null } });
     if (imageCount > 0) throw new ConflictException('Cannot delete a category that contains gallery images');
 
-    await this.prisma.gallery_categories.update({ where: { id }, data: { deleted_at: new Date() } });
+    // Free the (lang, slug) unique constraint; restore reverses it.
+    const deletedAt = new Date();
+    const suffix = softDeleteSuffix(deletedAt);
+
+    await this.prisma.$transaction(async (tx) => {
+      const translations = await tx.gallery_category_translations.findMany({ where: { category_id: id } });
+      for (const t of translations) {
+        await tx.gallery_category_translations.update({
+          where: { category_id_lang: { category_id: id, lang: t.lang } },
+          data: { slug: `${t.slug}${suffix}` },
+        });
+      }
+      await tx.gallery_categories.update({ where: { id }, data: { deleted_at: deletedAt } });
+    });
 
     try {
       await this.prisma.audit_logs.create({

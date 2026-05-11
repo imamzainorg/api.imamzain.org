@@ -1,5 +1,6 @@
 import { ConflictException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
+import { softDeleteSuffix, stripSoftDeleteSuffix } from '../common/utils/soft-delete.util';
 import { resolveTranslation } from '../common/utils/translation.util';
 import { CreateAcademicPaperCategoryDto, UpdateAcademicPaperCategoryDto } from './dto/academic-paper-category.dto';
 
@@ -107,14 +108,41 @@ export class AcademicPaperCategoriesService {
     };
   }
 
-  /** Restore a soft-deleted academic paper category. */
+  /**
+   * Restore a soft-deleted academic paper category. Reverses the slug
+   * suffix from softDelete; refused with 409 on slug conflict.
+   */
   async restore(id: string, actorId: string) {
     const category = await this.prisma.academic_paper_categories.findFirst({
       where: { id, deleted_at: { not: null } },
+      include: { academic_paper_category_translations: true },
     });
     if (!category) throw new NotFoundException('Deleted category not found');
 
-    await this.prisma.academic_paper_categories.update({ where: { id }, data: { deleted_at: null } });
+    const restoredSlugs = category.academic_paper_category_translations.map((t) => ({
+      lang: t.lang,
+      original: stripSoftDeleteSuffix(t.slug),
+    }));
+
+    await this.prisma.$transaction(async (tx) => {
+      for (const { lang, original } of restoredSlugs) {
+        const conflict = await tx.academic_paper_category_translations.findFirst({
+          where: { lang, slug: original, NOT: { category_id: id } },
+        });
+        if (conflict) {
+          throw new ConflictException(
+            `Cannot restore: slug "${original}" (${lang}) is now used by another category`,
+          );
+        }
+      }
+      for (const { lang, original } of restoredSlugs) {
+        await tx.academic_paper_category_translations.update({
+          where: { category_id_lang: { category_id: id, lang } },
+          data: { slug: original },
+        });
+      }
+      await tx.academic_paper_categories.update({ where: { id }, data: { deleted_at: null } });
+    });
 
     try {
       await this.prisma.audit_logs.create({
@@ -134,7 +162,20 @@ export class AcademicPaperCategoriesService {
     const paperCount = await this.prisma.academic_papers.count({ where: { category_id: id, deleted_at: null } });
     if (paperCount > 0) throw new ConflictException('Cannot delete a category that contains academic papers');
 
-    await this.prisma.academic_paper_categories.update({ where: { id }, data: { deleted_at: new Date() } });
+    // Free the (lang, slug) unique constraint; restore reverses it.
+    const deletedAt = new Date();
+    const suffix = softDeleteSuffix(deletedAt);
+
+    await this.prisma.$transaction(async (tx) => {
+      const translations = await tx.academic_paper_category_translations.findMany({ where: { category_id: id } });
+      for (const t of translations) {
+        await tx.academic_paper_category_translations.update({
+          where: { category_id_lang: { category_id: id, lang: t.lang } },
+          data: { slug: `${t.slug}${suffix}` },
+        });
+      }
+      await tx.academic_paper_categories.update({ where: { id }, data: { deleted_at: deletedAt } });
+    });
 
     try {
       await this.prisma.audit_logs.create({

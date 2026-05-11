@@ -14,8 +14,13 @@ describe("BookCategoriesService", () => {
   let prisma: any;
 
   const mockTx = {
-    book_categories: { create: jest.fn() },
-    book_category_translations: { createMany: jest.fn() },
+    book_categories: { create: jest.fn(), update: jest.fn().mockResolvedValue({}) },
+    book_category_translations: {
+      createMany: jest.fn(),
+      findMany: jest.fn().mockResolvedValue([]),
+      update: jest.fn().mockResolvedValue({}),
+      findFirst: jest.fn().mockResolvedValue(null),
+    },
   };
 
   beforeEach(async () => {
@@ -197,10 +202,12 @@ describe("BookCategoriesService", () => {
     it("soft-deletes the category when no books reference it", async () => {
       prisma.book_categories.findFirst.mockResolvedValue(baseCategory);
       prisma.books.count.mockResolvedValue(0);
+      mockTx.book_category_translations.findMany.mockResolvedValue([]);
+      prisma.$transaction.mockImplementation((cb: any) => cb(mockTx));
 
       const result = await service.softDelete("cat-1", "actor-1");
 
-      expect(prisma.book_categories.update).toHaveBeenCalledWith(
+      expect(mockTx.book_categories.update).toHaveBeenCalledWith(
         expect.objectContaining({ data: { deleted_at: expect.any(Date) } }),
       );
       expect(result.message).toBe("Category deleted");
