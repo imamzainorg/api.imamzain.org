@@ -352,6 +352,32 @@ const PERMISSIONS: { name: string; translations: Translations }[] = [
     },
   },
 
+  // Site settings
+  {
+    name: 'settings:read',
+    translations: {
+      ar: { title: 'عرض الإعدادات', description: 'مراجعة إعدادات الموقع العامة والخاصة' },
+      en: { title: 'View Site Settings', description: 'Read public and admin site settings' },
+      fa: { title: 'مشاهده تنظیمات سایت', description: 'مرور تنظیمات عمومی و مدیریتی سایت' },
+    },
+  },
+  {
+    name: 'settings:update',
+    translations: {
+      ar: { title: 'تعديل الإعدادات', description: 'إضافة وتحديث إعدادات الموقع' },
+      en: { title: 'Update Site Settings', description: 'Create and update site-wide settings' },
+      fa: { title: 'به‌روزرسانی تنظیمات سایت', description: 'افزودن و به‌روزرسانی تنظیمات سایت' },
+    },
+  },
+  {
+    name: 'settings:delete',
+    translations: {
+      ar: { title: 'حذف الإعدادات', description: 'إزالة مفاتيح الإعدادات' },
+      en: { title: 'Delete Site Settings', description: 'Remove site setting keys' },
+      fa: { title: 'حذف تنظیمات سایت', description: 'حذف کلیدهای تنظیمات سایت' },
+    },
+  },
+
   // Languages
   {
     name: 'languages:read',
@@ -687,6 +713,37 @@ async function main() {
       console.log(`  ✓ Created user "${user.username}" with role super-admin`);
     }
   }
+
+  // 5. Seed initial site settings (idempotent — only sets values that don't yet exist)
+  console.log('→ Site settings');
+  const INITIAL_SETTINGS: Array<{
+    key: string;
+    value: string;
+    type?: 'string' | 'number' | 'boolean' | 'json';
+    description: string;
+    is_public: boolean;
+  }> = [
+    { key: 'site_name', value: 'Imam Zain Foundation', description: 'Title shown in <title> / og:site_name / footer.', is_public: true },
+    { key: 'site_tagline', value: 'الإمام علي بن الحسين زين العابدين', description: 'Tagline beneath the site name.', is_public: true },
+    { key: 'default_language', value: 'ar', description: 'Fallback language for translations when none is requested.', is_public: true },
+    { key: 'contact_email', value: 'info@imamzain.org', description: 'Public-facing contact email.', is_public: true },
+    { key: 'notifications_email_to', value: 'info@imamzain.org', description: 'Address that receives form / proxy-visit notifications. Overrides the EMAIL_TO env var when set.', is_public: false },
+    { key: 'social_facebook', value: '', description: 'Facebook page URL (empty to hide).', is_public: true },
+    { key: 'social_twitter', value: '', description: 'X / Twitter URL (empty to hide).', is_public: true },
+    { key: 'social_instagram', value: '', description: 'Instagram URL (empty to hide).', is_public: true },
+    { key: 'social_youtube', value: '', description: 'YouTube channel URL (empty to hide).', is_public: true },
+  ];
+
+  let createdSettings = 0;
+  for (const s of INITIAL_SETTINGS) {
+    const result = await prisma.site_settings.upsert({
+      where: { key: s.key },
+      create: { key: s.key, value: s.value, type: s.type ?? 'string', description: s.description, is_public: s.is_public },
+      update: {}, // never overwrite an existing setting — operators have likely tuned them
+    });
+    if (result) createdSettings++;
+  }
+  console.log(`  ✓ ${INITIAL_SETTINGS.length} setting keys present (existing values preserved)`);
 
   console.log('\nSeed complete.');
 }
