@@ -306,9 +306,12 @@ export class CampaignsService {
     if (!rendered.includes('{{unsubscribe_url}}')) {
       rendered += DEFAULT_FOOTER_TEMPLATE;
     }
+    // String.prototype.replaceAll would be cleaner but tsconfig.base targets
+    // ES2020, which ts-node enforces strictly when running the seed / backfill
+    // scripts. Regex/g works on every target.
     return rendered
-      .replaceAll('{{unsubscribe_url}}', unsubscribeUrlValue)
-      .replaceAll('{{email}}', email);
+      .replace(/\{\{unsubscribe_url\}\}/g, unsubscribeUrlValue)
+      .replace(/\{\{email\}\}/g, email);
   }
 
   /**
