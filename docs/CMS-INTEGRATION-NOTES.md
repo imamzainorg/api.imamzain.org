@@ -558,13 +558,134 @@ Safe to re-run — idempotent (skips rows that already have variants).
 
 ---
 
-## 9. Open follow-ups (still not in this push)
+## 9. Round 5 — tier 3 (this push)
+
+Pure code; no migration. Four new capabilities for the CMS and public
+site, all backed by existing tables.
+
+### a. Global search — `GET /search`
+
+```text
+GET /search?q=<term>&types=post,book,academic_paper,gallery_image&limit=10
+```
+
+- **Public** — only returns content visible to anonymous users
+  (published posts; non-deleted books / papers / gallery).
+- `q` is 2–200 characters. Insensitive substring match — no
+  Postgres full-text index yet; revisit if the corpus or query volume
+  grows past the comfort of `ILIKE`.
+- `types` is optional and case-sensitive enum; omitting it searches all
+  four resource types. Comma-separated.
+- `limit` is per-type (default 10, max 50). The total response can
+  therefore contain up to `4 × limit` hits.
+- Rate-limited to 60 req/min/IP.
+
+Response shape (buckets are absent when the corresponding type is not
+requested):
+
+```jsonc
+{
+  "q": "الإمام",
+  "post":           { "items": [{ "type": "post", "id": "...", "title": "...", "summary": "...", "lang": "ar", "slug": "...", "cover_image_url": "..." }], "total": 4 },
+  "book":           { "items": [...], "total": 2 },
+  "academic_paper": { "items": [...], "total": 1 },
+  "gallery_image":  { "items": [...], "total": 0 }
+}
+```
+
+Per-hit language resolution: the matched translation is the one that
+actually contained the query; the `Accept-Language` header only kicks
+in to break ties when multiple translations match. This way an Arabic
+search that surfaces an English summary returns the English row, not
+the Arabic default whose text doesn't contain the query.
+
+### b. Public sitemap — `GET /sitemap.xml`
+
+Returns an `application/xml` urlset of every published post, with
+`xhtml:link` hreflang alternates per translation. Cached with
+`Cache-Control: public, max-age=900` so the CDN takes most of the
+load.
+
+URL shape: `${PUBLIC_SITE_URL}/{lang}/posts/{slug}`. Set
+`PUBLIC_SITE_URL` (defaults to `https://imamzain.org`) to the
+canonical origin you want search engines to crawl.
+
+The endpoint emits every published row in one document. At current
+corpus size (low thousands of posts × two languages) this is well
+inside the 50k-URL practical cap for a single sitemap; if the corpus
+grows we'll split into a sitemap-index pointing at chunked sub-
+sitemaps. Public-site responsibility is just to reference it in
+`robots.txt`:
+
+```text
+Sitemap: https://api.imamzain.org/api/v1/sitemap.xml
+```
+
+### c. Posts RSS feed — `GET /rss/posts.xml`
+
+RSS 2.0 feed of the 50 most recent published posts, resolved to each
+post's default translation (RSS readers don't model language
+alternates well — one item per post). `application/rss+xml`, same
+15-minute `Cache-Control` as the sitemap.
+
+`PUBLIC_SITE_NAME` (defaults to `Imam Zain Foundation`) controls the
+`<channel><title>`. `PUBLIC_SITE_URL` controls the `<channel><link>`.
+
+Hook into the public-site `<head>`:
+
+```html
+<link rel="alternate" type="application/rss+xml" title="ImamZain.org"
+      href="https://api.imamzain.org/api/v1/rss/posts.xml" />
+```
+
+### d. Bulk operations on posts
+
+Two new endpoints for the CMS list view's checkbox toolbar:
+
+```text
+POST /posts/bulk/publish     — body: { ids: [...], is_published: true|false }
+POST /posts/bulk/delete      — body: { ids: [...] }
+```
+
+- Permissions: `posts:update` for bulk-publish, `posts:delete` for
+  bulk-delete.
+- Max 200 ids per call. Duplicates are de-duped server-side.
+- Posts that are missing, already soft-deleted, or already in the
+  requested publish state are listed in the response `skipped` array
+  so the CMS can render "8 published, 2 already published".
+- Each row is audit-logged exactly like the single-item path, with an
+  extra `bulk: true` marker in `changes` so admin history can
+  distinguish bulk actions from one-off clicks.
+- The whole batch runs in a single transaction — partial failures
+  roll back every row.
+
+Response shape:
+
+```jsonc
+{
+  "message": "8 post(s) published",
+  "data": { "affected": 8, "skipped": ["<uuid>", "<uuid>"] }
+}
+```
+
+### e. New env vars (all optional with sensible defaults)
+
+```bash
+PUBLIC_SITE_URL=https://imamzain.org          # sitemap + RSS link base
+PUBLIC_SITE_NAME=Imam Zain Foundation         # RSS channel title
+NEWSLETTER_UNSUBSCRIBE_URL_BASE=...           # already in use from round 3
+```
+
+---
+
+## 10. Open follow-ups (still not in this push)
 
 - Self-service password reset flow (would need an `email` column on
   `users` plus the `password_reset_tokens` table described in the
   migration header).
 - Tags many-to-many (deferred — structural decision).
-- Search across resources (global search bar).
 - 2FA on admin accounts (skipped — high-trust in-house deployment).
 - Personal access tokens (skipped — no automation needs today).
 - Versioning / revision history on content edits.
+- Sitemap-index / chunked sub-sitemaps once published-post count
+  approaches the 50k-URL cap (likely years away).

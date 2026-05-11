@@ -51,6 +51,9 @@ REST API powering [imamzain.org](https://imamzain.org) — Islamic content manag
 - Per-translation SEO fields on posts (`meta_title`, `meta_description`, `og_image_id`) with documented render-time fallbacks
 - Newsletter campaigns with batched sending, per-recipient delivery tracking, scheduled-send via cron, and crash-safe resume
 - Admin-driven password reset (`POST /users/:id/reset-password`) — bumps `token_version` and revokes every outstanding refresh token
+- Cross-resource search (`GET /search`) over posts, books, academic papers, and gallery captions — public-visibility-aware and language-fidelity-preserving (returns the translation that actually matched the query)
+- Public sitemap (`GET /sitemap.xml`) with `xhtml:link` hreflang alternates per translation, and an RSS 2.0 feed (`GET /rss/posts.xml`) for the latest published posts
+- Bulk operations on posts (`POST /posts/bulk/publish`, `POST /posts/bulk/delete`) capped at 200 ids per call, fully audit-logged with a `bulk: true` marker
 - Health endpoint for uptime monitoring and load-balancer probes (storage status cached for 60s to avoid amplifying load on the object store)
 - Interactive API explorer at `/docs` (toggleable via `EXPOSE_DOCS`; off by default in production)
 - Globally enforced rate limiting via `@nestjs/throttler` with stricter caps on auth and view-counter endpoints, Helmet security headers, strict CORS allowlist in production, and response compression
@@ -112,6 +115,9 @@ See [.env.example](.env.example) for the complete list with inline descriptions.
 | `ALLOWED_ORIGINS` | Prod | Comma-separated CORS allowed origins. **Required in production** — the app refuses to boot without it rather than fall back to a permissive default |
 | `EXPOSE_DOCS` | Optional | `true` to expose `/docs` and `/openapi.json`. Defaults to off in production |
 | `NEWSLETTER_UNSUBSCRIBE_SECRET` | Optional | HMAC secret for unsubscribe tokens; falls back to `JWT_SECRET` |
+| `NEWSLETTER_UNSUBSCRIBE_URL_BASE` | Optional | Front-end unsubscribe page used to build `{{unsubscribe_url}}` substitution. Defaults to `https://imamzain.org/newsletter/unsubscribe` |
+| `PUBLIC_SITE_URL` | Optional | Base URL emitted in `sitemap.xml` and `rss/posts.xml` entries. Defaults to `https://imamzain.org` |
+| `PUBLIC_SITE_NAME` | Optional | Title used in the RSS feed `<channel>`. Defaults to `Imam Zain Foundation` |
 | `SENTRY_DSN` | Optional | Sentry DSN for error tracking |
 | `TWILIO_ACCOUNT_SID` | Optional | Twilio account SID |
 | `TWILIO_AUTH_TOKEN` | Optional | Twilio auth token |
