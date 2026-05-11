@@ -70,6 +70,9 @@ class PostSummaryDto {
   @ApiProperty({ example: true })
   is_published: boolean;
 
+  @ApiProperty({ example: false, description: 'Editorial featured flag — surfaces in `?featured=true` queries.' })
+  is_featured: boolean;
+
   @ApiPropertyOptional({ example: '2024-01-01T00:00:00.000Z' })
   published_at?: string;
 

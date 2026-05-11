@@ -54,6 +54,8 @@ export class PostsController {
   @ApiQuery({ name: 'limit', required: false, type: Number, example: 20, description: 'Items per page (default: 20, max: 100)' })
   @ApiQuery({ name: 'category_id', required: false, type: String, description: 'Filter by post category UUID' })
   @ApiQuery({ name: 'search', required: false, type: String, example: 'الإمام', description: 'Full-text search across post titles and body content' })
+  @ApiQuery({ name: 'featured', required: false, type: Boolean, description: 'Limit to is_featured posts (homepage / hero rail)' })
+  @ApiQuery({ name: 'sort', required: false, enum: ['newest', 'views'], description: '`newest` (default) or `views` (most-viewed first)' })
   @ApiOkResponse({ type: PostListResponseDto, description: 'Paginated list of published posts' })
   findAll(@Query() query: PostQueryDto, @Lang() lang: string | null) {
     return this.postsService.findAll(query, lang, false);
@@ -77,6 +79,8 @@ export class PostsController {
   @ApiQuery({ name: 'limit', required: false, type: Number, example: 20, description: 'Items per page (default: 20, max: 100)' })
   @ApiQuery({ name: 'category_id', required: false, type: String, description: 'Filter by post category UUID' })
   @ApiQuery({ name: 'search', required: false, type: String, example: 'الإمام', description: 'Full-text search across post titles and body content' })
+  @ApiQuery({ name: 'featured', required: false, type: Boolean })
+  @ApiQuery({ name: 'sort', required: false, enum: ['newest', 'views'] })
   @ApiOkResponse({ type: PostListResponseDto, description: 'Paginated list of all posts' })
   @ApiUnauthorizedResponse({ type: UnauthorizedErrorDto, description: 'Missing or invalid JWT' })
   @ApiForbiddenResponse({ type: ForbiddenErrorDto, description: 'Insufficient permissions' })

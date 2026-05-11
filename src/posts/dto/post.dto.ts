@@ -1,15 +1,17 @@
 import { ApiProperty, ApiPropertyOptional } from "@nestjs/swagger";
-import { Type } from "class-transformer";
+import { Transform, Type } from "class-transformer";
 import {
   ArrayMinSize,
   IsArray,
   IsBoolean,
+  IsEnum,
   IsISO8601,
   IsOptional,
   IsString,
   IsUUID,
   Length,
   Matches,
+  MaxLength,
   MinLength,
   ValidateNested,
 } from "class-validator";
@@ -119,6 +121,16 @@ export class CreatePostDto {
   is_published?: boolean;
 
   @ApiPropertyOptional({
+    example: false,
+    default: false,
+    description:
+      "Editorial flag — when true, the post appears in homepage / featured-rail queries (filter `?featured=true`). Independent of publish state.",
+  })
+  @IsOptional()
+  @IsBoolean()
+  is_featured?: boolean;
+
+  @ApiPropertyOptional({
     example: "2025-01-15T10:00:00Z",
     description: "ISO 8601 publish timestamp",
   })
@@ -163,6 +175,11 @@ export class UpdatePostDto {
   @IsBoolean()
   is_published?: boolean;
 
+  @ApiPropertyOptional({ example: true })
+  @IsOptional()
+  @IsBoolean()
+  is_featured?: boolean;
+
   @ApiPropertyOptional({ example: "2025-01-15T10:00:00Z" })
   @IsOptional()
   @IsISO8601()
@@ -188,6 +205,11 @@ export class TogglePublishDto {
   is_published!: boolean;
 }
 
+export enum PostSort {
+  Newest = "newest",
+  Views = "views",
+}
+
 export class PostQueryDto extends PaginationDto {
   @ApiPropertyOptional({ format: "uuid", description: "Filter by category ID" })
   @IsOptional()
@@ -200,5 +222,25 @@ export class PostQueryDto extends PaginationDto {
   })
   @IsOptional()
   @IsString()
+  @MaxLength(200)
   search?: string;
+
+  @ApiPropertyOptional({
+    description:
+      "When true, limits the result to posts flagged `is_featured=true`. Orthogonal to `sort` — use `?featured=true&sort=newest` for a featured-by-date rail.",
+  })
+  @IsOptional()
+  @Transform(({ value }) => value === "true" || value === true)
+  @IsBoolean()
+  featured?: boolean;
+
+  @ApiPropertyOptional({
+    enum: PostSort,
+    default: PostSort.Newest,
+    description:
+      "Ordering. `newest` (default): published_at desc → created_at desc → id asc. `views`: views desc → id asc (popular).",
+  })
+  @IsOptional()
+  @IsEnum(PostSort)
+  sort?: PostSort;
 }

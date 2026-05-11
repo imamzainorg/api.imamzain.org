@@ -5,7 +5,7 @@ import { sanitizeEditorHtml } from '../common/utils/html-sanitize.util';
 import { readingTimeMinutes } from '../common/utils/reading-time.util';
 import { softDeleteSuffix, stripSoftDeleteSuffix } from '../common/utils/soft-delete.util';
 import { resolveTranslation } from '../common/utils/translation.util';
-import { CreatePostDto, PostQueryDto, TogglePublishDto, UpdatePostDto } from './dto/post.dto';
+import { CreatePostDto, PostQueryDto, PostSort, TogglePublishDto, UpdatePostDto } from './dto/post.dto';
 
 /** Decorate a translation row with the derived `reading_time_minutes`. */
 function withReadingTime<T extends { body?: string | null }>(t: T): T & { reading_time_minutes: number } {
@@ -26,6 +26,7 @@ export class PostsService {
     const where: any = { deleted_at: null };
     if (!isAdmin) where.is_published = true;
     if (query.category_id) where.category_id = query.category_id;
+    if (query.featured !== undefined) where.is_featured = query.featured;
 
     if (query.search) {
       where.post_translations = {
@@ -56,7 +57,10 @@ export class PostsService {
             orderBy: { display_order: 'asc' },
           },
         },
-        orderBy: [{ published_at: 'desc' }, { created_at: 'desc' }, { id: 'asc' }],
+        orderBy:
+          query.sort === PostSort.Views
+            ? [{ views: 'desc' }, { id: 'asc' }]
+            : [{ published_at: 'desc' }, { created_at: 'desc' }, { id: 'asc' }],
         skip,
         take: limit,
       }),
@@ -157,6 +161,7 @@ export class PostsService {
           category_id: dto.category_id,
           cover_image_id: dto.cover_image_id ?? null,
           is_published: dto.is_published ?? false,
+          is_featured: dto.is_featured ?? false,
           published_at: dto.published_at ? new Date(dto.published_at) : null,
           created_by: userId,
         },
@@ -238,6 +243,7 @@ export class PostsService {
       if (dto.category_id !== undefined) updateData.category_id = dto.category_id;
       if (dto.cover_image_id !== undefined) updateData.cover_image_id = dto.cover_image_id;
       if (dto.is_published !== undefined) updateData.is_published = dto.is_published;
+      if (dto.is_featured !== undefined) updateData.is_featured = dto.is_featured;
       if (dto.published_at !== undefined) {
         updateData.published_at = dto.published_at ? new Date(dto.published_at) : null;
       }
