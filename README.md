@@ -45,8 +45,12 @@ REST API powering [imamzain.org](https://imamzain.org) — Islamic content manag
 - HTML-escaped admin notification emails to defuse stored XSS via form fields
 - Comprehensive audit logging on all write operations, filterable by user / action / resource type / resource id / date range
 - Single-call CMS dashboard endpoint for home-screen counts (`GET /dashboard/stats`)
+- Editable site settings without redeploy — anonymous-readable subset for the public site (`GET /settings/public`)
 - Trash & restore on every soft-deletable resource — accidental deletions can be reversed up until a hard purge
 - Scheduled publishing for posts: editors set a future `published_at`, an EVERY_MINUTE cron flips them to live when the time arrives
+- Per-translation SEO fields on posts (`meta_title`, `meta_description`, `og_image_id`) with documented render-time fallbacks
+- Newsletter campaigns with batched sending, per-recipient delivery tracking, scheduled-send via cron, and crash-safe resume
+- Admin-driven password reset (`POST /users/:id/reset-password`) — bumps `token_version` and revokes every outstanding refresh token
 - Health endpoint for uptime monitoring and load-balancer probes (storage status cached for 60s to avoid amplifying load on the object store)
 - Interactive API explorer at `/docs` (toggleable via `EXPOSE_DOCS`; off by default in production)
 - Globally enforced rate limiting via `@nestjs/throttler` with stricter caps on auth and view-counter endpoints, Helmet security headers, strict CORS allowlist in production, and response compression
@@ -215,11 +219,12 @@ Raw OpenAPI 3.0 spec: `GET /openapi.json`.
 | Resource | Base path | Notes |
 | --- | --- | --- |
 | Dashboard | `/dashboard/stats` | Single-call aggregator for the CMS home screen; counts posts / library / users / newsletter / forms / contest |
-| Users | `/users` | Admin only |
+| Site Settings | `/settings` | Key/value store for editable site config (`site_name`, social links, default language, contact email, etc.). `GET /settings/public` is anonymous; everything else is admin-only |
+| Users | `/users` | Admin only. `POST /users/:id/reset-password` lets an admin force-reset a forgotten password |
 | Roles | `/roles` | Admin only |
 | Languages | `/languages` | |
 | Media | `/media` | R2 pre-signed upload URLs; responses include a `variants[]` array with WebP sizes generated at upload time. `POST /media/:id/regenerate-variants` re-runs sharp if a generation step failed |
-| Posts | `/posts` | i18n via translation tables; admin-only `GET /posts/admin/:id` returns drafts. Posts whose `published_at` is in the past are auto-published by an EVERY_MINUTE cron |
+| Posts | `/posts` | i18n via translation tables (now with `meta_title` / `meta_description` / `og_image_id` SEO fields per translation); admin-only `GET /posts/admin/:id` returns drafts. Posts whose `published_at` is in the past are auto-published by an EVERY_MINUTE cron |
 | Post Categories | `/post-categories` | |
 | Books | `/books` | |
 | Book Categories | `/book-categories` | |
@@ -228,6 +233,7 @@ Raw OpenAPI 3.0 spec: `GET /openapi.json`.
 | Academic Papers | `/academic-papers` | |
 | Academic Paper Categories | `/academic-paper-categories` | |
 | Newsletter Subscribers | `/newsletter/subscribers` | List, soft-delete, plus admin `POST /:id/unsubscribe` and `POST /:id/resubscribe` for flipping `is_active` without going through the public token-based flow |
+| Newsletter Campaigns | `/newsletter/campaigns` | Compose, schedule, send, and track per-recipient delivery. Cron-driven batched sender resumes cleanly after process restarts. |
 | Audit logs | `/audit-logs` | Filterable by `user_id`, `action`, `resource_type`, `resource_id`, and date range |
 
 Every soft-deletable resource (posts / books / academic-papers / gallery and their categories) also exposes:

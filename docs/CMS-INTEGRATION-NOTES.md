@@ -10,7 +10,7 @@ know about the recent API changes. Read alongside the live OpenAPI spec at
 
 Before running the API against production, apply:
 
-```
+```text
 prisma/migrations/20260510120000_cms_extensions/migration.sql
 ```
 
@@ -126,7 +126,7 @@ function ResponsiveImage({ media, sizes = "100vw", className }: Props) {
 
 ## 3. HTML sanitisation on `posts.translations[].body`
 
-### What changed
+### What sanitisation does
 
 The API now sanitises the `body` field on `POST /posts` and
 `PATCH /posts/:id` server-side before storing it. The allowlist mirrors the
@@ -317,17 +317,177 @@ else.
 
 ---
 
-## 7. Open follow-ups (still not in this push)
+## 7. Round 3 changes (this push) — Tier 1 finale
 
-- Newsletter **campaign send** endpoints — only the schema is in.
+Apply the SQL migration first:
+
+```bash
+psql "$DIRECT_URL" -f prisma/migrations/20260511100000_tier1_finale/migration.sql
+npm run prisma:pull && npm run prisma:generate
+```
+
+Then re-run the seed to pick up the new permissions + initial settings:
+
+```bash
+npm run prisma:seed
+```
+
+### a. SEO fields on posts
+
+`post_translations` gains three optional columns:
+
+- `meta_title` — rendered in `<title>` and the SERP heading. Falls back
+  to `title` when null.
+- `meta_description` — SERP snippet + `og:description`. Falls back to
+  `summary` (or a body excerpt) when null.
+- `og_image_id` — UUID FK to `media`. Falls back to the post's
+  `cover_image_id` when null.
+
+CMS additions: three new inputs on the post editor's per-language tab
+(short text, longer text, image picker). The server validates that
+`og_image_id` references an existing media row and surfaces a 404 if
+not — the inputs should clear on a category change so a stale ID
+doesn't survive into the submit body.
+
+Public-site additions: read `post.translation.meta_title` etc. and
+inject into the page `<head>` via your framework's metadata API. For
+each null field, apply the fallback documented above (so the public
+page always has *some* meta tag, even if the editor left the field
+blank).
+
+### b. `GET /settings` — editable site config
+
+The CMS needs a Settings page. Endpoints:
+
+```text
+GET    /settings/public      — anonymous; only is_public=true keys
+GET    /settings             — admin; full list (settings:read)
+GET    /settings/:key        — admin; single (settings:read)
+PUT    /settings/:key        — admin; upsert (settings:update)
+DELETE /settings/:key        — admin; delete (settings:delete)
+```
+
+The body for `PUT`:
+
+```jsonc
+{
+  "value": "Imam Zain Foundation",   // always stringified on the wire
+  "type": "string",                  // only honoured on first write
+  "description": "Footer site title",
+  "is_public": true
+}
+```
+
+Response values are decoded server-side based on `type`:
+
+```jsonc
+{ "key": "site_name", "value": "Imam Zain Foundation", "type": "string", ... }
+{ "key": "max_recent_items", "value": 6, "type": "number", ... }
+{ "key": "show_donation_banner", "value": true, "type": "boolean", ... }
+{ "key": "homepage_hero", "value": { "title": "…", "cta": "…" }, "type": "json", ... }
+```
+
+`type` is **immutable after creation**. Trying to change it returns 409;
+delete and re-create to retype a setting.
+
+Seeded keys (initial values are empty strings for the social URLs; the
+seed never overwrites existing values, so re-running is safe):
+`site_name`, `site_tagline`, `default_language`, `contact_email`,
+`notifications_email_to`, `social_facebook`, `social_twitter`,
+`social_instagram`, `social_youtube`.
+
+Public site usage: hit `GET /settings/public` at build / fetch time and
+key into the response by `key`. Don't cache `notifications_email_to` —
+it's admin-only (is_public=false) and the public site shouldn't see it.
+
+### c. `POST /users/:id/reset-password` — admin password reset
+
+CMS user-management page should grow a "Reset password" button on each
+row. Clicking it opens a small dialog with a new-password input; on
+submit:
+
+```http
+POST /api/v1/users/<userId>/reset-password
+Content-Type: application/json
+Authorization: Bearer <admin jwt>
+
+{ "new_password": "the-new-password-they-typed" }
+```
+
+Permission required: `users:update` (already granted to super-admin
+and admin). The API bumps `token_version` and revokes every active
+refresh token, so the affected user is force-logged-out everywhere on
+their next request. The admin is responsible for handing the new
+password to the user out-of-band (in person, Slack, phone).
+
+No self-service "forgot password" exists because the users table has
+no email column — recovery is by admin action.
+
+### d. `/newsletter/campaigns` — full sender lifecycle
+
+The schema tables shipped earlier; this push adds the API:
+
+```text
+POST   /newsletter/campaigns                  — create (draft or scheduled)
+GET    /newsletter/campaigns?status=…         — paginated list
+GET    /newsletter/campaigns/:id              — detail + delivery counters
+PATCH  /newsletter/campaigns/:id              — update (draft / scheduled only)
+POST   /newsletter/campaigns/:id/send         — queue for sending now
+POST   /newsletter/campaigns/:id/cancel       — stop the send loop
+DELETE /newsletter/campaigns/:id              — hard-delete (draft / cancelled)
+```
+
+Permissions: reads → `newsletter:read`; writes / send / cancel →
+`newsletter:update`; delete → `newsletter:delete`.
+
+**Composing a body.** The `body_html` field is server-side sanitised
+against the same Tiptap allowlist used for post bodies, so the CMS can
+reuse its existing editor. Two placeholders are substituted per
+recipient at send time:
+
+- `{{email}}` — the recipient's email.
+- `{{unsubscribe_url}}` — a per-subscriber link with the HMAC token
+  already embedded.
+
+If `{{unsubscribe_url}}` is **absent** from the body, the API appends a
+small footer with the link automatically — every outbound email has a
+working unsubscribe.
+
+**Send flow.** `POST /:id/send` returns immediately with
+`{ recipient_count }` after populating a row per active subscriber in
+`newsletter_campaign_recipients`. An `EVERY_MINUTE` cron then processes
+50 pending recipients per campaign per tick, updating counters on the
+campaign row as it goes. When all rows are processed the status flips
+to `sent`. State lives in the recipient table so a process crash mid-
+send doesn't lose or double-send anything — the cron resumes from
+`sent_at IS NULL AND failed_at IS NULL` on next tick.
+
+**Scheduling.** Send a `scheduled_at` ISO timestamp on create; the
+campaign sits in `scheduled` until the cron's next tick at or after
+that time, then it transitions to `sending` and processing begins.
+
+**Throughput.** With Hostinger SMTP the practical ceiling is ~50–100
+emails per minute per the upstream rate limit; the default
+`BATCH_SIZE_PER_TICK=50` is comfortably below that. When the
+subscriber list grows past a few hundred, switch to a transactional
+ESP (Resend / Brevo / Mailgun) and raise the batch size — the code
+itself doesn't need changes beyond pointing nodemailer elsewhere.
+
+**Env vars for unsubscribe links.** Set `NEWSLETTER_UNSUBSCRIBE_URL_BASE`
+to the front-end's unsubscribe page (default
+`https://imamzain.org/newsletter/unsubscribe`). The API appends
+`?email=<…>&token=<…>` and that page POSTs to `/newsletter/unsubscribe`.
+
+---
+
+## 8. Open follow-ups (still not in this push)
+
 - Variant URL exposure on **already-uploaded** media (run
   `POST /media/:id/regenerate-variants` on each, or write a one-off
   script that loops the existing `media` rows).
-- `meta_title` / `meta_description` / `og_image_id` fields on posts
-  (needs a schema migration — Tier 1).
-- Site settings table (needs a new table — Tier 1).
-- Password reset flow (likely needs a `password_reset_tokens` table
-  or two new columns on `users` — Tier 1).
+- Self-service password reset flow (would need an `email` column on
+  `users` plus the `password_reset_tokens` table described in the
+  migration header).
 - Tags many-to-many (deferred — structural decision).
 - Soft-delete suffix on category translation slugs (pre-existing
   inconsistency exposed by the trash-restore work; not blocking).
