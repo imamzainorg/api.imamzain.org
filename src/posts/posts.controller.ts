@@ -115,6 +115,8 @@ export class PostsController {
   @ApiQuery({ name: 'page', required: false, type: Number, example: 1 })
   @ApiQuery({ name: 'limit', required: false, type: Number, example: 20 })
   @ApiOkResponse({ type: PostListResponseDto, description: 'Paginated list of trashed posts' })
+  @ApiUnauthorizedResponse({ type: UnauthorizedErrorDto, description: 'Missing or invalid JWT' })
+  @ApiForbiddenResponse({ type: ForbiddenErrorDto, description: 'Insufficient permissions' })
   findTrash(@Query() query: PaginationDto) {
     return this.postsService.findTrash(query.page ?? 1, query.limit ?? 20);
   }
@@ -133,6 +135,8 @@ export class PostsController {
   @ApiOkResponse({ type: PostMessageResponseDto, description: 'Post restored' })
   @ApiNotFoundResponse({ type: NotFoundErrorDto, description: 'No soft-deleted post with that ID exists' })
   @ApiConflictResponse({ type: ConflictErrorDto, description: 'A live post has taken one of the restored slugs' })
+  @ApiUnauthorizedResponse({ type: UnauthorizedErrorDto, description: 'Missing or invalid JWT' })
+  @ApiForbiddenResponse({ type: ForbiddenErrorDto, description: 'Insufficient permissions' })
   restore(@Param('id') id: string, @CurrentUser() user: CurrentUserPayload) {
     return this.postsService.restore(id, user.id);
   }

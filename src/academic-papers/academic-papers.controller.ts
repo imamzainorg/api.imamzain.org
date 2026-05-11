@@ -52,11 +52,14 @@ export class AcademicPapersController {
   @RequirePermission('academic-papers:delete')
   @ApiOperation({
     summary: 'List soft-deleted academic papers (CMS trash view)',
-    description: 'Returns papers with `deleted_at` set, paginated. Requires permission: `academic-papers:delete`.',
+    description:
+      'Paginated list of academic papers whose `deleted_at` is set. Requires permission: `academic-papers:delete`.',
   })
   @ApiQuery({ name: 'page', required: false, type: Number, example: 1 })
   @ApiQuery({ name: 'limit', required: false, type: Number, example: 20 })
   @ApiOkResponse({ type: AcademicPaperListResponseDto, description: 'Paginated list of trashed academic papers' })
+  @ApiUnauthorizedResponse({ type: UnauthorizedErrorDto, description: 'Missing or invalid JWT' })
+  @ApiForbiddenResponse({ type: ForbiddenErrorDto, description: 'Insufficient permissions' })
   findTrash(@Query() query: PaginationDto) {
     return this.service.findTrash(query.page ?? 1, query.limit ?? 20);
   }
@@ -68,11 +71,14 @@ export class AcademicPapersController {
   @RequirePermission('academic-papers:delete')
   @ApiOperation({
     summary: 'Restore a soft-deleted academic paper',
-    description: 'Sets `deleted_at` back to null. Requires permission: `academic-papers:delete`.',
+    description:
+      'Sets `deleted_at` back to null so the paper reappears in public listings. Academic paper translations have no unique slug constraints so restore cannot conflict. Requires permission: `academic-papers:delete`.',
   })
   @ApiParam({ name: 'id', format: 'uuid' })
   @ApiOkResponse({ type: AcademicPaperMessageResponseDto, description: 'Academic paper restored' })
   @ApiNotFoundResponse({ type: NotFoundErrorDto, description: 'No soft-deleted paper with that ID exists' })
+  @ApiUnauthorizedResponse({ type: UnauthorizedErrorDto, description: 'Missing or invalid JWT' })
+  @ApiForbiddenResponse({ type: ForbiddenErrorDto, description: 'Insufficient permissions' })
   restore(@Param('id') id: string, @CurrentUser() user: CurrentUserPayload) {
     return this.service.restore(id, user.id);
   }

@@ -60,6 +60,8 @@ export class BooksController {
   @ApiQuery({ name: 'page', required: false, type: Number, example: 1 })
   @ApiQuery({ name: 'limit', required: false, type: Number, example: 20 })
   @ApiOkResponse({ type: BookListResponseDto, description: 'Paginated list of trashed books' })
+  @ApiUnauthorizedResponse({ type: UnauthorizedErrorDto, description: 'Missing or invalid JWT' })
+  @ApiForbiddenResponse({ type: ForbiddenErrorDto, description: 'Insufficient permissions' })
   findTrash(@Query() query: PaginationDto) {
     return this.booksService.findTrash(query.page ?? 1, query.limit ?? 20);
   }
@@ -78,6 +80,8 @@ export class BooksController {
   @ApiOkResponse({ type: BookMessageResponseDto, description: 'Book restored' })
   @ApiNotFoundResponse({ type: NotFoundErrorDto, description: 'No soft-deleted book with that ID exists' })
   @ApiConflictResponse({ type: ConflictErrorDto, description: 'A live book has taken the restored ISBN' })
+  @ApiUnauthorizedResponse({ type: UnauthorizedErrorDto, description: 'Missing or invalid JWT' })
+  @ApiForbiddenResponse({ type: ForbiddenErrorDto, description: 'Insufficient permissions' })
   restore(@Param('id') id: string, @CurrentUser() user: CurrentUserPayload) {
     return this.booksService.restore(id, user.id);
   }

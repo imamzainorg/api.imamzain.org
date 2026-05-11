@@ -53,8 +53,13 @@ export class AuthController {
       'Refresh tokens expire after 7 days. Rate-limited to 30 attempts per 15 minutes per IP.',
   })
   @ApiOkResponse({ type: RefreshResponseDto, description: 'New access token and rotated refresh token' })
-  @ApiUnauthorizedResponse({ type: UnauthorizedErrorDto, description: 'Invalid, expired, or reused refresh token' })
-  @ApiTooManyRequestsResponse({ type: TooManyRequestsErrorDto, description: 'Rate limit exceeded' })
+  @ApiBadRequestResponse({ type: ValidationErrorDto, description: 'Validation failed — missing or malformed refresh_token' })
+  @ApiUnauthorizedResponse({
+    type: UnauthorizedErrorDto,
+    description:
+      'One of: the refresh token is unknown, expired, already-rotated, or being replayed (reuse). Reuse cases revoke the full token chain for that user as a side effect — the next login starts a fresh chain. The account-disabled case is also reported here.',
+  })
+  @ApiTooManyRequestsResponse({ type: TooManyRequestsErrorDto, description: 'Rate limit exceeded — maximum 30 attempts per 15 minutes per IP' })
   refresh(@Body() dto: RefreshTokenDto) {
     return this.authService.refresh(dto);
   }
@@ -67,7 +72,8 @@ export class AuthController {
     summary: 'Revoke the current refresh token (or all tokens if none supplied)',
     description: 'Pass `refresh_token` in the body to revoke only that token; omit to revoke all active sessions.',
   })
-  @ApiOkResponse({ type: LogoutResponseDto, description: 'Logged out successfully' })
+  @ApiOkResponse({ type: LogoutResponseDto, description: 'Logged out successfully — idempotent regardless of whether the supplied refresh_token was active' })
+  @ApiBadRequestResponse({ type: ValidationErrorDto, description: 'Validation failed — refresh_token was supplied but is not a string or exceeds 512 chars' })
   @ApiUnauthorizedResponse({ type: UnauthorizedErrorDto, description: 'Missing or invalid JWT' })
   logout(@Body() dto: LogoutDto, @CurrentUser() user: CurrentUserPayload) {
     return this.authService.logout(user.id, dto.refresh_token);

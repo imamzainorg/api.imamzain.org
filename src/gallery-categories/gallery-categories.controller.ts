@@ -49,10 +49,16 @@ export class GalleryCategoriesController {
   @UseGuards(JwtAuthGuard, PermissionGuard)
   @ApiBearerAuth('jwt')
   @RequirePermission('gallery-categories:delete')
-  @ApiOperation({ summary: 'List soft-deleted gallery categories (CMS trash view)' })
+  @ApiOperation({
+    summary: 'List soft-deleted gallery categories (CMS trash view)',
+    description:
+      'Paginated list of categories whose `deleted_at` is set. Translation slugs come back with the `__del_<timestamp>` suffix already stripped so the CMS can show the original slug. Requires permission: `gallery-categories:delete`.',
+  })
   @ApiQuery({ name: 'page', required: false, type: Number, example: 1 })
   @ApiQuery({ name: 'limit', required: false, type: Number, example: 20 })
   @ApiOkResponse({ type: GalleryCategoryListResponseDto, description: 'Paginated list of trashed gallery categories' })
+  @ApiUnauthorizedResponse({ type: UnauthorizedErrorDto, description: 'Missing or invalid JWT' })
+  @ApiForbiddenResponse({ type: ForbiddenErrorDto, description: 'Insufficient permissions' })
   findTrash(@Query() query: PaginationDto) {
     return this.service.findTrash(query.page ?? 1, query.limit ?? 20);
   }
@@ -62,10 +68,17 @@ export class GalleryCategoriesController {
   @UseGuards(JwtAuthGuard, PermissionGuard)
   @ApiBearerAuth('jwt')
   @RequirePermission('gallery-categories:delete')
-  @ApiOperation({ summary: 'Restore a soft-deleted gallery category' })
+  @ApiOperation({
+    summary: 'Restore a soft-deleted gallery category',
+    description:
+      'Sets `deleted_at` back to null and unsuffixes each translation slug. Fails with 409 if any of the original `(lang, slug)` pairs has been claimed by another category in the meantime — rename the conflicting one first. Requires permission: `gallery-categories:delete`.',
+  })
   @ApiParam({ name: 'id', format: 'uuid' })
   @ApiOkResponse({ type: GalleryCategoryMessageResponseDto, description: 'Category restored' })
   @ApiNotFoundResponse({ type: NotFoundErrorDto, description: 'No soft-deleted category with that ID exists' })
+  @ApiConflictResponse({ type: ConflictErrorDto, description: 'A live category has taken one of the restored translation slugs' })
+  @ApiUnauthorizedResponse({ type: UnauthorizedErrorDto, description: 'Missing or invalid JWT' })
+  @ApiForbiddenResponse({ type: ForbiddenErrorDto, description: 'Insufficient permissions' })
   restore(@Param('id') id: string, @CurrentUser() user: CurrentUserPayload) {
     return this.service.restore(id, user.id);
   }

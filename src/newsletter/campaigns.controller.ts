@@ -72,17 +72,25 @@ export class CampaignsController {
 
   @Get()
   @RequirePermission('newsletter:read')
-  @ApiOperation({ summary: 'List campaigns (paginated, optionally filtered by status)' })
-  @ApiOkResponse({ type: CampaignListResponseDto, description: 'Paginated list of campaigns' })
+  @ApiOperation({
+    summary: 'List campaigns (paginated)',
+    description:
+      'Paginated list of campaigns ordered by creation time (newest first). Optionally filter by lifecycle status. Requires permission: `newsletter:read`.',
+  })
+  @ApiOkResponse({ type: CampaignListResponseDto, description: 'Paginated list of campaigns with their current delivery counters' })
   findAll(@Query() query: CampaignQueryDto) {
     return this.service.findAll(query);
   }
 
   @Get(':id')
   @RequirePermission('newsletter:read')
-  @ApiOperation({ summary: 'Get a single campaign with current delivery counters' })
+  @ApiOperation({
+    summary: 'Get a single campaign with current delivery counters',
+    description:
+      'Returns the campaign row including live `recipient_count`, `delivered_count`, `failed_count`, and `status`. Useful to render a per-campaign delivery progress bar. Requires permission: `newsletter:read`.',
+  })
   @ApiParam({ name: 'id', format: 'uuid' })
-  @ApiOkResponse({ type: CampaignResponseDto })
+  @ApiOkResponse({ type: CampaignResponseDto, description: 'Campaign detail with current delivery counters' })
   @ApiNotFoundResponse({ type: NotFoundErrorDto, description: 'No campaign with that ID exists' })
   findOne(@Param('id', new ParseUUIDPipe()) id: string) {
     return this.service.findOne(id);
@@ -93,13 +101,13 @@ export class CampaignsController {
   @ApiOperation({
     summary: 'Update a draft or scheduled campaign',
     description:
-      'Only campaigns in status=draft or status=scheduled are editable. Sending / sent / cancelled campaigns return 409 — copy the campaign instead.',
+      'Only campaigns in status=draft or status=scheduled are editable. Sending / sent / cancelled campaigns return 409 — copy the campaign instead. Setting `scheduled_at` flips status to `scheduled`; clearing it (`null`) flips back to `draft`. Body is re-sanitised against the Tiptap allowlist. Requires permission: `newsletter:update`.',
   })
   @ApiParam({ name: 'id', format: 'uuid' })
-  @ApiOkResponse({ type: CampaignResponseDto })
+  @ApiOkResponse({ type: CampaignResponseDto, description: 'Updated campaign with new fields and (possibly) flipped status' })
   @ApiBadRequestResponse({ type: ValidationErrorDto, description: 'Validation failed' })
   @ApiNotFoundResponse({ type: NotFoundErrorDto, description: 'No campaign with that ID exists' })
-  @ApiConflictResponse({ type: ConflictErrorDto, description: 'Campaign is no longer editable' })
+  @ApiConflictResponse({ type: ConflictErrorDto, description: 'Campaign is no longer editable (status is sending / sent / cancelled)' })
   update(
     @Param('id', new ParseUUIDPipe()) id: string,
     @Body() dto: UpdateCampaignDto,

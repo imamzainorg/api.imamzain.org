@@ -53,11 +53,14 @@ export class GalleryController {
   @RequirePermission('gallery:delete')
   @ApiOperation({
     summary: 'List soft-deleted gallery images (CMS trash view)',
-    description: 'Returns images with `deleted_at` set, paginated. Requires permission: `gallery:delete`.',
+    description:
+      'Paginated list of gallery images whose `deleted_at` is set. The underlying media records in R2 are preserved as long as the image is in trash. Requires permission: `gallery:delete`.',
   })
   @ApiQuery({ name: 'page', required: false, type: Number, example: 1 })
   @ApiQuery({ name: 'limit', required: false, type: Number, example: 20 })
   @ApiOkResponse({ type: GalleryListResponseDto, description: 'Paginated list of trashed gallery images' })
+  @ApiUnauthorizedResponse({ type: UnauthorizedErrorDto, description: 'Missing or invalid JWT' })
+  @ApiForbiddenResponse({ type: ForbiddenErrorDto, description: 'Insufficient permissions' })
   findTrash(@Query() query: PaginationDto) {
     return this.galleryService.findTrash(query.page ?? 1, query.limit ?? 20);
   }
@@ -69,11 +72,14 @@ export class GalleryController {
   @RequirePermission('gallery:delete')
   @ApiOperation({
     summary: 'Restore a soft-deleted gallery image',
-    description: 'Sets `deleted_at` back to null. Requires permission: `gallery:delete`.',
+    description:
+      'Sets `deleted_at` back to null so the image reappears in public listings. Gallery image translations have no unique slug constraints so restore cannot conflict. Requires permission: `gallery:delete`.',
   })
   @ApiParam({ name: 'id', format: 'uuid', description: 'Media ID (serves as the gallery image primary key)' })
   @ApiOkResponse({ type: GalleryMessageResponseDto, description: 'Gallery image restored' })
   @ApiNotFoundResponse({ type: NotFoundErrorDto, description: 'No soft-deleted gallery image with that media ID exists' })
+  @ApiUnauthorizedResponse({ type: UnauthorizedErrorDto, description: 'Missing or invalid JWT' })
+  @ApiForbiddenResponse({ type: ForbiddenErrorDto, description: 'Insufficient permissions' })
   restore(@Param('id') id: string, @CurrentUser() user: CurrentUserPayload) {
     return this.galleryService.restore(id, user.id);
   }
