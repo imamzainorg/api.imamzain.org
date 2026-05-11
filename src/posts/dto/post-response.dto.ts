@@ -19,6 +19,24 @@ class PostTranslationItemDto {
 
   @ApiProperty({ example: true })
   is_default: boolean;
+
+  @ApiPropertyOptional({
+    example: 'حياة الإمام السجاد – السيرة الكاملة',
+    description: 'SEO: used in <title> and SERP heading. Null falls back to title at render time.',
+  })
+  meta_title?: string;
+
+  @ApiPropertyOptional({
+    example: 'نظرة شاملة على سيرة الإمام علي بن الحسين زين العابدين.',
+    description: 'SEO: SERP snippet + og:description fallback. Null falls back to summary or body excerpt.',
+  })
+  meta_description?: string;
+
+  @ApiPropertyOptional({
+    format: 'uuid',
+    description: 'SEO: media id for og:image / twitter:image. Null falls back to the post cover_image_id.',
+  })
+  og_image_id?: string;
 }
 
 class PostAttachmentDto {

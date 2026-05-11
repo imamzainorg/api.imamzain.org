@@ -64,6 +64,37 @@ export class PostTranslationDto {
   @IsOptional()
   @IsBoolean()
   is_default?: boolean;
+
+  @ApiPropertyOptional({
+    example: "حياة الإمام السجاد – السيرة الكاملة",
+    description:
+      "Used in <title> and the SERP heading. Falls back to `title` when null. Target length ≤ 60 chars.",
+    maxLength: 120,
+  })
+  @IsOptional()
+  @IsString()
+  @MaxLength(120)
+  meta_title?: string;
+
+  @ApiPropertyOptional({
+    example: "نظرة شاملة على سيرة الإمام علي بن الحسين زين العابدين وحياته العلمية والروحية.",
+    description:
+      "SERP snippet and og:description fallback. Falls back to `summary` (or a body excerpt) when null. Target length ≤ 160 chars.",
+    maxLength: 320,
+  })
+  @IsOptional()
+  @IsString()
+  @MaxLength(320)
+  meta_description?: string;
+
+  @ApiPropertyOptional({
+    format: "uuid",
+    description:
+      "Media UUID used for og:image / twitter:image when the URL is shared. Falls back to the post's cover_image_id when null.",
+  })
+  @IsOptional()
+  @IsUUID()
+  og_image_id?: string;
 }
 
 export class CreatePostDto {

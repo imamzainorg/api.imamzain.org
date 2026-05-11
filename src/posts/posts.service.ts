@@ -111,6 +111,18 @@ export class PostsService {
       if (!media) throw new NotFoundException('Cover image not found');
     }
 
+    // Validate every translation-level og_image_id up front so a bad one
+    // surfaces as 404 with a useful message instead of a Prisma FK error.
+    const ogImageIds = dto.translations
+      .map((t) => t.og_image_id)
+      .filter((v): v is string => typeof v === 'string');
+    if (ogImageIds.length > 0) {
+      const found = await this.prisma.media.count({ where: { id: { in: ogImageIds } } });
+      if (found !== new Set(ogImageIds).size) {
+        throw new NotFoundException('One or more og_image_id values do not match any media record');
+      }
+    }
+
     const defaultCount = dto.translations.filter((t) => t.is_default).length;
     if (defaultCount !== 1) {
       throw new BadRequestException('Exactly one translation must have is_default: true');
@@ -147,6 +159,9 @@ export class PostsService {
           body: sanitizeEditorHtml(t.body),
           slug: t.slug,
           is_default: t.is_default ?? false,
+          meta_title: t.meta_title ?? null,
+          meta_description: t.meta_description ?? null,
+          og_image_id: t.og_image_id ?? null,
         })),
       });
 
@@ -194,6 +209,18 @@ export class PostsService {
       if (!media) throw new NotFoundException('Cover image not found');
     }
 
+    if (dto.translations) {
+      const ogImageIds = dto.translations
+        .map((t) => t.og_image_id)
+        .filter((v): v is string => typeof v === 'string');
+      if (ogImageIds.length > 0) {
+        const found = await this.prisma.media.count({ where: { id: { in: ogImageIds } } });
+        if (found !== new Set(ogImageIds).size) {
+          throw new NotFoundException('One or more og_image_id values do not match any media record');
+        }
+      }
+    }
+
     await this.prisma.$transaction(async (tx) => {
       const updateData: any = { updated_at: new Date() };
       if (dto.category_id !== undefined) updateData.category_id = dto.category_id;
@@ -220,10 +247,20 @@ export class PostsService {
           }
 
           const cleanBody = sanitizeEditorHtml(t.body);
+          const translationData = {
+            title: t.title,
+            summary: t.summary ?? null,
+            body: cleanBody,
+            slug: t.slug,
+            is_default: t.is_default ?? false,
+            meta_title: t.meta_title ?? null,
+            meta_description: t.meta_description ?? null,
+            og_image_id: t.og_image_id ?? null,
+          };
           await tx.post_translations.upsert({
             where: { post_id_lang: { post_id: id, lang: t.lang } },
-            create: { post_id: id, lang: t.lang, title: t.title, summary: t.summary ?? null, body: cleanBody, slug: t.slug, is_default: t.is_default ?? false },
-            update: { title: t.title, summary: t.summary ?? null, body: cleanBody, slug: t.slug, is_default: t.is_default ?? false },
+            create: { post_id: id, lang: t.lang, ...translationData },
+            update: translationData,
           });
         }
 
