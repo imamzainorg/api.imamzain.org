@@ -30,6 +30,8 @@ import { DashboardModule } from "./dashboard/dashboard.module";
 import { SettingsModule } from "./settings/settings.module";
 import { SearchModule } from "./search/search.module";
 import { FeedsModule } from "./feeds/feeds.module";
+import { DailyHadithsModule } from "./daily-hadiths/daily-hadiths.module";
+import { YoutubeModule } from "./youtube/youtube.module";
 import { HealthController } from "./health/health.controller";
 import { LanguageMiddleware } from "./common/middleware/language.middleware";
 import { SentryModule } from "@sentry/nestjs/setup";
@@ -94,6 +96,8 @@ import { SentryModule } from "@sentry/nestjs/setup";
     SettingsModule,
     SearchModule,
     FeedsModule,
+    DailyHadithsModule,
+    YoutubeModule,
   ],
   controllers: [HealthController],
   providers: [{ provide: APP_GUARD, useClass: ThrottlerGuard }],

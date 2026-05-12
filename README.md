@@ -54,8 +54,10 @@ REST API powering [imamzain.org](https://imamzain.org) — Islamic content manag
 - Cross-resource search (`GET /search`) over posts, books, academic papers, and gallery captions — public-visibility-aware and language-fidelity-preserving (returns the translation that actually matched the query); backed by Postgres GIN trigram indexes so substring `ILIKE` queries stay sub-10 ms as the corpus grows
 - Public sitemap (`GET /sitemap.xml`) with `xhtml:link` hreflang alternates per translation, and an RSS 2.0 feed (`GET /rss/posts.xml`) for the latest published posts
 - Bulk operations on posts (`POST /posts/bulk/publish`, `POST /posts/bulk/delete`) capped at 200 ids per call, fully audit-logged with a `bulk: true` marker
-- Composite `GET /homepage` aggregator that returns featured + popular + recent post cards in one round trip, replacing the public-site fan-out of three separate `/posts` calls
+- Composite `GET /homepage` aggregator returning exactly the hadith / news / publications / videos / gallery payload the public site renders — single round trip, slim shape, per-day stable cache key
 - CDN-friendly `Cache-Control` + `Vary: Accept-Language` headers on every public read endpoint, so Cloudflare (or any CDN) absorbs the bulk of public traffic; Express's weak `ETag` lets the CDN serve 304s for unchanged content
+- CMS-managed daily hadiths (`/daily-hadiths`) with one-hadith-per-UTC-day rotation, optional editor pins overriding any given date, and a public `/daily-hadiths/today` endpoint feeding the homepage
+- Local YouTube channel mirror (`/youtube/videos`, `/youtube/playlists`) refreshed every 6 hours by a background cron — the request path never touches the YouTube Data API, keeping quota use predictable and the site resilient to YouTube outages
 - Health endpoint for uptime monitoring and load-balancer probes (storage status cached for 60s to avoid amplifying load on the object store)
 - Interactive API explorer at `/docs` (toggleable via `EXPOSE_DOCS`; off by default in production)
 - Globally enforced rate limiting via `@nestjs/throttler` with stricter caps on auth and view-counter endpoints, Helmet security headers, strict CORS allowlist in production, and response compression
@@ -120,6 +122,8 @@ See [.env.example](.env.example) for the complete list with inline descriptions.
 | `NEWSLETTER_UNSUBSCRIBE_URL_BASE` | Optional | Front-end unsubscribe page used to build `{{unsubscribe_url}}` substitution. Defaults to `https://imamzain.org/newsletter/unsubscribe` |
 | `PUBLIC_SITE_URL` | Optional | Base URL emitted in `sitemap.xml` and `rss/posts.xml` entries. Defaults to `https://imamzain.org` |
 | `PUBLIC_SITE_NAME` | Optional | Title used in the RSS feed `<channel>`. Defaults to `Imam Zain Foundation` |
+| `YOUTUBE_API_KEY` | Optional | YouTube Data API v3 key. When set together with `YOUTUBE_CHANNEL_ID`, a 6-hour cron mirrors the channel's videos + playlists into the local DB. Sync is silently skipped if either is missing |
+| `YOUTUBE_CHANNEL_ID` | Optional | The `UCxxxx…` channel ID the YouTube sync targets |
 | `SENTRY_DSN` | Optional | Sentry DSN for error tracking |
 | `TWILIO_ACCOUNT_SID` | Optional | Twilio account SID |
 | `TWILIO_AUTH_TOKEN` | Optional | Twilio auth token |

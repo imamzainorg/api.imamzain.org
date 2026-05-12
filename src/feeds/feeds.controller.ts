@@ -1,9 +1,9 @@
-import { Controller, Get, Header, Query, Res } from '@nestjs/common';
-import { ApiHeader, ApiOkResponse, ApiOperation, ApiQuery, ApiTags } from '@nestjs/swagger';
+import { Controller, Get, Header, Res } from '@nestjs/common';
+import { ApiHeader, ApiOkResponse, ApiOperation, ApiTags } from '@nestjs/swagger';
 import type { Response } from 'express';
 import { Lang } from '../common/decorators/language.decorator';
 import { PublicCache } from '../common/decorators/public-cache.decorator';
-import { HomepageQueryDto, HomepageResponseDto } from './dto/homepage.dto';
+import { HomepageResponseDto } from './dto/homepage.dto';
 import { FeedsService } from './feeds.service';
 import { HomepageService } from './homepage.service';
 
@@ -16,19 +16,16 @@ export class FeedsController {
   ) {}
 
   @Get('homepage')
-  @PublicCache(60)
-  @ApiHeader({ name: 'Accept-Language', required: false, description: 'ISO 639-1 code for translated fields (e.g. ar, en).' })
+  @PublicCache(900, 3600)
+  @ApiHeader({ name: 'Accept-Language', required: false, description: 'ISO 639-1 code for translated fields (e.g. ar, en, fa).' })
   @ApiOperation({
-    summary: 'Composite homepage payload (public, slim post cards)',
+    summary: 'Composite homepage payload (public)',
     description:
-      'Single-round-trip aggregator for the public homepage. Returns three buckets of post cards in one response — `featured` (is_featured=true, newest first), `popular` (highest view count), and `recent` (newest published). Replaces three separate /posts calls. Cards are slim — no body, no attachments — because homepage tiles never render the body. Response is CDN-cacheable (`public, max-age=60, s-maxage=300`) and varies by `Accept-Language`.',
+      'Single-round-trip aggregator returning exactly what the public site\'s homepage components render. Buckets: `hadith_of_day` (rotated per UTC date, picked from `daily_hadiths`; null if empty), `news` (up to 4 featured posts, falling back to most-recent published when fewer featured exist), `publications` (latest 10 books), `videos` (most recent 7 YouTube videos from the local mirror — synced every 6h), and `gallery.slider` (latest 10 gallery images) + `gallery.categories` (all). Fields are stripped server-side to only what the front-end actually consumes; payload is much smaller than the per-resource list endpoints. Response is CDN-cacheable (`public, max-age=900, s-maxage=3600`) and varies by `Accept-Language` — the daily hadith and category names give a per-day per-language stable cache key.',
   })
-  @ApiQuery({ name: 'featured_limit', required: false, type: Number, example: 5, description: '0–20, default 5. Pass 0 to skip the bucket entirely.' })
-  @ApiQuery({ name: 'popular_limit', required: false, type: Number, example: 5, description: '0–20, default 5.' })
-  @ApiQuery({ name: 'recent_limit', required: false, type: Number, example: 10, description: '0–20, default 10.' })
-  @ApiOkResponse({ type: HomepageResponseDto, description: 'Three buckets of slim post cards' })
-  getHomepage(@Query() query: HomepageQueryDto, @Lang() lang: string | null) {
-    return this.homepage.getHomepage(query, lang);
+  @ApiOkResponse({ type: HomepageResponseDto, description: 'Homepage payload' })
+  getHomepage(@Lang() lang: string | null) {
+    return this.homepage.getHomepage(lang);
   }
 
   @Get('sitemap.xml')

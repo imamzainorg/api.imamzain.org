@@ -446,6 +446,40 @@ const PERMISSIONS: { name: string; translations: Translations }[] = [
     },
   },
 
+  // Daily hadiths
+  {
+    name: 'daily-hadiths:read',
+    translations: {
+      ar: { title: 'عرض الأحاديث اليومية', description: 'مراجعة قائمة الأحاديث اليومية المتداولة على الصفحة الرئيسية' },
+      en: { title: 'View Daily Hadiths', description: 'Browse the rotating daily hadith pool used on the homepage' },
+      fa: { title: 'مشاهده احادیث روزانه', description: 'مرور احادیث در گردش که در صفحه اصلی نمایش داده می‌شوند' },
+    },
+  },
+  {
+    name: 'daily-hadiths:create',
+    translations: {
+      ar: { title: 'إضافة حديث يومي', description: 'إضافة حديث جديد إلى دورة الأحاديث اليومية' },
+      en: { title: 'Add Daily Hadiths', description: 'Add new hadiths to the homepage rotation' },
+      fa: { title: 'افزودن حدیث روزانه', description: 'افزودن حدیث جدید به چرخش احادیث روزانه' },
+    },
+  },
+  {
+    name: 'daily-hadiths:update',
+    translations: {
+      ar: { title: 'تعديل الأحاديث اليومية', description: 'تحرير الأحاديث وتثبيتها على تواريخ معينة' },
+      en: { title: 'Update Daily Hadiths', description: 'Edit hadiths and pin specific ones to specific dates' },
+      fa: { title: 'ویرایش احادیث روزانه', description: 'ویرایش احادیث و سنجاق کردن آن‌ها به تاریخ خاص' },
+    },
+  },
+  {
+    name: 'daily-hadiths:delete',
+    translations: {
+      ar: { title: 'حذف الأحاديث اليومية', description: 'إزالة الأحاديث من دورة العرض' },
+      en: { title: 'Delete Daily Hadiths', description: 'Remove hadiths from the rotation' },
+      fa: { title: 'حذف احادیث روزانه', description: 'حذف احادیث از چرخش نمایش' },
+    },
+  },
+
   // Roles
   {
     name: 'roles:read',
@@ -566,6 +600,10 @@ const ROLES: { name: string; permissions: string[]; translations: RoleTranslatio
       'media:read',
       'media:update',
       'media:delete',
+      'daily-hadiths:read',
+      'daily-hadiths:create',
+      'daily-hadiths:update',
+      'daily-hadiths:delete',
       'dashboard:read',
     ],
     translations: {

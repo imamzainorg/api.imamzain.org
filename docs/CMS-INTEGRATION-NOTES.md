@@ -819,7 +819,187 @@ The full caching strategy + monitoring guidance lives in
 
 ---
 
-## 11. Open follow-ups (still not in this push)
+## 11. Round 7 (this push) — daily hadiths + YouTube mirror + slim homepage
+
+Two new domains and a homepage rewrite to match what the front-end's
+`src/app/page.tsx` actually consumes. No breaking changes to existing
+endpoints; the homepage response shape did change — it's a new
+endpoint, so this is the first stable contract.
+
+### a. Apply the round-7 SQL migration first
+
+```bash
+psql "$DIRECT_URL" -f prisma/migrations/20260512200000_daily_hadiths_and_youtube/migration.sql
+npm run prisma:pull && npm run prisma:generate
+```
+
+Adds six tables (3 hadith, 3 youtube) — all additive, no existing
+table touched.
+
+Then re-run the seed to pick up the four new `daily-hadiths:*`
+permissions and the editor-role mapping:
+
+```bash
+npm run prisma:seed
+```
+
+### b. Daily hadiths
+
+A small CMS-managed table that rotates one hadith per UTC day across
+the public homepage. The endpoint exists at:
+
+```text
+GET    /daily-hadiths/today                          — public, CDN-cached
+GET    /daily-hadiths                                 — admin list
+GET    /daily-hadiths/:id                             — admin detail
+POST   /daily-hadiths                                 — admin create
+PATCH  /daily-hadiths/:id                             — admin update
+DELETE /daily-hadiths/:id                             — admin soft-delete
+GET    /daily-hadiths/pins                            — admin list pins
+POST   /daily-hadiths/pins                            — admin pin to a date
+DELETE /daily-hadiths/pins/:pin_date                  — admin unpin
+```
+
+**Rotation rule.** Active hadiths are ordered by `(display_order asc,
+id asc)`, then today's index = `daysSinceEpoch (UTC) % count`. Same
+day → same hadith for every visitor, which is exactly what makes
+the homepage cacheable for hours.
+
+**Override.** An editor can pin a specific hadith to a specific
+calendar date via `POST /daily-hadiths/pins` with body `{ pin_date:
+"2026-05-15", hadith_id: "uuid" }`. The pin overrides the rotation
+for that one day; the next day, rotation resumes. Pinning an inactive
+hadith is allowed (the pin is an explicit override).
+
+**Empty table.** `GET /daily-hadiths/today` returns `data: null`; the
+homepage block degrades gracefully.
+
+**Permissions:** `daily-hadiths:read/create/update/delete`. The
+**editor** role gets all four by default — hadiths are content, not
+admin config.
+
+### c. YouTube mirror
+
+The API now maintains a local mirror of the channel's videos and
+playlists, refreshed every 6 hours by a background cron. Public
+endpoints read exclusively from the mirror; YouTube is never on the
+request path. Quota use is ~10–20 units per sync — well below the
+10k/day free quota.
+
+```text
+GET /youtube/videos                            — paginated, newest first
+GET /youtube/playlists                         — paginated, newest first
+GET /youtube/playlists/:playlistId/videos     — playlist + ordered videos
+```
+
+All public, all CDN-cached for 15 min. `:playlistId` is the YouTube
+playlist ID (e.g. `PLxxxx`), not an internal UUID.
+
+**Env vars** (both optional — sync is silently skipped if either is
+missing):
+
+```bash
+YOUTUBE_API_KEY=<key from Google Cloud Console>
+YOUTUBE_CHANNEL_ID=<UCxxxxxxxxxxxxxxxxxxxxxx>
+```
+
+**Bootstrap.** A first sync fires 30 seconds after server boot, so
+freshly-deployed servers don't have to wait up to 6h before the
+homepage has videos. Subsequent runs are on the `0 */6 * * *` cron.
+
+**Operational note.** The sync deletes-and-rebuilds the playlist→video
+join rows each run; that's how we mirror YouTube reordering /
+removals. Videos that have been deleted from YouTube fall out
+naturally on the next sync (they won't appear in `playlistItems`).
+
+### d. `GET /homepage` — rewritten shape
+
+Replaces the earlier "featured / popular / recent" shape with the
+exact set of fields the public site's `src/app/page.tsx` consumes,
+and nothing more. Old version is gone; this is the stable contract.
+
+```jsonc
+{
+  "hadith_of_day": { "id": "...", "content": "...", "source": "...", "lang": "ar", "is_pinned": false },
+  "news": [
+    { "slug": "...", "image": "...", "summary": "...", "title": "..." }
+    // up to 4: featured first, fall back to most-recent published when fewer featured exist
+  ],
+  "publications": [
+    { "id": "...", "slug": "...", "title": "...", "image": "...", "pages": 220, "views": 1500 }
+    // latest 10 books by created_at
+  ],
+  "videos": [
+    { "title": "...", "url": "<videoId>", "desc": "...", "thumbnail": "...", "date": "..." }
+    // most recent 7 from the YouTube mirror
+  ],
+  "gallery": {
+    "slider":     [{ "id": "...", "path": "..." } /* latest 10 gallery images */],
+    "categories": [{ "id": "...", "name": "..." } /* all gallery categories in the requested language */]
+  }
+}
+```
+
+Cache: `Cache-Control: public, max-age=900, s-maxage=3600`, varies by
+`Accept-Language`. Per-day stable cache key — the CDN should serve
+the same response for the bulk of visitors in a given language.
+
+### e. Notes for the CMS team
+
+- A new "Daily Hadiths" section needs to land in the CMS sidebar.
+  Recommended flow: list view + create dialog with three translation
+  tabs (ar/en/fa); detail view with a "Pin to date" calendar widget.
+- Hadith content max length is 4000 chars (`content`) / 500 chars
+  (`source`). Both are plain text — no rich-text editor needed.
+- `display_order` controls rotation position. Leave it null on
+  create; the server appends to the end.
+- Pins are upsert-on-write — re-pinning the same date replaces. To
+  return that day to rotation, `DELETE /daily-hadiths/pins/2026-05-15`.
+- The YouTube content isn't editable from the CMS — it's fully driven
+  by the YouTube channel. If you need to remove a video from the API
+  response, remove / privatise it on YouTube; the next 6h sync drops
+  it locally.
+
+### f. Notes for the front-end team
+
+- **`GET /homepage` is now the single endpoint** for the public
+  home route. Drop any direct calls to `/posts?featured=true`,
+  `/books?...`, `/gallery?...`, and `/videos` that the homepage
+  components currently make.
+- **Video URL building.** `url` field is the bare 11-char YouTube ID.
+  Build embed URLs front-end-side as `https://www.youtube.com/embed/{url}`
+  or watch URLs as `https://www.youtube.com/watch?v={url}`.
+- **Hadith block.** Hide if `hadith_of_day` is null. Otherwise show
+  `content` and (if `source` is non-null) `source` underneath.
+- **News fallback.** The server already handles "fewer than 4
+  featured" by topping up from recent published posts — don't
+  duplicate that logic client-side.
+- **Publications `slug`.** Identical to `id` (books have no separate
+  slug column). Link with `/books/{slug}` as you do today; either
+  field works.
+- **Gallery slider.** Latest 10 images; the response order is newest
+  first. Maintain the existing image-rendering swap if you want
+  oldest-first display.
+- **Gallery categories.** All of them, with `id` + localised `name`.
+  Clicking goes to `/gallery?category_id={id}` — pure server-driven
+  list, no more hard-coded pairings.
+- **Videos page.** If/when you build a dedicated /videos page beyond
+  the homepage's 7-card preview, use `GET /youtube/videos?page=&limit=`
+  and `GET /youtube/playlists/:playlistId/videos`. Both are
+  CDN-cached and read-only.
+
+### g. Audit actions added in this round
+
+- `DAILY_HADITH_CREATED`, `DAILY_HADITH_UPDATED`, `DAILY_HADITH_DELETED`,
+  `DAILY_HADITH_PINNED`, `DAILY_HADITH_UNPINNED`
+
+YouTube sync runs do **not** emit per-row audit logs — that would be
+noisy and the sync is a system action, not a user action. Sync
+success / failure shows up in application logs only.
+
+---
+
+## 12. Open follow-ups (still not in this push)
 
 - Self-service password reset flow (would need an `email` column on
   `users` plus the `password_reset_tokens` table described in the

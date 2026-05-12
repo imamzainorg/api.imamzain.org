@@ -73,6 +73,15 @@ the API emits.
 | `newsletter:update` | Admin un/resubscribe + create/edit/send/cancel campaigns |
 | `newsletter:delete` | Soft-delete subscribers + hard-delete draft/cancelled campaigns |
 
+### Daily hadiths
+
+| Permission | Action |
+| --- | --- |
+| `daily-hadiths:read` | List + read hadiths and pin entries |
+| `daily-hadiths:create` | Add a new hadith to the rotation |
+| `daily-hadiths:update` | Edit a hadith + pin / unpin to specific dates |
+| `daily-hadiths:delete` | Soft-delete a hadith |
+
 ### Dashboard, audit, contest, settings
 
 | Permission | Action |
@@ -110,9 +119,9 @@ upserts only.
 
 | Role | Description | Permission count |
 | --- | --- | --- |
-| `super-admin` | Full system access including roles, users, and languages. Reserved for the technical owner. | 53 (all) |
-| `admin` | All content + users + forms + newsletter + media. Cannot modify roles or languages. | 47 |
-| `editor` | All content types and media. No access to forms, users, roles, or system settings. | 29 |
+| `super-admin` | Full system access including roles, users, and languages. Reserved for the technical owner. | 57 (all) |
+| `admin` | All content + users + forms + newsletter + media. Cannot modify roles or languages. | 51 |
+| `editor` | All content types, media, and daily hadiths. No access to forms, users, roles, or system settings. | 33 |
 | `moderator` | Reviews and responds to contact submissions, proxy visit requests, and the newsletter. Read-only on posts and contest. | 9 |
 
 Translations for each role title / description exist in `ar`, `en`,
@@ -150,6 +159,7 @@ Legend: ✓ = has by default, — = does not.
 | `gallery:*` | ✓ | ✓ | ✓ | — |
 | `gallery-categories:*` | ✓ | ✓ | ✓ | — |
 | `media:*` | ✓ | ✓ | ✓ | — |
+| `daily-hadiths:*` | ✓ | ✓ | ✓ | — |
 | `forms:read` | ✓ | ✓ | — | ✓ |
 | `forms:update` | ✓ | ✓ | — | ✓ |
 | `forms:delete` | ✓ | ✓ | — | ✓ |
@@ -239,6 +249,22 @@ Four category resources emit parallel sets:
 | `MEDIA_UPDATED` | `PATCH /media/:id` |
 | `MEDIA_VARIANTS_REGENERATED` | `POST /media/:id/regenerate-variants` |
 | `MEDIA_DELETED` | `DELETE /media/:id` |
+
+### Hadiths
+
+| Action | Trigger |
+| --- | --- |
+| `DAILY_HADITH_CREATED` | `POST /daily-hadiths` |
+| `DAILY_HADITH_UPDATED` | `PATCH /daily-hadiths/:id` |
+| `DAILY_HADITH_DELETED` | `DELETE /daily-hadiths/:id` |
+| `DAILY_HADITH_PINNED` | `POST /daily-hadiths/pins` |
+| `DAILY_HADITH_UNPINNED` | `DELETE /daily-hadiths/pins/:pin_date` |
+
+The YouTube sync (`youtube-sync.service.ts`) does **not** emit audit
+log rows. It's a system action driven by cron, not a user action;
+sync success and failure show up in application logs only. If you
+need to investigate why a video is or isn't present, check the
+`youtube_videos.last_synced_at` column.
 
 ### Newsletter
 

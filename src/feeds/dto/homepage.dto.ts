@@ -1,129 +1,116 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { Type } from 'class-transformer';
-import { IsInt, IsOptional, Max, Min } from 'class-validator';
 
-export class HomepageQueryDto {
-  @ApiPropertyOptional({
-    example: 5,
-    minimum: 0,
-    maximum: 20,
-    default: 5,
-    description: 'How many featured posts to return. Pass 0 to skip the featured bucket.',
-  })
-  @IsOptional()
-  @Type(() => Number)
-  @IsInt()
-  @Min(0)
-  @Max(20)
-  featured_limit?: number;
+class HomepageHadithDto {
+  @ApiProperty({ format: 'uuid' })
+  id!: string;
 
-  @ApiPropertyOptional({
-    example: 5,
-    minimum: 0,
-    maximum: 20,
-    default: 5,
-    description: 'How many popular posts (sorted by view count) to return. Pass 0 to skip.',
-  })
-  @IsOptional()
-  @Type(() => Number)
-  @IsInt()
-  @Min(0)
-  @Max(20)
-  popular_limit?: number;
+  @ApiProperty({ example: 'قال الإمام علي بن الحسين عليه السلام...' })
+  content!: string;
 
-  @ApiPropertyOptional({
-    example: 10,
-    minimum: 0,
-    maximum: 20,
-    default: 10,
-    description: 'How many recent posts (sorted by published date) to return. Pass 0 to skip.',
-  })
-  @IsOptional()
-  @Type(() => Number)
-  @IsInt()
-  @Min(0)
-  @Max(20)
-  recent_limit?: number;
-}
+  @ApiPropertyOptional({ example: 'الصحيفة السجادية، الدعاء 30' })
+  source?: string | null;
 
-class HomepageCardTranslationDto {
   @ApiProperty({ example: 'ar' })
   lang!: string;
 
-  @ApiProperty({ example: 'حياة الإمام زين العابدين' })
-  title!: string;
+  @ApiProperty({ example: false, description: 'True when an editor pinned this hadith to today.' })
+  is_pinned!: boolean;
+}
 
-  @ApiPropertyOptional({ example: 'نبذة مختصرة عن سيرة الإمام' })
+class HomepageNewsItemDto {
+  @ApiPropertyOptional({ example: 'hayat-al-imam-zain' })
+  slug?: string | null;
+
+  @ApiPropertyOptional({ example: 'https://cdn.imamzain.org/media/abc.jpg' })
+  image?: string | null;
+
+  @ApiPropertyOptional({ example: 'نبذة مختصرة عن المقالة' })
   summary?: string | null;
 
-  @ApiProperty({ example: 'hayat-al-imam-zain' })
+  @ApiPropertyOptional({ example: 'حياة الإمام زين العابدين' })
+  title?: string | null;
+}
+
+class HomepagePublicationItemDto {
+  @ApiProperty({ format: 'uuid' })
+  id!: string;
+
+  @ApiProperty({ format: 'uuid', description: 'Same as `id` — front-end consumes as slug.' })
   slug!: string;
 
-  @ApiProperty({ example: true })
-  is_default!: boolean;
+  @ApiPropertyOptional({ example: 'الصحيفة السجادية الجامعة' })
+  title?: string | null;
 
-  @ApiPropertyOptional({ example: 'حياة الإمام السجاد – السيرة الكاملة' })
-  meta_title?: string | null;
+  @ApiPropertyOptional({ example: 'https://cdn.imamzain.org/media/cover.jpg' })
+  image?: string | null;
 
-  @ApiPropertyOptional({ example: 'نظرة شاملة على السيرة الكاملة...' })
-  meta_description?: string | null;
+  @ApiPropertyOptional({ example: 220 })
+  pages?: number | null;
 
-  @ApiProperty({ example: 1, description: 'Server-derived from summary length.' })
-  reading_time_minutes!: number;
+  @ApiProperty({ example: 1500 })
+  views!: number;
 }
 
-class HomepageCoverImageDto {
-  @ApiProperty({ format: 'uuid' })
-  id!: string;
+class HomepageVideoItemDto {
+  @ApiProperty({ example: 'Sermon on patience' })
+  title!: string;
 
-  @ApiProperty({ example: 'https://cdn.imamzain.org/media/abc.jpg' })
+  @ApiProperty({ example: 'dQw4w9WgXcQ', description: 'YouTube 11-char video ID; front-end builds the embed/watch URL itself.' })
   url!: string;
 
-  @ApiPropertyOptional({ example: 'Imam Zain shrine interior' })
-  alt_text?: string | null;
+  @ApiPropertyOptional({ example: 'A short description of the video...' })
+  desc?: string | null;
+
+  @ApiPropertyOptional({ example: 'https://i.ytimg.com/vi/dQw4w9WgXcQ/hqdefault.jpg' })
+  thumbnail?: string | null;
+
+  @ApiPropertyOptional({ example: '2026-05-01T14:00:00.000Z' })
+  date?: string | null;
 }
 
-class HomepageCardDto {
+class HomepageGallerySliderItemDto {
+  @ApiProperty({ format: 'uuid', description: 'Media ID; also the gallery image primary key.' })
+  id!: string;
+
+  @ApiPropertyOptional({ example: 'https://cdn.imamzain.org/media/photo.jpg' })
+  path?: string | null;
+}
+
+class HomepageGalleryCategoryItemDto {
   @ApiProperty({ format: 'uuid' })
   id!: string;
 
-  @ApiProperty({ format: 'uuid' })
-  category_id!: string;
+  @ApiPropertyOptional({ example: 'نشاطات' })
+  name?: string | null;
+}
 
-  @ApiProperty({ example: false })
-  is_featured!: boolean;
+class HomepageGalleryDto {
+  @ApiProperty({ type: [HomepageGallerySliderItemDto], description: 'Latest 10 gallery images.' })
+  slider!: HomepageGallerySliderItemDto[];
 
-  @ApiPropertyOptional({ example: '2026-01-15T10:00:00.000Z' })
-  published_at?: string | null;
-
-  @ApiProperty({ example: 142 })
-  views!: number;
-
-  @ApiPropertyOptional({ type: HomepageCoverImageDto, nullable: true })
-  cover_image?: HomepageCoverImageDto | null;
-
-  @ApiProperty({ type: [HomepageCardTranslationDto] })
-  post_translations!: HomepageCardTranslationDto[];
-
-  @ApiProperty({ type: HomepageCardTranslationDto, nullable: true })
-  translation!: HomepageCardTranslationDto | null;
-
-  @ApiPropertyOptional({
-    nullable: true,
-    description: 'Category record with its title/slug translations',
-  })
-  category?: { id: string; translations: { lang: string; title: string; slug: string }[] } | null;
+  @ApiProperty({ type: [HomepageGalleryCategoryItemDto], description: 'All gallery categories with names in the requested language.' })
+  categories!: HomepageGalleryCategoryItemDto[];
 }
 
 class HomepageDataDto {
-  @ApiProperty({ type: [HomepageCardDto] })
-  featured!: HomepageCardDto[];
+  @ApiProperty({
+    type: HomepageHadithDto,
+    nullable: true,
+    description: 'Null when the daily_hadiths table is empty or all entries are inactive.',
+  })
+  hadith_of_day!: HomepageHadithDto | null;
 
-  @ApiProperty({ type: [HomepageCardDto] })
-  popular!: HomepageCardDto[];
+  @ApiProperty({ type: [HomepageNewsItemDto], description: 'Up to 4 posts. Featured first; falls back to most-recent published if fewer featured exist.' })
+  news!: HomepageNewsItemDto[];
 
-  @ApiProperty({ type: [HomepageCardDto] })
-  recent!: HomepageCardDto[];
+  @ApiProperty({ type: [HomepagePublicationItemDto], description: 'Up to 10 latest books by created_at.' })
+  publications!: HomepagePublicationItemDto[];
+
+  @ApiProperty({ type: [HomepageVideoItemDto], description: 'Most recent 7 YouTube videos from the local mirror.' })
+  videos!: HomepageVideoItemDto[];
+
+  @ApiProperty({ type: HomepageGalleryDto })
+  gallery!: HomepageGalleryDto;
 }
 
 export class HomepageResponseDto {

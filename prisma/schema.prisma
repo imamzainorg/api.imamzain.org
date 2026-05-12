@@ -44,6 +44,8 @@ model academic_paper_translations {
   academic_papers   academic_papers @relation(fields: [paper_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
 
   @@id([paper_id, lang])
+  @@index([abstract(ops: raw("gin_trgm_ops"))], map: "idx_academic_paper_translations_abstract_trgm", type: Gin)
+  @@index([title(ops: raw("gin_trgm_ops"))], map: "idx_academic_paper_translations_title_trgm", type: Gin)
 }
 
 model academic_papers {
@@ -115,6 +117,9 @@ model book_translations {
   languages   languages @relation(fields: [lang], references: [code], onDelete: Cascade, onUpdate: NoAction)
 
   @@id([book_id, lang])
+  @@index([author(ops: raw("gin_trgm_ops"))], map: "idx_book_translations_author_trgm", type: Gin)
+  @@index([description(ops: raw("gin_trgm_ops"))], map: "idx_book_translations_description_trgm", type: Gin)
+  @@index([title(ops: raw("gin_trgm_ops"))], map: "idx_book_translations_title_trgm", type: Gin)
 }
 
 /// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
@@ -190,6 +195,8 @@ model gallery_image_translations {
   gallery_images gallery_images @relation(fields: [media_id], references: [media_id], onDelete: Cascade, onUpdate: NoAction)
 
   @@id([media_id, lang])
+  @@index([description(ops: raw("gin_trgm_ops"))], map: "idx_gallery_image_translations_description_trgm", type: Gin)
+  @@index([title(ops: raw("gin_trgm_ops"))], map: "idx_gallery_image_translations_title_trgm", type: Gin)
 }
 
 model gallery_images {
@@ -225,6 +232,7 @@ model languages {
   academic_paper_translations          academic_paper_translations[]
   book_category_translations           book_category_translations[]
   book_translations                    book_translations[]
+  daily_hadith_translations            daily_hadith_translations[]
   gallery_category_translations        gallery_category_translations[]
   gallery_image_translations           gallery_image_translations[]
   permission_translations              permission_translations[]
@@ -254,6 +262,9 @@ model media {
   posts               posts?
 
   @@index([uploaded_by], map: "idx_media_uploaded_by")
+  @@index([alt_text(ops: raw("gin_trgm_ops"))], map: "idx_media_alt_text_trgm", type: Gin)
+  @@index([filename(ops: raw("gin_trgm_ops"))], map: "idx_media_filename_trgm", type: Gin)
+  @@index([mime_type], map: "idx_media_mime_type")
 }
 
 model media_variants {
@@ -350,6 +361,8 @@ model post_translations {
   @@id([post_id, lang])
   @@unique([lang, slug])
   @@index([og_image_id], map: "idx_post_translations_og_image")
+  @@index([body(ops: raw("gin_trgm_ops"))], map: "idx_post_translations_body_trgm", type: Gin)
+  @@index([title(ops: raw("gin_trgm_ops"))], map: "idx_post_translations_title_trgm", type: Gin)
 }
 
 /// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
@@ -359,12 +372,12 @@ model posts {
   cover_image_id    String?             @unique @db.Uuid
   published_at      DateTime?           @db.Timestamptz(6)
   is_published      Boolean             @default(false)
-  is_featured       Boolean             @default(false)
   views             BigInt              @default(0)
   created_at        DateTime            @default(now()) @db.Timestamptz(6)
   updated_at        DateTime            @default(now()) @db.Timestamptz(6)
   created_by        String?             @db.Uuid
   deleted_at        DateTime?           @db.Timestamptz(6)
+  is_featured       Boolean             @default(false)
   post_attachments  post_attachments[]
   post_translations post_translations[]
   post_categories   post_categories     @relation(fields: [category_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
@@ -443,6 +456,8 @@ model users {
   audit_logs            audit_logs[]
   books                 books[]
   contact_submissions   contact_submissions[]
+  daily_hadiths         daily_hadiths[]
+  daily_hadith_pins     daily_hadith_pins[]
   gallery_images        gallery_images[]
   media                 media[]
   newsletter_campaigns  newsletter_campaigns[]
@@ -452,6 +467,88 @@ model users {
   refresh_tokens        refresh_tokens[]
   site_settings_updated site_settings[]         @relation("site_settings_updated_by")
   user_roles            user_roles[]
+}
+
+model daily_hadiths {
+  id                        String                      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  display_order             Int                         @default(0)
+  is_active                 Boolean                     @default(true)
+  created_at                DateTime                    @default(now()) @db.Timestamptz(6)
+  updated_at                DateTime                    @default(now()) @db.Timestamptz(6)
+  created_by                String?                     @db.Uuid
+  deleted_at                DateTime?                   @db.Timestamptz(6)
+  daily_hadith_translations daily_hadith_translations[]
+  daily_hadith_pins         daily_hadith_pins[]
+  users                     users?                      @relation(fields: [created_by], references: [id], onUpdate: NoAction)
+
+  @@index([created_by], map: "idx_daily_hadiths_created_by")
+}
+
+model daily_hadith_translations {
+  hadith_id     String        @db.Uuid
+  lang          String        @db.Char(2)
+  content       String
+  source        String?
+  is_default    Boolean       @default(false)
+  daily_hadiths daily_hadiths @relation(fields: [hadith_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  languages     languages     @relation(fields: [lang], references: [code], onDelete: Cascade, onUpdate: NoAction)
+
+  @@id([hadith_id, lang])
+}
+
+model daily_hadith_pins {
+  pin_date      DateTime      @id @db.Date
+  hadith_id     String        @db.Uuid
+  created_at    DateTime      @default(now()) @db.Timestamptz(6)
+  created_by    String?       @db.Uuid
+  daily_hadiths daily_hadiths @relation(fields: [hadith_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  users         users?        @relation(fields: [created_by], references: [id], onUpdate: NoAction)
+
+  @@index([hadith_id], map: "idx_daily_hadith_pins_hadith")
+}
+
+model youtube_videos {
+  id                     String                   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  video_id               String                   @unique
+  title                  String
+  description            String?
+  thumbnail_url          String?
+  channel_id             String
+  channel_title          String?
+  published_at           DateTime?                @db.Timestamptz(6)
+  duration               String?
+  view_count             BigInt?
+  like_count             BigInt?
+  last_synced_at         DateTime                 @default(now()) @db.Timestamptz(6)
+  youtube_playlist_items youtube_playlist_items[]
+
+  @@index([published_at(sort: Desc)], map: "idx_youtube_videos_published")
+}
+
+model youtube_playlists {
+  id                     String                   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  playlist_id            String                   @unique
+  title                  String
+  description            String?
+  thumbnail_url          String?
+  item_count             Int?
+  channel_id             String
+  published_at           DateTime?                @db.Timestamptz(6)
+  last_synced_at         DateTime                 @default(now()) @db.Timestamptz(6)
+  youtube_playlist_items youtube_playlist_items[]
+
+  @@index([published_at(sort: Desc)], map: "idx_youtube_playlists_published")
+}
+
+model youtube_playlist_items {
+  playlist_id       String            @db.Uuid
+  video_id          String            @db.Uuid
+  position          Int
+  youtube_playlists youtube_playlists @relation(fields: [playlist_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  youtube_videos    youtube_videos    @relation(fields: [video_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@id([playlist_id, video_id])
+  @@index([playlist_id, position], map: "idx_youtube_playlist_items_position")
 }
 
 model site_settings {

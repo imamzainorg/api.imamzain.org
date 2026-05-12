@@ -70,6 +70,17 @@ class EnvironmentVariables {
   @IsOptional()
   @IsBooleanString()
   EXPOSE_DOCS?: string;
+
+  // YouTube Data API — both optional. If either is missing the sync
+  // service skips runs and the homepage returns an empty videos array.
+  // Validation just ensures they're strings when present.
+  @IsOptional()
+  @IsString()
+  YOUTUBE_API_KEY?: string;
+
+  @IsOptional()
+  @IsString()
+  YOUTUBE_CHANNEL_ID?: string;
 }
 
 export function validateEnv(config: Record<string, unknown>) {

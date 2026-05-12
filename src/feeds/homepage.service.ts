@@ -1,141 +1,191 @@
 import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
-import { readingTimeMinutes } from '../common/utils/reading-time.util';
 import { resolveTranslation } from '../common/utils/translation.util';
+import { DailyHadithsService } from '../daily-hadiths/daily-hadiths.service';
+import { YoutubeService } from '../youtube/youtube.service';
 
-const DEFAULT_FEATURED_LIMIT = 5;
-const DEFAULT_POPULAR_LIMIT = 5;
-const DEFAULT_RECENT_LIMIT = 10;
-const MAX_LIMIT_PER_BUCKET = 20;
-
-type HomepageQuery = {
-  featured_limit?: number;
-  popular_limit?: number;
-  recent_limit?: number;
-};
+const NEWS_COUNT = 4;
+const PUBLICATIONS_COUNT = 10;
+const GALLERY_SLIDER_COUNT = 10;
+const VIDEOS_COUNT = 7;
 
 /**
- * Composite endpoint for the public homepage. Replaces the previous
- * fan-out where the front-end had to call `/posts?featured=true`,
- * `/posts?sort=views`, and `/posts?sort=newest` separately — three
- * separate origin requests on the most-trafficked route on the site.
+ * Composite endpoint for the public homepage. Returns exactly the shape
+ * the front-end's `src/app/page.tsx` reads — every field listed here is
+ * actually used by one of the homepage components. Anything the
+ * underlying tables expose but the front-end doesn't render is stripped
+ * server-side; the response is consequently much smaller than the
+ * per-resource list endpoints and cheaper to ship through the CDN.
  *
- * Three buckets run in parallel as a single Promise.all so total wall
- * time is max(individual query), not the sum. Card shape is
- * deliberately slim — no body, no attachments — because homepage cards
- * never render the body.
+ * All seven buckets fan out as a single Promise.all so total wall time
+ * is max(individual queries). Most are indexed; the daily hadith pick
+ * is cheap (max one row lookup + one rotation scan).
  *
- * Response is CDN-cacheable via the controller's @PublicCache(60),
- * so under normal traffic the database is hit at most once per minute
- * per language per CDN edge.
+ * The response is identical for every visitor on the same UTC date in
+ * a given language, so it caches well at the CDN — see the controller
+ * for the Cache-Control settings.
  */
 @Injectable()
 export class HomepageService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly hadiths: DailyHadithsService,
+    private readonly youtube: YoutubeService,
+  ) {}
 
-  async getHomepage(query: HomepageQuery, lang: string | null) {
-    const featuredLimit = clamp(query.featured_limit, DEFAULT_FEATURED_LIMIT);
-    const popularLimit = clamp(query.popular_limit, DEFAULT_POPULAR_LIMIT);
-    const recentLimit = clamp(query.recent_limit, DEFAULT_RECENT_LIMIT);
-
-    const baseWhere = { deleted_at: null, is_published: true };
-    const include = {
-      post_translations: {
-        select: {
-          lang: true,
-          title: true,
-          summary: true,
-          slug: true,
-          is_default: true,
-          meta_title: true,
-          meta_description: true,
-        },
-      },
-      post_categories: {
-        include: { post_category_translations: { select: { lang: true, title: true, slug: true } } },
-      },
-      media: true,
-    } as const;
-
-    const [featured, popular, recent] = await Promise.all([
-      featuredLimit > 0
-        ? this.prisma.posts.findMany({
-            where: { ...baseWhere, is_featured: true },
-            include,
-            orderBy: [{ published_at: 'desc' }, { id: 'asc' }],
-            take: featuredLimit,
-          })
-        : Promise.resolve([]),
-      popularLimit > 0
-        ? this.prisma.posts.findMany({
-            where: baseWhere,
-            include,
-            orderBy: [{ views: 'desc' }, { id: 'asc' }],
-            take: popularLimit,
-          })
-        : Promise.resolve([]),
-      recentLimit > 0
-        ? this.prisma.posts.findMany({
-            where: baseWhere,
-            include,
-            orderBy: [{ published_at: 'desc' }, { created_at: 'desc' }, { id: 'asc' }],
-            take: recentLimit,
-          })
-        : Promise.resolve([]),
+  async getHomepage(lang: string | null) {
+    const [hadith, news, publications, videos, gallerySlider, galleryCategories] = await Promise.all([
+      this.hadithOfDay(lang),
+      this.news(lang),
+      this.publications(lang),
+      this.videos(),
+      this.gallerySlider(),
+      this.galleryCategories(lang),
     ]);
 
     return {
       message: 'Homepage fetched',
       data: {
-        featured: featured.map((p) => slim(p, lang)),
-        popular: popular.map((p) => slim(p, lang)),
-        recent: recent.map((p) => slim(p, lang)),
+        hadith_of_day: hadith,
+        news,
+        publications,
+        videos,
+        gallery: { slider: gallerySlider, categories: galleryCategories },
       },
     };
   }
+
+  // ── Hadith ─────────────────────────────────────────────────────────────
+
+  private async hadithOfDay(lang: string | null) {
+    const res = await this.hadiths.getToday(lang);
+    return res.data;
+  }
+
+  // ── News (4 most relevant published posts) ─────────────────────────────
+
+  /**
+   * Prefer up to 4 featured posts, newest first. If fewer than 4 featured
+   * exist, fill the remainder with the most-recent non-featured published
+   * posts so the homepage block is never short. Posts already returned as
+   * featured are excluded from the fallback to avoid duplicates.
+   */
+  private async news(lang: string | null) {
+    const featured = await this.prisma.posts.findMany({
+      where: { deleted_at: null, is_published: true, is_featured: true },
+      include: { post_translations: true, media: true },
+      orderBy: [{ published_at: 'desc' }, { id: 'asc' }],
+      take: NEWS_COUNT,
+    });
+
+    let combined = featured;
+    if (featured.length < NEWS_COUNT) {
+      const featuredIds = new Set(featured.map((p) => p.id));
+      const fallback = await this.prisma.posts.findMany({
+        where: {
+          deleted_at: null,
+          is_published: true,
+          id: featuredIds.size > 0 ? { notIn: Array.from(featuredIds) } : undefined,
+        },
+        include: { post_translations: true, media: true },
+        orderBy: [{ published_at: 'desc' }, { id: 'asc' }],
+        take: NEWS_COUNT - featured.length,
+      });
+      combined = [...featured, ...fallback];
+    }
+
+    return combined.map((post) => {
+      const t = resolveTranslation(post.post_translations, lang);
+      return {
+        slug: t?.slug ?? null,
+        image: post.media?.url ?? null,
+        summary: t?.summary ?? null,
+        title: t?.title ?? null,
+      };
+    });
+  }
+
+  // ── Publications (latest 10 books) ─────────────────────────────────────
+
+  private async publications(lang: string | null) {
+    const books = await this.prisma.books.findMany({
+      where: { deleted_at: null },
+      include: { book_translations: true, media: true },
+      orderBy: [{ created_at: 'desc' }, { id: 'asc' }],
+      take: PUBLICATIONS_COUNT,
+    });
+
+    return books.map((book) => {
+      const t = resolveTranslation(book.book_translations, lang);
+      return {
+        id: book.id,
+        slug: book.id, // Books are addressed by UUID; the front-end consumes this as a slug.
+        title: t?.title ?? null,
+        image: book.media?.url ?? null,
+        pages: book.pages,
+        views: Number(book.views),
+      };
+    });
+  }
+
+  // ── Videos (most recent 7 from local mirror) ───────────────────────────
+
+  /**
+   * Reads from the local YouTube mirror so the homepage stays fast and
+   * survives YouTube outages. The mirror is refreshed every 6 hours by
+   * `YoutubeSyncService`. Front-end-friendly field shape: `url` is the
+   * 11-char video ID (front-end builds the embed URL itself), `date` is
+   * ISO 8601, `desc` is the description first sentence-ish, capped.
+   */
+  private async videos() {
+    const rows = await this.youtube.findRecentVideos(VIDEOS_COUNT);
+    return rows.map((v) => ({
+      title: v.title,
+      url: v.video_id,
+      desc: shortenDescription(v.description),
+      thumbnail: v.thumbnail_url,
+      date: v.published_at?.toISOString() ?? null,
+    }));
+  }
+
+  // ── Gallery slider (latest 10 gallery images) ──────────────────────────
+
+  private async gallerySlider() {
+    const images = await this.prisma.gallery_images.findMany({
+      where: { deleted_at: null },
+      include: { media: true },
+      orderBy: [{ created_at: 'desc' }, { media_id: 'asc' }],
+      take: GALLERY_SLIDER_COUNT,
+    });
+
+    return images.map((img) => ({
+      id: img.media_id,
+      path: img.media?.url ?? null,
+    }));
+  }
+
+  // ── Gallery categories (all, slim) ─────────────────────────────────────
+
+  private async galleryCategories(lang: string | null) {
+    const categories = await this.prisma.gallery_categories.findMany({
+      where: { deleted_at: null },
+      include: { gallery_category_translations: true },
+      orderBy: { created_at: 'asc' },
+    });
+
+    return categories.map((cat) => {
+      const t = resolveTranslation(cat.gallery_category_translations, lang);
+      return {
+        id: cat.id,
+        name: t?.title ?? null,
+      };
+    });
+  }
 }
 
-function clamp(value: number | undefined, fallback: number): number {
-  if (value === undefined) return fallback;
-  if (!Number.isFinite(value) || value < 0) return fallback;
-  return Math.min(value, MAX_LIMIT_PER_BUCKET);
-}
-
-/**
- * Reduce a post row to the shape a homepage card needs. We strip the body
- * out — homepage cards never render the body — but keep enough for the
- * translation fallback, cover image, and a server-computed read time on
- * each translation. The reading time is derived from `summary` here since
- * the body isn't fetched; cards typically show summary alongside the
- * minute estimate anyway.
- */
-function slim(post: any, lang: string | null) {
-  const decoratedTranslations = post.post_translations.map((t: any) => ({
-    lang: t.lang,
-    title: t.title,
-    summary: t.summary,
-    slug: t.slug,
-    is_default: t.is_default,
-    meta_title: t.meta_title,
-    meta_description: t.meta_description,
-    reading_time_minutes: readingTimeMinutes(t.summary ?? ''),
-  }));
-  return {
-    id: post.id,
-    category_id: post.category_id,
-    is_featured: post.is_featured,
-    published_at: post.published_at,
-    views: post.views,
-    cover_image: post.media
-      ? { id: post.media.id, url: post.media.url, alt_text: post.media.alt_text }
-      : null,
-    post_translations: decoratedTranslations,
-    translation: resolveTranslation(decoratedTranslations, lang),
-    category: post.post_categories
-      ? {
-          id: post.post_categories.id,
-          translations: post.post_categories.post_category_translations,
-        }
-      : null,
-  };
+function shortenDescription(description: string | null | undefined, max = 280): string | null {
+  if (!description) return null;
+  const trimmed = description.replace(/\s+/g, ' ').trim();
+  if (trimmed.length <= max) return trimmed;
+  return trimmed.slice(0, max - 1).trimEnd() + '…';
 }
