@@ -1,8 +1,16 @@
 # CMS & Main-Site Integration Notes
 
-What the CMS frontend (`cms.imamzain.org`) and the public main site need to
-know about the recent API changes. Read alongside the live OpenAPI spec at
-`/docs` (or `/openapi.json`).
+> **Note on scope.** This document is the **chronological release notes**
+> for the API — round-by-round summaries of what changed and when. For
+> ongoing reference, use:
+>
+> - **[/docs](https://api.imamzain.org/docs)** — interactive OpenAPI / Scalar UI, per-endpoint reference.
+> - **[integration.md](integration.md)** — cross-cutting integration handbook (auth flow, envelopes, pagination, language resolution, media upload, sanitisation allowlist, rate limits, URL conventions, cron schedules).
+> - **[permissions.md](permissions.md)** — permission catalogue, default role mappings, audit-action vocabulary.
+>
+> If you're integrating from scratch, start with `integration.md`. If
+> you're catching up on what shipped recently, read this file from the
+> top.
 
 ---
 

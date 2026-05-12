@@ -212,6 +212,17 @@ All endpoints are prefixed with `/api/v1`.
 Full interactive docs (request builder + response examples): `GET /docs`.  
 Raw OpenAPI 3.0 spec: `GET /openapi.json`.
 
+### Integration documentation
+
+For cross-cutting concepts the OpenAPI spec doesn't cover, the
+`docs/` folder is the authoritative reference:
+
+| Doc | What's in it |
+| --- | --- |
+| [docs/integration.md](docs/integration.md) | Auth flow, response/error envelopes, pagination, language resolution, soft-delete + restore, two-step media upload, Tiptap sanitisation allowlist, newsletter unsubscribe scheme, rate limits, public URL conventions, cron schedules. The cross-cutting handbook. |
+| [docs/permissions.md](docs/permissions.md) | Full permission catalogue (53 permissions), default role mappings, the role × permission matrix, and the complete audit-action vocabulary for activity feeds. |
+| [docs/CMS-INTEGRATION-NOTES.md](docs/CMS-INTEGRATION-NOTES.md) | Chronological release notes — what changed in each round of API updates. Read alongside the integration docs above for context on recent additions. |
+
 ### Authentication
 
 | Method | Endpoint | Auth | Rate limit | Description |
