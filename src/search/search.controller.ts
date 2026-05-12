@@ -2,6 +2,7 @@ import { Controller, Get, Query } from '@nestjs/common';
 import { ApiBadRequestResponse, ApiHeader, ApiOkResponse, ApiOperation, ApiQuery, ApiTags } from '@nestjs/swagger';
 import { Throttle } from '@nestjs/throttler';
 import { Lang } from '../common/decorators/language.decorator';
+import { PublicCache } from '../common/decorators/public-cache.decorator';
 import { ValidationErrorDto } from '../common/dto/api-response.dto';
 import { SearchQueryDto, SearchResourceType } from './dto/search.dto';
 import { SearchResponseDto } from './dto/search-response.dto';

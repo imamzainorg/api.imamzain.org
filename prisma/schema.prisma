@@ -456,8 +456,8 @@ model users {
   audit_logs            audit_logs[]
   books                 books[]
   contact_submissions   contact_submissions[]
-  daily_hadiths         daily_hadiths[]
   daily_hadith_pins     daily_hadith_pins[]
+  daily_hadiths         daily_hadiths[]
   gallery_images        gallery_images[]
   media                 media[]
   newsletter_campaigns  newsletter_campaigns[]
@@ -477,9 +477,9 @@ model daily_hadiths {
   updated_at                DateTime                    @default(now()) @db.Timestamptz(6)
   created_by                String?                     @db.Uuid
   deleted_at                DateTime?                   @db.Timestamptz(6)
-  daily_hadith_translations daily_hadith_translations[]
   daily_hadith_pins         daily_hadith_pins[]
-  users                     users?                      @relation(fields: [created_by], references: [id], onUpdate: NoAction)
+  daily_hadith_translations daily_hadith_translations[]
+  users                     users?                      @relation(fields: [created_by], references: [id], onDelete: NoAction, onUpdate: NoAction)
 
   @@index([created_by], map: "idx_daily_hadiths_created_by")
 }
@@ -501,8 +501,8 @@ model daily_hadith_pins {
   hadith_id     String        @db.Uuid
   created_at    DateTime      @default(now()) @db.Timestamptz(6)
   created_by    String?       @db.Uuid
+  users         users?        @relation(fields: [created_by], references: [id], onDelete: NoAction, onUpdate: NoAction)
   daily_hadiths daily_hadiths @relation(fields: [hadith_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
-  users         users?        @relation(fields: [created_by], references: [id], onUpdate: NoAction)
 
   @@index([hadith_id], map: "idx_daily_hadith_pins_hadith")
 }

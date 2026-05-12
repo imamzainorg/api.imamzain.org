@@ -76,9 +76,10 @@ export class YoutubeSyncService {
   constructor(private readonly prisma: PrismaService) {}
 
   /**
-   * Every 6 hours (`0 */6 * * *`). The first run also fires shortly after
-   * boot via `onApplicationBootstrap` so a freshly-deployed server doesn't
-   * have to wait up to 6 hours before the homepage has videos.
+   * Runs every 6 hours (see the cron expression on the decorator below).
+   * The first run also fires shortly after boot via `onApplicationBootstrap`
+   * so a freshly-deployed server doesn't have to wait up to 6 hours before
+   * the homepage has videos.
    */
   @Cron('0 */6 * * *')
   async runScheduledSync() {

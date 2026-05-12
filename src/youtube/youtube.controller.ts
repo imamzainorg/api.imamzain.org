@@ -1,5 +1,6 @@
 import { Controller, Get, Param, Query } from '@nestjs/common';
 import {
+  ApiBadRequestResponse,
   ApiNotFoundResponse,
   ApiOkResponse,
   ApiOperation,
@@ -8,7 +9,7 @@ import {
   ApiTags,
 } from '@nestjs/swagger';
 import { PublicCache } from '../common/decorators/public-cache.decorator';
-import { NotFoundErrorDto } from '../common/dto/api-response.dto';
+import { NotFoundErrorDto, ValidationErrorDto } from '../common/dto/api-response.dto';
 import { YoutubePlaylistQueryDto, YoutubePlaylistVideoQueryDto, YoutubeVideoQueryDto } from './dto/youtube.dto';
 import {
   YoutubePlaylistListResponseDto,
@@ -32,6 +33,7 @@ export class YoutubeController {
   @ApiQuery({ name: 'page', required: false, type: Number, example: 1 })
   @ApiQuery({ name: 'limit', required: false, type: Number, example: 20 })
   @ApiOkResponse({ type: YoutubeVideoListResponseDto, description: 'Paginated video list' })
+  @ApiBadRequestResponse({ type: ValidationErrorDto, description: 'Invalid pagination query (page < 1, limit out of 1–100, or non-integer values)' })
   findVideos(@Query() query: YoutubeVideoQueryDto) {
     return this.service.findVideos(query.page ?? 1, query.limit ?? 20);
   }
@@ -46,6 +48,7 @@ export class YoutubeController {
   @ApiQuery({ name: 'page', required: false, type: Number, example: 1 })
   @ApiQuery({ name: 'limit', required: false, type: Number, example: 20 })
   @ApiOkResponse({ type: YoutubePlaylistListResponseDto, description: 'Paginated playlist list' })
+  @ApiBadRequestResponse({ type: ValidationErrorDto, description: 'Invalid pagination query (page < 1, limit out of 1–100, or non-integer values)' })
   findPlaylists(@Query() query: YoutubePlaylistQueryDto) {
     return this.service.findPlaylists(query.page ?? 1, query.limit ?? 20);
   }
@@ -60,6 +63,7 @@ export class YoutubeController {
   @ApiParam({ name: 'playlistId', example: 'PLxxxxxxxxxx', description: 'YouTube playlist ID' })
   @ApiQuery({ name: 'limit', required: false, type: Number, example: 50, description: 'Max videos to return (1–200, default 50).' })
   @ApiOkResponse({ type: YoutubePlaylistVideosResponseDto, description: 'Playlist with its videos in order' })
+  @ApiBadRequestResponse({ type: ValidationErrorDto, description: 'Invalid limit query (must be an integer in 1–200)' })
   @ApiNotFoundResponse({ type: NotFoundErrorDto, description: 'No playlist with that ID exists in the local mirror' })
   findPlaylistVideos(@Param('playlistId') playlistId: string, @Query() query: YoutubePlaylistVideoQueryDto) {
     return this.service.findPlaylistVideos(playlistId, query.limit ?? 50);

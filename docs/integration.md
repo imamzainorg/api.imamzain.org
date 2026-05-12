@@ -183,6 +183,7 @@ default, and how to assign new combinations — see
 [permissions.md](permissions.md).
 
 Quick rules:
+
 - The `permissions[]` array on the JWT payload is the canonical
   source of truth for what the current user can do. Server enforces;
   client renders.
@@ -252,9 +253,9 @@ all four category types, users, newsletter subscribers) follows the
 same lifecycle:
 
 ```
-┌───────┐  DELETE /<resource>/:id           ┌─────────┐
+┌───────┐  DELETE /<resource>/:id          ┌─────────┐
 │ Live  │ ──────────────────────────────▶  │ Trashed │
-└───────┘                                    └─────────┘
+└───────┘                                  └─────────┘
    ▲                                              │
    │  POST /<resource>/:id/restore                │
    └──────────────────────────────────────────────┘
@@ -287,6 +288,7 @@ and retry.
 ### Hard delete
 
 Soft delete is the default for content. The exceptions:
+
 - **Newsletter campaigns** in `draft` or `cancelled` state can be
   hard-deleted via `DELETE /newsletter/campaigns/:id`.
 - **Settings**, **roles**, **permissions assignments**, **media files**
@@ -300,21 +302,21 @@ Media uploads use a pre-signed URL pattern to keep large files off the
 API server.
 
 ```
-┌────────────┐  1. POST /media/upload-url        ┌─────────┐
-│    CMS     │ ──────────────────────────────▶  │   API   │
-│            │     { filename, mime_type }      │         │
+┌────────────┐  1. POST /media/upload-url       ┌─────────┐
+│            │ ──────────────────────────────▶  │         │
+│    CMS     │     { filename, mime_type }      │   API   │
 │            │  ◀── { uploadUrl, key }          │         │
-└────────────┘                                    └─────────┘
+└────────────┘                                  └─────────┘
        │
        │  2. PUT <uploadUrl>                     ┌─────────┐
        │     body: <file bytes>                  │   R2    │
        │     Content-Type: <same as request>     │ bucket  │
-       │ ────────────────────────────────────▶  │         │
+       │ ────────────────────────────────────▶   │         │
        │  ◀── 200 OK                             └─────────┘
        │
        │  3. POST /media/confirm                 ┌─────────┐
        │     { key, alt_text? }                  │   API   │
-       │ ────────────────────────────────────▶  │         │
+       │ ────────────────────────────────────▶   │         │
        │  ◀── full media record with             └─────────┘
        │       variants[] (320/768/1280/1920 webp)
 ```
@@ -559,6 +561,7 @@ behaviour should account for the latency.
 | Newsletter campaign promoter | every minute | Promotes campaigns with `status=scheduled` whose `scheduled_at <= now()` into `sending`. |
 
 So:
+
 - A post scheduled for `09:00:00` may not flip live until `09:00:30` at
   earliest. The CMS UI should display "scheduled for…" with a hint that
   it may go live up to a minute late.
