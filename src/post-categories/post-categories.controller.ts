@@ -20,6 +20,7 @@ import { Lang } from '../common/decorators/language.decorator';
 import { RequirePermission } from '../common/decorators/require-permission.decorator';
 import { ConflictErrorDto, ForbiddenErrorDto, NotFoundErrorDto, UnauthorizedErrorDto, ValidationErrorDto } from '../common/dto/api-response.dto';
 import { PaginationDto } from '../common/dto/pagination.dto';
+import { PublicCache } from '../common/decorators/public-cache.decorator';
 import { PermissionGuard } from '../common/guards/permission.guard';
 import { CreatePostCategoryDto, UpdatePostCategoryDto } from './dto/post-category.dto';
 import {
@@ -37,7 +38,8 @@ export class PostCategoriesController {
   constructor(private readonly service: PostCategoriesService) {}
 
   @Get()
-  @ApiOperation({ summary: 'List all post categories (public, paginated)', description: 'Returns categories that have not been soft-deleted. Use Accept-Language to get translated title and slug.' })
+  @PublicCache(300, 1800)
+  @ApiOperation({ summary: 'List all post categories (public, paginated)', description: 'Returns categories that have not been soft-deleted. Use Accept-Language to get translated title and slug. Response is CDN-cacheable (`public, max-age=300, s-maxage=1800`) and varies by `Accept-Language` — categories change rarely, so the longer TTL is safe.' })
   @ApiQuery({ name: 'page', required: false, type: Number, example: 1, description: 'Page number (default: 1)' })
   @ApiQuery({ name: 'limit', required: false, type: Number, example: 100, description: 'Items per page (default: 100, max: 100)' })
   @ApiOkResponse({ type: PostCategoryListResponseDto, description: 'Paginated list of post categories' })
@@ -84,7 +86,8 @@ export class PostCategoriesController {
   }
 
   @Get(':id')
-  @ApiOperation({ summary: 'Get a single post category (public)', description: 'Returns the category with its translations. Falls back to the default language if no translation exists for the requested language.' })
+  @PublicCache(300, 1800)
+  @ApiOperation({ summary: 'Get a single post category (public)', description: 'Returns the category with its translations. Falls back to the default language if no translation exists for the requested language. Response is CDN-cacheable (`public, max-age=300, s-maxage=1800`) and varies by `Accept-Language`.' })
   @ApiParam({ name: 'id', format: 'uuid' })
   @ApiOkResponse({ type: PostCategoryDetailResponseDto, description: 'Post category detail with translations' })
   @ApiNotFoundResponse({ type: NotFoundErrorDto, description: 'No post category with that ID exists, or it has been deleted' })

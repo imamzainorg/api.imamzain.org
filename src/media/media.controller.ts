@@ -29,9 +29,8 @@ import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { CurrentUser, CurrentUserPayload } from '../common/decorators/current-user.decorator';
 import { RequirePermission } from '../common/decorators/require-permission.decorator';
 import { ConflictErrorDto, ForbiddenErrorDto, NotFoundErrorDto, UnauthorizedErrorDto, ValidationErrorDto } from '../common/dto/api-response.dto';
-import { PaginationDto } from '../common/dto/pagination.dto';
 import { PermissionGuard } from '../common/guards/permission.guard';
-import { ConfirmUploadDto, RequestUploadUrlDto, UpdateMediaDto } from './dto/media.dto';
+import { ConfirmUploadDto, MediaQueryDto, RequestUploadUrlDto, UpdateMediaDto } from './dto/media.dto';
 import {
   MediaCreatedResponseDto,
   MediaDetailResponseDto,
@@ -87,12 +86,18 @@ export class MediaController {
 
   @Get()
   @RequirePermission('media:read')
-  @ApiOperation({ summary: 'List all media records (paginated)', description: 'Requires permission: `media:read`' })
+  @ApiOperation({
+    summary: 'List all media records (paginated, searchable, filterable)',
+    description:
+      'CMS media-picker / library view. Supports substring search on `filename` + `alt_text` (case-insensitive, backed by GIN trigram indexes) and exact `mime_type` filter. Requires permission: `media:read`.',
+  })
   @ApiQuery({ name: 'page', required: false, type: Number, example: 1, description: 'Page number (default: 1)' })
   @ApiQuery({ name: 'limit', required: false, type: Number, example: 20, description: 'Items per page (default: 20, max: 100)' })
+  @ApiQuery({ name: 'search', required: false, type: String, example: 'shrine', description: 'Substring match on filename + alt_text' })
+  @ApiQuery({ name: 'mime_type', required: false, type: String, example: 'image/jpeg', description: 'Exact mime type filter' })
   @ApiOkResponse({ type: MediaListResponseDto, description: 'Paginated list of media records' })
-  findAll(@Query() query: PaginationDto) {
-    return this.mediaService.findAll(query.page ?? 1, query.limit ?? 20);
+  findAll(@Query() query: MediaQueryDto) {
+    return this.mediaService.findAll(query);
   }
 
   @Get(':id')

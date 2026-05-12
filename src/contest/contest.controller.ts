@@ -18,6 +18,7 @@ import { Request } from 'express';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RequirePermission } from '../common/decorators/require-permission.decorator';
 import { ConflictErrorDto, ForbiddenErrorDto, NotFoundErrorDto, TooManyRequestsErrorDto, UnauthorizedErrorDto, ValidationErrorDto } from '../common/dto/api-response.dto';
+import { PublicCache } from '../common/decorators/public-cache.decorator';
 import { PermissionGuard } from '../common/guards/permission.guard';
 import { ContestService } from './contest.service';
 import { AttemptQueryDto, StartContestDto, SubmitContestDto } from './dto/contest.dto';
@@ -49,9 +50,10 @@ export class ContestController {
   }
 
   @Get('questions')
+  @PublicCache(300, 3600)
   @ApiOperation({
     summary: 'Retrieve contest questions (public)',
-    description: 'Returns the question list without revealing correct answers.',
+    description: 'Returns the question list without revealing correct answers. Response is CDN-cacheable (`public, max-age=300, s-maxage=3600`) — questions change rarely.',
   })
   @ApiOkResponse({ type: QuestionListResponseDto, description: 'List of contest questions' })
   listQuestions() {

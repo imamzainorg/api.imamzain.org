@@ -233,6 +233,17 @@ export enum PostSort {
   Views = "views",
 }
 
+export enum PostStatus {
+  /** Not yet published; `published_at` is either null or in the future. */
+  Draft = "draft",
+  /** Not yet published, but `published_at` is set to a future timestamp — will auto-publish at that time. */
+  Scheduled = "scheduled",
+  /** Currently visible to the public. */
+  Published = "published",
+  /** No filter — admin only; returns drafts, scheduled, and published together. */
+  All = "all",
+}
+
 export class PostQueryDto extends PaginationDto {
   @ApiPropertyOptional({ format: "uuid", description: "Filter by category ID" })
   @IsOptional()
@@ -266,4 +277,17 @@ export class PostQueryDto extends PaginationDto {
   @IsOptional()
   @IsEnum(PostSort)
   sort?: PostSort;
+
+  @ApiPropertyOptional({
+    enum: PostStatus,
+    description:
+      "Admin-only filter (ignored on the public `GET /posts` route — that route always returns `published` only). " +
+      "`draft`: `is_published=false` AND (`published_at` is null OR in the past). " +
+      "`scheduled`: `is_published=false` AND `published_at` is in the future. " +
+      "`published`: `is_published=true`. " +
+      "`all` (default): drafts, scheduled, and published in one list.",
+  })
+  @IsOptional()
+  @IsEnum(PostStatus)
+  status?: PostStatus;
 }

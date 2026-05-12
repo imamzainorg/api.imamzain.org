@@ -20,6 +20,7 @@ import { Lang } from '../common/decorators/language.decorator';
 import { RequirePermission } from '../common/decorators/require-permission.decorator';
 import { ConflictErrorDto, ForbiddenErrorDto, NotFoundErrorDto, UnauthorizedErrorDto, ValidationErrorDto } from '../common/dto/api-response.dto';
 import { PaginationDto } from '../common/dto/pagination.dto';
+import { PublicCache } from '../common/decorators/public-cache.decorator';
 import { PermissionGuard } from '../common/guards/permission.guard';
 import { BookCategoriesService } from './book-categories.service';
 import { CreateBookCategoryDto, UpdateBookCategoryDto } from './dto/book-category.dto';
@@ -37,7 +38,8 @@ export class BookCategoriesController {
   constructor(private readonly service: BookCategoriesService) {}
 
   @Get()
-  @ApiOperation({ summary: 'List all book categories (public, paginated)', description: 'Returns categories that have not been soft-deleted. Use Accept-Language to get translated title and slug.' })
+  @PublicCache(300, 1800)
+  @ApiOperation({ summary: 'List all book categories (public, paginated)', description: 'Returns categories that have not been soft-deleted. Use Accept-Language to get translated title and slug. Response is CDN-cacheable (`public, max-age=300, s-maxage=1800`) and varies by `Accept-Language`.' })
   @ApiQuery({ name: 'page', required: false, type: Number, example: 1, description: 'Page number (default: 1)' })
   @ApiQuery({ name: 'limit', required: false, type: Number, example: 100, description: 'Items per page (default: 100, max: 100)' })
   @ApiOkResponse({ type: BookCategoryListResponseDto, description: 'Paginated list of book categories' })
@@ -84,7 +86,8 @@ export class BookCategoriesController {
   }
 
   @Get(':id')
-  @ApiOperation({ summary: 'Get a single book category (public)', description: 'Returns the category with its translations. Falls back to the default language if the requested language translation does not exist.' })
+  @PublicCache(300, 1800)
+  @ApiOperation({ summary: 'Get a single book category (public)', description: 'Returns the category with its translations. Falls back to the default language if the requested language translation does not exist. Response is CDN-cacheable (`public, max-age=300, s-maxage=1800`) and varies by `Accept-Language`.' })
   @ApiParam({ name: 'id', format: 'uuid' })
   @ApiOkResponse({ type: BookCategoryDetailResponseDto, description: 'Book category detail with translations' })
   @ApiNotFoundResponse({ type: NotFoundErrorDto, description: 'No book category with that ID exists, or it has been deleted' })

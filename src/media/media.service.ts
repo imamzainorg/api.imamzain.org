@@ -169,15 +169,28 @@ export class MediaService {
     }
   }
 
-  async findAll(page: number, limit: number) {
+  async findAll(query: { page?: number; limit?: number; search?: string; mime_type?: string }) {
+    const page = query.page ?? 1;
+    const limit = query.limit ?? 20;
     const skip = (page - 1) * limit;
+
+    const where: any = {};
+    if (query.mime_type) where.mime_type = query.mime_type;
+    if (query.search) {
+      where.OR = [
+        { filename: { contains: query.search, mode: 'insensitive' } },
+        { alt_text: { contains: query.search, mode: 'insensitive' } },
+      ];
+    }
+
     const [items, total] = await Promise.all([
       this.prisma.media.findMany({
+        where,
         orderBy: [{ created_at: 'desc' }, { id: 'asc' }],
         skip,
         take: limit,
       }),
-      this.prisma.media.count(),
+      this.prisma.media.count({ where }),
     ]);
 
     const variantMap = await this.variants.findForMediaIds(items.map((m) => m.id));

@@ -5,7 +5,7 @@ import { sanitizeEditorHtml } from '../common/utils/html-sanitize.util';
 import { readingTimeMinutes } from '../common/utils/reading-time.util';
 import { softDeleteSuffix, stripSoftDeleteSuffix } from '../common/utils/soft-delete.util';
 import { resolveTranslation } from '../common/utils/translation.util';
-import { BulkIdsDto, BulkPublishDto, CreatePostDto, PostQueryDto, PostSort, TogglePublishDto, UpdatePostDto } from './dto/post.dto';
+import { BulkIdsDto, BulkPublishDto, CreatePostDto, PostQueryDto, PostSort, PostStatus, TogglePublishDto, UpdatePostDto } from './dto/post.dto';
 
 /** Decorate a translation row with the derived `reading_time_minutes`. */
 function withReadingTime<T extends { body?: string | null }>(t: T): T & { reading_time_minutes: number } {
@@ -24,7 +24,25 @@ export class PostsService {
     const skip = (page - 1) * limit;
 
     const where: any = { deleted_at: null };
-    if (!isAdmin) where.is_published = true;
+    if (!isAdmin) {
+      where.is_published = true;
+    } else if (query.status && query.status !== PostStatus.All) {
+      // Admin status filter. Public route ignores it — public callers only
+      // ever see published posts; the filter is meaningful for the CMS only.
+      const now = new Date();
+      if (query.status === PostStatus.Published) {
+        where.is_published = true;
+      } else if (query.status === PostStatus.Draft) {
+        where.is_published = false;
+        where.OR = [
+          { published_at: null },
+          { published_at: { lte: now } },
+        ];
+      } else if (query.status === PostStatus.Scheduled) {
+        where.is_published = false;
+        where.published_at = { gt: now };
+      }
+    }
     if (query.category_id) where.category_id = query.category_id;
     if (query.featured !== undefined) where.is_featured = query.featured;
 

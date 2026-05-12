@@ -21,6 +21,7 @@ import { Lang } from '../common/decorators/language.decorator';
 import { RequirePermission } from '../common/decorators/require-permission.decorator';
 import { ConflictErrorDto, ForbiddenErrorDto, NotFoundErrorDto, UnauthorizedErrorDto, ValidationErrorDto } from '../common/dto/api-response.dto';
 import { PaginationDto } from '../common/dto/pagination.dto';
+import { PublicCache } from '../common/decorators/public-cache.decorator';
 import { PermissionGuard } from '../common/guards/permission.guard';
 import { BookQueryDto, CreateBookDto, UpdateBookDto } from './dto/book.dto';
 import {
@@ -38,7 +39,8 @@ export class BooksController {
   constructor(private readonly booksService: BooksService) {}
 
   @Get()
-  @ApiOperation({ summary: 'List all books (public)', description: 'Supports filtering by category and full-text search.' })
+  @PublicCache(60)
+  @ApiOperation({ summary: 'List all books (public)', description: 'Supports filtering by category and full-text search. Response is CDN-cacheable (`public, max-age=60, s-maxage=300`) and varies by `Accept-Language`.' })
   @ApiQuery({ name: 'page', required: false, type: Number, example: 1, description: 'Page number (default: 1)' })
   @ApiQuery({ name: 'limit', required: false, type: Number, example: 20, description: 'Items per page (default: 20, max: 100)' })
   @ApiQuery({ name: 'category_id', required: false, type: String, description: 'Filter by book category UUID' })
@@ -87,7 +89,8 @@ export class BooksController {
   }
 
   @Get(':id')
-  @ApiOperation({ summary: 'Get a single book by ID (public)', description: 'Returns the book with its translations. Falls back to the default translation if no translation exists for the requested language.' })
+  @PublicCache(60)
+  @ApiOperation({ summary: 'Get a single book by ID (public)', description: 'Returns the book with its translations. Falls back to the default translation if no translation exists for the requested language. Response is CDN-cacheable (`public, max-age=60, s-maxage=300`) and varies by `Accept-Language`.' })
   @ApiParam({ name: 'id', format: 'uuid' })
   @ApiOkResponse({ type: BookDetailResponseDto, description: 'Book detail with all translations' })
   @ApiNotFoundResponse({ type: NotFoundErrorDto, description: 'No book with that ID exists, or it has been deleted' })

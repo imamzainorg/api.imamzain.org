@@ -1,5 +1,6 @@
 import { ApiProperty, ApiPropertyOptional } from "@nestjs/swagger";
-import { IsInt, IsOptional, IsString, Matches, Min } from "class-validator";
+import { Type } from "class-transformer";
+import { IsInt, IsOptional, IsString, Matches, Max, MaxLength, Min } from "class-validator";
 
 export class RequestUploadUrlDto {
   @ApiProperty({
@@ -106,4 +107,42 @@ export class UpdateMediaDto {
   @IsInt()
   @Min(1)
   height?: number;
+}
+
+export class MediaQueryDto {
+  @ApiPropertyOptional({ example: 1, minimum: 1, default: 1 })
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  page?: number = 1;
+
+  @ApiPropertyOptional({ example: 20, minimum: 1, maximum: 100, default: 20 })
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  @Max(100)
+  limit?: number = 20;
+
+  @ApiPropertyOptional({
+    example: "shrine",
+    description:
+      "Substring search across `filename` and `alt_text` (case-insensitive). Backed by GIN trigram indexes so it stays cheap as the media library grows.",
+    maxLength: 200,
+  })
+  @IsOptional()
+  @IsString()
+  @MaxLength(200)
+  search?: string;
+
+  @ApiPropertyOptional({
+    example: "image/jpeg",
+    description:
+      "Filter by exact MIME type. Common values: `image/jpeg`, `image/png`, `image/webp`, `image/gif`.",
+  })
+  @IsOptional()
+  @IsString()
+  @Matches(/^[\w.+-]+\/[\w.+-]+$/)
+  mime_type?: string;
 }

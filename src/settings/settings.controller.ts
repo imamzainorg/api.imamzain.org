@@ -21,6 +21,7 @@ import {
   UnauthorizedErrorDto,
   ValidationErrorDto,
 } from '../common/dto/api-response.dto';
+import { PublicCache } from '../common/decorators/public-cache.decorator';
 import { PermissionGuard } from '../common/guards/permission.guard';
 import { UpsertSettingDto } from './dto/setting.dto';
 import {
@@ -41,10 +42,11 @@ export class SettingsController {
    * are exposed; admin-only settings stay invisible to anonymous callers.
    */
   @Get('public')
+  @PublicCache(900, 3600)
   @ApiOperation({
     summary: 'List public site settings (no auth)',
     description:
-      'Returns the subset of settings flagged `is_public=true`. Use this from the front-end at build / runtime; admin-only settings stay invisible. Values are decoded per their stored `type` (string / number / boolean / json).',
+      'Returns the subset of settings flagged `is_public=true`. Use this from the front-end at build / runtime; admin-only settings stay invisible. Values are decoded per their stored `type` (string / number / boolean / json). Response is CDN-cacheable (`public, max-age=900, s-maxage=3600`) — site settings change rarely, so a 1-hour CDN TTL is safe; the front-end can also pull these at build time.',
   })
   @ApiOkResponse({ type: SettingListResponseDto, description: 'Public settings list' })
   findPublic() {

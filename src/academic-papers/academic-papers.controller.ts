@@ -19,6 +19,7 @@ import { Lang } from '../common/decorators/language.decorator';
 import { RequirePermission } from '../common/decorators/require-permission.decorator';
 import { ForbiddenErrorDto, NotFoundErrorDto, UnauthorizedErrorDto, ValidationErrorDto } from '../common/dto/api-response.dto';
 import { PaginationDto } from '../common/dto/pagination.dto';
+import { PublicCache } from '../common/decorators/public-cache.decorator';
 import { PermissionGuard } from '../common/guards/permission.guard';
 import { AcademicPapersService } from './academic-papers.service';
 import { AcademicPaperQueryDto, CreateAcademicPaperDto, UpdateAcademicPaperDto } from './dto/academic-paper.dto';
@@ -36,7 +37,8 @@ export class AcademicPapersController {
   constructor(private readonly service: AcademicPapersService) {}
 
   @Get()
-  @ApiOperation({ summary: 'List academic papers (public)', description: 'Supports filtering by category and full-text search.' })
+  @PublicCache(60)
+  @ApiOperation({ summary: 'List academic papers (public)', description: 'Supports filtering by category and full-text search. Response is CDN-cacheable (`public, max-age=60, s-maxage=300`) and varies by `Accept-Language`.' })
   @ApiQuery({ name: 'page', required: false, type: Number, example: 1, description: 'Page number (default: 1)' })
   @ApiQuery({ name: 'limit', required: false, type: Number, example: 20, description: 'Items per page (default: 20, max: 100)' })
   @ApiQuery({ name: 'category_id', required: false, type: String, description: 'Filter by academic paper category UUID' })
@@ -84,7 +86,8 @@ export class AcademicPapersController {
   }
 
   @Get(':id')
-  @ApiOperation({ summary: 'Get a single academic paper by ID (public)', description: 'Returns the paper with its translations. Falls back to the default translation if no translation exists for the requested language.' })
+  @PublicCache(60)
+  @ApiOperation({ summary: 'Get a single academic paper by ID (public)', description: 'Returns the paper with its translations. Falls back to the default translation if no translation exists for the requested language. Response is CDN-cacheable (`public, max-age=60, s-maxage=300`) and varies by `Accept-Language`.' })
   @ApiParam({ name: 'id', format: 'uuid' })
   @ApiOkResponse({ type: AcademicPaperDetailResponseDto, description: 'Academic paper detail with all translations' })
   @ApiNotFoundResponse({ type: NotFoundErrorDto, description: 'No academic paper with that ID exists, or it has been deleted' })

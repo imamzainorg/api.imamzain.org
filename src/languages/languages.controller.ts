@@ -16,6 +16,7 @@ import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { CurrentUser, CurrentUserPayload } from '../common/decorators/current-user.decorator';
 import { RequirePermission } from '../common/decorators/require-permission.decorator';
 import { ConflictErrorDto, ForbiddenErrorDto, NotFoundErrorDto, UnauthorizedErrorDto, ValidationErrorDto } from '../common/dto/api-response.dto';
+import { PublicCache } from '../common/decorators/public-cache.decorator';
 import { PermissionGuard } from '../common/guards/permission.guard';
 import { CreateLanguageDto, LanguagesService, UpdateLanguageDto } from './languages.service';
 import {
@@ -30,7 +31,8 @@ export class LanguagesController {
   constructor(private readonly languagesService: LanguagesService) {}
 
   @Get()
-  @ApiOperation({ summary: 'List active languages (public)', description: 'Returns only languages where `is_active = true`.' })
+  @PublicCache(3600, 86400)
+  @ApiOperation({ summary: 'List active languages (public)', description: 'Returns only languages where `is_active = true`. Response is CDN-cacheable (`public, max-age=3600, s-maxage=86400`) — languages change essentially never, so a 24-hour CDN TTL is safe.' })
   @ApiOkResponse({ type: LanguageListResponseDto, description: 'List of active languages' })
   findAll() {
     return this.languagesService.findAll(false);

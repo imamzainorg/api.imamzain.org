@@ -19,6 +19,7 @@ import { Lang } from '../common/decorators/language.decorator';
 import { RequirePermission } from '../common/decorators/require-permission.decorator';
 import { ForbiddenErrorDto, NotFoundErrorDto, UnauthorizedErrorDto, ValidationErrorDto } from '../common/dto/api-response.dto';
 import { PaginationDto } from '../common/dto/pagination.dto';
+import { PublicCache } from '../common/decorators/public-cache.decorator';
 import { PermissionGuard } from '../common/guards/permission.guard';
 import { CreateGalleryImageDto, GalleryQueryDto, UpdateGalleryImageDto } from './dto/gallery.dto';
 import {
@@ -36,7 +37,8 @@ export class GalleryController {
   constructor(private readonly galleryService: GalleryService) {}
 
   @Get()
-  @ApiOperation({ summary: 'List gallery images (public)', description: 'Supports filtering by category, tags, and locations. All tag/location filters use AND logic.' })
+  @PublicCache(60)
+  @ApiOperation({ summary: 'List gallery images (public)', description: 'Supports filtering by category, tags, and locations. All tag/location filters use AND logic. Response is CDN-cacheable (`public, max-age=60, s-maxage=300`) and varies by `Accept-Language`.' })
   @ApiQuery({ name: 'page', required: false, type: Number, example: 1, description: 'Page number (default: 1)' })
   @ApiQuery({ name: 'limit', required: false, type: Number, example: 20, description: 'Items per page (default: 20, max: 100)' })
   @ApiQuery({ name: 'category_id', required: false, type: String, description: 'Filter by gallery category UUID' })
@@ -85,7 +87,8 @@ export class GalleryController {
   }
 
   @Get(':id')
-  @ApiOperation({ summary: 'Get a single gallery image by its media ID (public)', description: 'The `id` parameter is the media record UUID (gallery images use media_id as their primary key).' })
+  @PublicCache(60)
+  @ApiOperation({ summary: 'Get a single gallery image by its media ID (public)', description: 'The `id` parameter is the media record UUID (gallery images use media_id as their primary key). Response is CDN-cacheable (`public, max-age=60, s-maxage=300`) and varies by `Accept-Language`.' })
   @ApiParam({ name: 'id', format: 'uuid', description: 'Media ID (serves as the gallery image primary key)' })
   @ApiOkResponse({ type: GalleryDetailResponseDto, description: 'Gallery image detail including linked media record and all translations' })
   @ApiNotFoundResponse({ type: NotFoundErrorDto, description: 'No gallery image with that media ID exists, or it has been deleted' })

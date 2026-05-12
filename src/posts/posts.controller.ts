@@ -32,6 +32,7 @@ import { Lang } from '../common/decorators/language.decorator';
 import { RequirePermission } from '../common/decorators/require-permission.decorator';
 import { ConflictErrorDto, ForbiddenErrorDto, NotFoundErrorDto, UnauthorizedErrorDto, ValidationErrorDto } from '../common/dto/api-response.dto';
 import { PaginationDto } from '../common/dto/pagination.dto';
+import { PublicCache } from '../common/decorators/public-cache.decorator';
 import { PermissionGuard } from '../common/guards/permission.guard';
 import { BulkIdsDto, BulkPublishDto, CreatePostDto, PostQueryDto, TogglePublishDto, UpdatePostDto } from './dto/post.dto';
 import {
@@ -50,7 +51,8 @@ export class PostsController {
   constructor(private readonly postsService: PostsService) {}
 
   @Get()
-  @ApiOperation({ summary: 'List published posts (public)', description: 'Returns only published posts. Increments view count on each fetch of a single post.' })
+  @PublicCache(60)
+  @ApiOperation({ summary: 'List published posts (public)', description: 'Returns only published posts. Increments view count on each fetch of a single post. Response is `Cache-Control: public, max-age=60, s-maxage=300` and varies by `Accept-Language`; the CDN absorbs the bulk of public traffic.' })
   @ApiQuery({ name: 'page', required: false, type: Number, example: 1, description: 'Page number (default: 1)' })
   @ApiQuery({ name: 'limit', required: false, type: Number, example: 20, description: 'Items per page (default: 20, max: 100)' })
   @ApiQuery({ name: 'category_id', required: false, type: String, description: 'Filter by post category UUID' })
@@ -63,7 +65,8 @@ export class PostsController {
   }
 
   @Get('by-slug/:slug')
-  @ApiOperation({ summary: 'Get a published post by its translated slug (public)' })
+  @PublicCache(60)
+  @ApiOperation({ summary: 'Get a published post by its translated slug (public)', description: 'Response is CDN-cacheable (`public, max-age=60, s-maxage=300`) and varies by `Accept-Language`.' })
   @ApiParam({ name: 'slug', example: 'hayat-al-imam-zain', description: 'URL slug from a post translation' })
   @ApiOkResponse({ type: PostDetailResponseDto, description: 'Post detail with all translations and attached media records' })
   @ApiNotFoundResponse({ type: NotFoundErrorDto, description: 'No published post with that slug exists in any language' })
@@ -75,13 +78,24 @@ export class PostsController {
   @UseGuards(JwtAuthGuard, PermissionGuard)
   @ApiBearerAuth('jwt')
   @RequirePermission('posts:read')
-  @ApiOperation({ summary: 'List all posts including unpublished (admin)', description: 'Requires permission: `posts:read`' })
+  @ApiOperation({
+    summary: 'List all posts including unpublished (admin)',
+    description:
+      'Admin list view. Returns drafts, scheduled, and published posts by default. Use `?status=draft|scheduled|published|all` to scope to one CMS tab. Requires permission: `posts:read`.',
+  })
   @ApiQuery({ name: 'page', required: false, type: Number, example: 1, description: 'Page number (default: 1)' })
   @ApiQuery({ name: 'limit', required: false, type: Number, example: 20, description: 'Items per page (default: 20, max: 100)' })
   @ApiQuery({ name: 'category_id', required: false, type: String, description: 'Filter by post category UUID' })
   @ApiQuery({ name: 'search', required: false, type: String, example: 'الإمام', description: 'Full-text search across post titles and body content' })
   @ApiQuery({ name: 'featured', required: false, type: Boolean })
   @ApiQuery({ name: 'sort', required: false, enum: ['newest', 'views'] })
+  @ApiQuery({
+    name: 'status',
+    required: false,
+    enum: ['draft', 'scheduled', 'published', 'all'],
+    description:
+      'Admin tab filter. `draft` = is_published=false AND (no published_at OR published_at in the past); `scheduled` = is_published=false AND published_at in the future; `published` = is_published=true; `all` (default) = everything.',
+  })
   @ApiOkResponse({ type: PostListResponseDto, description: 'Paginated list of all posts' })
   @ApiUnauthorizedResponse({ type: UnauthorizedErrorDto, description: 'Missing or invalid JWT' })
   @ApiForbiddenResponse({ type: ForbiddenErrorDto, description: 'Insufficient permissions' })
@@ -142,7 +156,8 @@ export class PostsController {
   }
 
   @Get(':id')
-  @ApiOperation({ summary: 'Get a single published post by ID (public)' })
+  @PublicCache(60)
+  @ApiOperation({ summary: 'Get a single published post by ID (public)', description: 'Response is CDN-cacheable (`public, max-age=60, s-maxage=300`) and varies by `Accept-Language`.' })
   @ApiParam({ name: 'id', format: 'uuid' })
   @ApiOkResponse({ type: PostDetailResponseDto, description: 'Post detail with all translations and attached media records (published only)' })
   @ApiNotFoundResponse({ type: NotFoundErrorDto, description: 'No published post with that ID exists, or it has been deleted/unpublished' })

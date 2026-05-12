@@ -19,11 +19,12 @@ export class SearchController {
   constructor(private readonly service: SearchService) {}
 
   @Get()
+  @PublicCache(30, 60)
   @Throttle({ default: { ttl: 60_000, limit: 60 } })
   @ApiOperation({
     summary: 'Cross-resource search (public)',
     description:
-      'Searches published posts, books, academic papers and gallery image captions. Results are grouped by resource type. Public — only returns content that is visible to anonymous users (published posts; non-deleted everything else). Rate-limited to 60 calls/minute/IP.',
+      'Searches published posts, books, academic papers and gallery image captions. Results are grouped by resource type. Public — only returns content that is visible to anonymous users (published posts; non-deleted everything else). Rate-limited to 60 calls/minute/IP. Response is CDN-cacheable (`public, max-age=30, s-maxage=60`) and varies by `Accept-Language` — popular queries get amortised at the CDN.',
   })
   @ApiQuery({ name: 'q', required: true, type: String, example: 'الإمام', description: 'Query string (2–200 chars)' })
   @ApiQuery({

@@ -686,7 +686,140 @@ NEWSLETTER_UNSUBSCRIBE_URL_BASE=...           # already in use from round 3
 
 ---
 
-## 10. Open follow-ups (still not in this push)
+## 10. Round 6 (this push) — performance + workflow gaps
+
+Pure code + one additive SQL migration. No breaking changes.
+
+### a. Apply the SQL migration first
+
+```bash
+psql "$DIRECT_URL" -f prisma/migrations/20260512100000_search_indexes_and_filters/migration.sql
+npm run prisma:pull && npm run prisma:generate
+```
+
+Adds `pg_trgm` extension and GIN trigram indexes on every column the
+API does substring `contains` search on (post title + body, book title +
+author + description, paper title + abstract, gallery title +
+description, media filename + alt_text), plus a B-tree index on
+`media.mime_type` for the new filter. Re-runnable; everything is
+`IF NOT EXISTS`.
+
+### b. Cache-Control on public reads
+
+Every public GET now sets `Cache-Control: public, max-age=…, s-maxage=…`
+and `Vary: Accept-Language`. Cloudflare (or any other CDN) absorbs the
+bulk of public traffic; the origin only handles requests for content
+the CDN doesn't yet have or that has expired.
+
+TTL summary:
+
+| Endpoints | Browser | CDN |
+| --- | --- | --- |
+| Posts / books / papers / gallery list + detail | 60s | 5m |
+| Categories (all four) list + detail | 5m | 30m |
+| `/search` | 30s | 60s |
+| `/settings/public` | 15m | 60m |
+| `/languages` | 60m | 24h |
+| `/forms/qutuf-sajjadiya-contest/questions` | 5m | 60m |
+| `/homepage` (new) | 60s | 5m |
+| `/sitemap.xml`, `/rss/posts.xml` | 15m | 15m (unchanged) |
+
+The CMS, the public site, and the integration handbook all describe
+what to do with these headers — see
+[integration.md#caching-strategy--cost-notes-for-consumer-apps](integration.md#caching-strategy--cost-notes-for-consumer-apps).
+
+NestJS / Express already emits a weak `ETag` on every JSON response;
+the CDN turns `If-None-Match` into 304 responses automatically.
+
+### c. `GET /homepage` — composite aggregator
+
+```text
+GET /homepage?featured_limit=5&popular_limit=5&recent_limit=10
+```
+
+Returns three buckets in one round trip: `featured` (is_featured=true,
+newest first), `popular` (highest view count), `recent` (newest
+published). Replaces the public-site fan-out of three separate
+`/posts` calls.
+
+Cards are deliberately slim — no `body`, no `post_attachments` — since
+homepage tiles never render the body. Includes `cover_image`,
+`translation`, `category`, and a `reading_time_minutes` derived from
+the summary.
+
+CDN-cacheable, same `public, max-age=60, s-maxage=300` as the post
+endpoints. Limits clamp to 0–20 per bucket.
+
+### d. `GET /posts/admin?status=...`
+
+Admin tab filter. Values: `draft`, `scheduled`, `published`, `all`
+(default). The CMS can finally render proper "Drafts (14)" /
+"Scheduled (2)" / "Published (128)" tabs without fetching all posts
+and filtering client-side.
+
+Definitions:
+
+- `draft`: `is_published=false` AND (`published_at` is null OR in the
+  past)
+- `scheduled`: `is_published=false` AND `published_at` is in the
+  future
+- `published`: `is_published=true`
+- `all` (default): everything (current behaviour)
+
+The public `GET /posts` route ignores `status` — anonymous callers only
+ever see published posts.
+
+### e. `GET /media?search=&mime_type=`
+
+The media library admin endpoint now accepts:
+
+- `search` — substring match on `filename` + `alt_text`,
+  case-insensitive. Backed by GIN trigram indexes so it stays cheap as
+  the library grows.
+- `mime_type` — exact match. Common values: `image/jpeg`, `image/png`,
+  `image/webp`, `image/gif`.
+
+The CMS media picker should always pass at least one of these once the
+library grows past a few dozen items.
+
+### f. Notes for the CMS team
+
+- New `?status=` filter on `GET /posts/admin` — wire it into the CMS
+  posts list page as tabs.
+- New `?search=` + `?mime_type=` on `GET /media` — required for the
+  media picker once the library grows. Debounce search input by ≥ 300 ms.
+- `GET /dashboard/stats` — don't poll faster than 30 s/refresh.
+- `GET /auth/me` is for initial profile load only; render permission
+  gates from the JWT's `permissions[]` array, not by re-calling /me.
+- Campaign composer: fetch recipient count via
+  `GET /newsletter/subscribers?is_active=true&limit=1` and read
+  `pagination.total`, don't poll.
+
+### g. Notes for the front-end team
+
+- **Route the public site through Cloudflare (orange cloud).** That's
+  where almost all the cost savings come from — the Cache-Control
+  headers we ship are useless if the CDN isn't in front of the API.
+- Confirm Cloudflare's "Respect origin Cache-Control" rule is ON; do
+  not override with hard-coded edge TTLs.
+- Use `GET /homepage` instead of three `/posts` calls.
+- Always render `<img srcset>` from `media.variants[]`, never the
+  original URL.
+- Build-time fetch `/settings/public` and `/languages`; bundle into the
+  static site. Don't re-fetch per page render.
+- Public search bar: debounce ≥ 300 ms, abort in-flight on new
+  keystroke.
+- `POST /posts/:id/view`: fire only after a 5 s dwell, not on every
+  visit.
+- Use the `translations[]` array on post / book responses to emit
+  `<link rel="alternate" hreflang>` tags in `<head>` for SEO.
+
+The full caching strategy + monitoring guidance lives in
+[integration.md#caching-strategy--cost-notes-for-consumer-apps](integration.md#caching-strategy--cost-notes-for-consumer-apps).
+
+---
+
+## 11. Open follow-ups (still not in this push)
 
 - Self-service password reset flow (would need an `email` column on
   `users` plus the `password_reset_tokens` table described in the

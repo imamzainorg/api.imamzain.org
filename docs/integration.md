@@ -568,6 +568,83 @@ So:
 
 ---
 
+## Caching strategy + cost notes for consumer apps
+
+The API runs on Supabase (Postgres) + a single Node process. Origin
+work scales linearly with hit volume unless the CDN absorbs it. This
+section is the **action list** for the CMS and front-end teams to keep
+costs predictable as traffic grows.
+
+### What the API ships with (already done)
+
+| Endpoint(s) | `Cache-Control` | Why this TTL |
+| --- | --- | --- |
+| `GET /posts`, `/posts/by-slug/:slug`, `/posts/:id` | `public, max-age=60, s-maxage=300` | Posts can be edited / published throughout the day; 5 min CDN cache absorbs ~99% of repeat traffic without serving very stale content. |
+| `GET /books`, `/books/:id`, `/academic-papers*`, `/gallery*` | `public, max-age=60, s-maxage=300` | Same shape as posts. |
+| `GET /post-categories`, `/book-categories`, `/gallery-categories`, `/academic-paper-categories` | `public, max-age=300, s-maxage=1800` | Categories change rarely; 30 min CDN TTL is comfortable. |
+| `GET /languages` | `public, max-age=3600, s-maxage=86400` | Essentially immutable; 24h CDN TTL. |
+| `GET /settings/public` | `public, max-age=900, s-maxage=3600` | Site-config changes propagate within an hour. |
+| `GET /search` | `public, max-age=30, s-maxage=60` | Popular queries get amortised; new content surfaces within 1 minute. |
+| `GET /forms/qutuf-sajjadiya-contest/questions` | `public, max-age=300, s-maxage=3600` | Questions change rarely. |
+| `GET /sitemap.xml`, `/rss/posts.xml` | `public, max-age=900, s-maxage=900` | Already set independently. |
+| `GET /homepage` | `public, max-age=60, s-maxage=300` | The single most-hit public route. |
+
+All cached endpoints set `Vary: Accept-Language` so Arabic and English
+versions are cached separately at the edge.
+
+Every JSON response also carries an `ETag` (Express auto-emits a weak
+ETag from the response body hash). The CDN converts `If-None-Match`
+revalidations into 304s automatically — no extra work on the consumer
+side.
+
+### What the CMS needs to do
+
+The CMS makes authenticated requests, so **none of its endpoints are
+CDN-cacheable** — Cloudflare correctly bypasses cache when an
+`Authorization` header is present (or a `Cache-Control: no-store`
+default kicks in for any non-cacheable response). That's by design.
+The optimisations the CMS can make are around request shape:
+
+1. **Use the new `?status=draft|scheduled|published` filter on `GET /posts/admin`.** Server-side filtering is cheaper than fetching all and filtering in JS, and the response is 60–80% smaller.
+2. **Use `GET /media?search=<term>&mime_type=image/jpeg`.** The media picker should ALWAYS pass a search or mime filter once the library grows past ~50 items. Trigram indexes are in place; the query stays fast indefinitely.
+3. **Debounce search input by ≥ 300ms before calling `GET /search`** or the post / media `?search=`. Trigram indexes keep individual queries fast (~5–10 ms each), but un-debounced search fires one DB query per keystroke per concurrent user. 300ms is the standard floor.
+4. **Don't poll `GET /dashboard/stats` faster than every 30 seconds.** The endpoint does 17 parallel COUNTs; cheap individually, but pointless to repeat sub-30s since none of the counts change that fast.
+5. **Read the JWT's `permissions[]` array locally to drive button-visibility.** Do not re-call `GET /auth/me` per route render. The JWT is good for 24h; decode it once on login.
+6. **For the campaign composer, fetch the recipient count once via `GET /newsletter/subscribers?is_active=true&limit=1` and read `pagination.total`.** Don't repeat this on every keystroke.
+
+### What the front-end needs to do
+
+This is where the biggest cost savings live, because the public site is
+the bulk of the traffic.
+
+1. **Route ALL public reads through the CDN, not direct to the API origin.** Cloudflare should be the first hop. Confirm in your DNS: `api.imamzain.org` resolves to a Cloudflare-proxied record (orange cloud).
+2. **In Cloudflare's cache rules, set "Respect origin Cache-Control" to ON.** The defaults usually do this, but verify. If a cache rule overrides our headers (e.g. "Browser cache TTL: 1 day"), the front-end will see stale content.
+3. **Use `GET /homepage` instead of three separate `/posts` calls.** Already the case if you start fresh; if there's existing code calling `/posts?featured=true` + `/posts?sort=views` + `/posts?sort=newest`, swap it. Cuts origin load on the busiest route by 3×.
+4. **Always render `<img srcset>` from `media.variants[]`, never the original URL.** Saves both bandwidth and visitor-side bytes. The variants are already pre-baked; using them costs nothing extra.
+5. **Build-time fetch `/settings/public` and bundle the result into the static site.** Refresh on each rebuild (or every hour via ISR / on-demand revalidation). Don't re-fetch it per-page-render.
+6. **Build-time fetch `/languages` too** — these change essentially never.
+7. **Add the sitemap reference to `robots.txt`** so search engines pull from `${PUBLIC_SITE_URL}/robots.txt → Sitemap: …/sitemap.xml`. Don't fetch the sitemap at runtime.
+8. **For the public search bar, debounce ≥ 300ms and abort in-flight requests on next keystroke.** Same reason as for the CMS.
+9. **Don't call `POST /posts/:id/view` if the visitor is bouncing.** Trigger it after a 5 s dwell timer; the current rate-limit (30/min/IP) protects the API but you'd still rather not waste the call when you know the visitor isn't really reading.
+10. **Use `<link rel="alternate" hreflang>` on every post page.** The translations array on the response carries the alternates — read it once and emit the tags. Avoids penalties from search engines treating Arabic/English versions as duplicate content.
+
+### What to monitor
+
+- **Cloudflare Analytics → Cache Status** — target ≥ 90% cache hit rate on `/api/v1/posts*`, `/api/v1/books*`, `/api/v1/gallery*`, `/api/v1/homepage`. If hit rate is low, check that Cloudflare isn't stripping `Vary: Accept-Language` or that the front-end isn't appending cache-busting query params.
+- **Supabase Query Performance** — flag any query > 100ms p95 on `posts`, `book_translations`, `media`. The trigram + B-tree indexes added in round 6 should keep these well below the threshold.
+- **`/dashboard/stats` p95** — should stay < 100 ms. If it climbs, time to add a 30 s in-memory cache to the service.
+
+### What's deliberately NOT cached
+
+- All admin endpoints (anything requiring JWT)
+- `POST /*` writes
+- `/auth/me`, `/dashboard/stats`, `/audit-logs`
+- `POST /posts/:id/view`, `/books/:id/view` (mutations)
+- `/health` (live status check)
+- `/forms/contact`, `/forms/proxy-visit`, `/newsletter/subscribe`
+
+---
+
 ## Required environment variables
 
 For the CMS / front-end deployment, the API's env config is the

@@ -177,7 +177,7 @@ describe('MediaService', () => {
       prisma.media.findMany.mockResolvedValue([baseMedia]);
       prisma.media.count.mockResolvedValue(1);
 
-      const result = await service.findAll(1, 10);
+      const result = await service.findAll({ page: 1, limit: 10 });
 
       expect(result.data.items).toHaveLength(1);
       expect(result.data.pagination).toEqual({ page: 1, limit: 10, total: 1, pages: 1 });
