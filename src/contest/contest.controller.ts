@@ -43,6 +43,7 @@ export class ContestController {
     description: 'Requires permission: `contest:read`. Returns paginated list of all contest attempts.',
   })
   @ApiOkResponse({ type: AttemptListResponseDto, description: 'Paginated list of contest attempts' })
+  @ApiBadRequestResponse({ type: ValidationErrorDto, description: 'Invalid query parameters (page < 1, limit out of 1–100, or non-integer values)' })
   @ApiUnauthorizedResponse({ type: UnauthorizedErrorDto, description: 'Missing or invalid JWT' })
   @ApiForbiddenResponse({ type: ForbiddenErrorDto, description: 'Missing `contest:read` permission' })
   findAllAttempts(@Query() query: AttemptQueryDto) {
@@ -87,6 +88,7 @@ export class ContestController {
       'Requires the `attempt_id` from POST /start. Each attempt can only be submitted once. Returns `success`, `final_score`, and `total_questions`. Rate-limited to 30 per hour per IP.',
   })
   @ApiOkResponse({ type: SubmitContestResponseDto, description: 'Answers scored successfully' })
+  @ApiBadRequestResponse({ type: ValidationErrorDto, description: 'Validation failed (bad UUID, missing answer, or answer outside A–D)' })
   @ApiNotFoundResponse({ type: NotFoundErrorDto, description: 'Attempt not found' })
   @ApiConflictResponse({ type: ConflictErrorDto, description: 'Attempt already submitted, or answer count mismatch' })
   @ApiTooManyRequestsResponse({ type: TooManyRequestsErrorDto, description: 'Max 30 submissions per hour per IP' })

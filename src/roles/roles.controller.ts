@@ -57,6 +57,7 @@ export class RolesController {
   @ApiQuery({ name: 'page', required: false, type: Number, example: 1, description: 'Page number (default: 1)' })
   @ApiQuery({ name: 'limit', required: false, type: Number, example: 20, description: 'Items per page (default: 20, max: 100)' })
   @ApiOkResponse({ type: RoleListResponseDto, description: 'Paginated list of roles with translations and permissions' })
+  @ApiBadRequestResponse({ type: ValidationErrorDto, description: 'Invalid query parameters (page < 1, limit out of 1–100, or non-integer values)' })
   findAll(@Lang() lang: string | null, @Query() query: PaginationDto) {
     return this.rolesService.findAll(lang, query.page ?? 1, query.limit ?? 20);
   }
@@ -67,6 +68,7 @@ export class RolesController {
   @ApiQuery({ name: 'page', required: false, type: Number, example: 1, description: 'Page number (default: 1)' })
   @ApiQuery({ name: 'limit', required: false, type: Number, example: 100, description: 'Items per page (default: 100, max: 100)' })
   @ApiOkResponse({ type: PermissionListResponseDto, description: 'Paginated list of all permissions' })
+  @ApiBadRequestResponse({ type: ValidationErrorDto, description: 'Invalid query parameters (page < 1, limit out of 1–100, or non-integer values)' })
   findAllPermissions(@Lang() lang: string | null, @Query() query: PaginationDto) {
     return this.rolesService.findAllPermissions(lang, query.page ?? 1, query.limit ?? 100);
   }
@@ -123,6 +125,7 @@ export class RolesController {
   @ApiOperation({ summary: 'Assign a permission to a role', description: 'Requires permission: `roles:update`' })
   @ApiParam({ name: 'id', format: 'uuid', description: 'Role ID' })
   @ApiCreatedResponse({ type: RoleMessageResponseDto, description: 'Permission added to the role; users holding this role gain the new access on their next request' })
+  @ApiBadRequestResponse({ type: ValidationErrorDto, description: 'Validation failed (missing or non-UUID permission_id)' })
   @ApiNotFoundResponse({ type: NotFoundErrorDto, description: 'No role or permission with that ID exists' })
   assignPermission(
     @Param('id') id: string,

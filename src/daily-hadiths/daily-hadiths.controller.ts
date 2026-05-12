@@ -88,6 +88,7 @@ export class DailyHadithsController {
   @ApiQuery({ name: 'limit', required: false, type: Number, example: 20 })
   @ApiQuery({ name: 'is_active', required: false, type: Boolean })
   @ApiOkResponse({ type: DailyHadithListResponseDto, description: 'Paginated hadith list' })
+  @ApiBadRequestResponse({ type: ValidationErrorDto, description: 'Invalid query parameters (page < 1, limit out of 1–100, or non-integer values)' })
   @ApiUnauthorizedResponse({ type: UnauthorizedErrorDto, description: 'Missing or invalid JWT' })
   @ApiForbiddenResponse({ type: ForbiddenErrorDto, description: 'Insufficient permissions' })
   findAll(@Query() query: DailyHadithQueryDto, @Lang() lang: string | null) {

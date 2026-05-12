@@ -1,5 +1,6 @@
 import { Controller, Get, Param, ParseUUIDPipe, Query, UseGuards } from '@nestjs/common';
 import {
+  ApiBadRequestResponse,
   ApiBearerAuth,
   ApiForbiddenResponse,
   ApiNotFoundResponse,
@@ -11,7 +12,7 @@ import {
 } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RequirePermission } from '../common/decorators/require-permission.decorator';
-import { ForbiddenErrorDto, NotFoundErrorDto, UnauthorizedErrorDto } from '../common/dto/api-response.dto';
+import { ForbiddenErrorDto, NotFoundErrorDto, UnauthorizedErrorDto, ValidationErrorDto } from '../common/dto/api-response.dto';
 import { PermissionGuard } from '../common/guards/permission.guard';
 import { AuditLogsService } from './audit-logs.service';
 import { AuditLogQueryDto } from './dto/audit-log-query.dto';
@@ -34,6 +35,7 @@ export class AuditLogsController {
       'Requires permission: `audit-logs:read`. Supports filtering by user, action, resource type, and date range.',
   })
   @ApiOkResponse({ type: AuditLogListResponseDto, description: 'Paginated list of audit logs' })
+  @ApiBadRequestResponse({ type: ValidationErrorDto, description: 'Invalid query parameters (bad UUID, malformed ISO date, page < 1, or limit out of 1–100)' })
   findAll(@Query() query: AuditLogQueryDto) {
     return this.auditLogsService.findAll(query.page ?? 1, query.limit ?? 20, {
       userId: query.user_id,

@@ -70,6 +70,7 @@ export class NewsletterController {
   @ApiQuery({ name: 'search', required: false, type: String, example: 'reader@example.com', description: 'Partial email search' })
   @ApiQuery({ name: 'is_active', required: false, type: Boolean, example: true, description: 'Filter by active status. Omit to return all.' })
   @ApiOkResponse({ type: SubscriberListResponseDto, description: 'Paginated list of subscribers' })
+  @ApiBadRequestResponse({ type: ValidationErrorDto, description: 'Invalid query parameters (page < 1, limit out of 1–100, or non-integer values)' })
   @ApiUnauthorizedResponse({ type: UnauthorizedErrorDto, description: 'Missing or invalid JWT' })
   @ApiForbiddenResponse({ type: ForbiddenErrorDto, description: 'Insufficient permissions' })
   findAll(@Query() query: SubscriberQueryDto) {

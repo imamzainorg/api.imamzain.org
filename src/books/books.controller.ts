@@ -46,6 +46,7 @@ export class BooksController {
   @ApiQuery({ name: 'category_id', required: false, type: String, description: 'Filter by book category UUID' })
   @ApiQuery({ name: 'search', required: false, type: String, example: 'الصحيفة', description: 'Search across book titles' })
   @ApiOkResponse({ type: BookListResponseDto, description: 'Paginated list of books' })
+  @ApiBadRequestResponse({ type: ValidationErrorDto, description: 'Invalid query parameters (page < 1, limit out of 1–100, or non-integer values)' })
   findAll(@Query() query: BookQueryDto, @Lang() lang: string | null) {
     return this.booksService.findAll(query, lang);
   }
@@ -62,6 +63,7 @@ export class BooksController {
   @ApiQuery({ name: 'page', required: false, type: Number, example: 1 })
   @ApiQuery({ name: 'limit', required: false, type: Number, example: 20 })
   @ApiOkResponse({ type: BookListResponseDto, description: 'Paginated list of trashed books' })
+  @ApiBadRequestResponse({ type: ValidationErrorDto, description: 'Invalid query parameters (page < 1, limit out of 1–100, or non-integer values)' })
   @ApiUnauthorizedResponse({ type: UnauthorizedErrorDto, description: 'Missing or invalid JWT' })
   @ApiForbiddenResponse({ type: ForbiddenErrorDto, description: 'Insufficient permissions' })
   findTrash(@Query() query: PaginationDto) {

@@ -96,6 +96,7 @@ export class MediaController {
   @ApiQuery({ name: 'search', required: false, type: String, example: 'shrine', description: 'Substring match on filename + alt_text' })
   @ApiQuery({ name: 'mime_type', required: false, type: String, example: 'image/jpeg', description: 'Exact mime type filter' })
   @ApiOkResponse({ type: MediaListResponseDto, description: 'Paginated list of media records' })
+  @ApiBadRequestResponse({ type: ValidationErrorDto, description: 'Invalid query parameters (page < 1, limit out of 1–100, or non-integer values)' })
   findAll(@Query() query: MediaQueryDto) {
     return this.mediaService.findAll(query);
   }

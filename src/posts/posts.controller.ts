@@ -60,6 +60,7 @@ export class PostsController {
   @ApiQuery({ name: 'featured', required: false, type: Boolean, description: 'Limit to is_featured posts (homepage / hero rail)' })
   @ApiQuery({ name: 'sort', required: false, enum: ['newest', 'views'], description: '`newest` (default) or `views` (most-viewed first)' })
   @ApiOkResponse({ type: PostListResponseDto, description: 'Paginated list of published posts' })
+  @ApiBadRequestResponse({ type: ValidationErrorDto, description: 'Invalid query parameters (page < 1, limit out of 1–100, or non-integer values)' })
   findAll(@Query() query: PostQueryDto, @Lang() lang: string | null) {
     return this.postsService.findAll(query, lang, false);
   }
@@ -97,6 +98,7 @@ export class PostsController {
       'Admin tab filter. `draft` = is_published=false AND (no published_at OR published_at in the past); `scheduled` = is_published=false AND published_at in the future; `published` = is_published=true; `all` (default) = everything.',
   })
   @ApiOkResponse({ type: PostListResponseDto, description: 'Paginated list of all posts' })
+  @ApiBadRequestResponse({ type: ValidationErrorDto, description: 'Invalid query parameters (page < 1, limit out of 1–100, or non-integer values)' })
   @ApiUnauthorizedResponse({ type: UnauthorizedErrorDto, description: 'Missing or invalid JWT' })
   @ApiForbiddenResponse({ type: ForbiddenErrorDto, description: 'Insufficient permissions' })
   findAdmin(@Query() query: PostQueryDto, @Lang() lang: string | null) {
@@ -129,6 +131,7 @@ export class PostsController {
   @ApiQuery({ name: 'page', required: false, type: Number, example: 1 })
   @ApiQuery({ name: 'limit', required: false, type: Number, example: 20 })
   @ApiOkResponse({ type: PostListResponseDto, description: 'Paginated list of trashed posts' })
+  @ApiBadRequestResponse({ type: ValidationErrorDto, description: 'Invalid query parameters (page < 1, limit out of 1–100, or non-integer values)' })
   @ApiUnauthorizedResponse({ type: UnauthorizedErrorDto, description: 'Missing or invalid JWT' })
   @ApiForbiddenResponse({ type: ForbiddenErrorDto, description: 'Insufficient permissions' })
   findTrash(@Query() query: PaginationDto) {

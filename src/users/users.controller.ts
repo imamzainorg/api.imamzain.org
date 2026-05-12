@@ -54,6 +54,7 @@ export class UsersController {
   @ApiQuery({ name: 'page', required: false, type: Number, example: 1, description: 'Page number (default: 1)' })
   @ApiQuery({ name: 'limit', required: false, type: Number, example: 20, description: 'Items per page (default: 20, max: 100)' })
   @ApiOkResponse({ type: UserListResponseDto, description: 'Paginated list of users' })
+  @ApiBadRequestResponse({ type: ValidationErrorDto, description: 'Invalid query parameters (page < 1, limit out of 1–100, or non-integer values)' })
   findAll(@Query() query: PaginationDto) {
     return this.usersService.findAll(query.page ?? 1, query.limit ?? 20);
   }
@@ -108,6 +109,7 @@ export class UsersController {
   @ApiOperation({ summary: 'Assign a role to a user', description: 'Requires permission: `users:update`' })
   @ApiParam({ name: 'id', format: 'uuid', description: 'User ID' })
   @ApiCreatedResponse({ type: UserMessageResponseDto, description: 'Role assigned to the user; the new permission set takes effect on their next authenticated request' })
+  @ApiBadRequestResponse({ type: ValidationErrorDto, description: 'Validation failed (missing or non-UUID role_id)' })
   @ApiNotFoundResponse({ type: NotFoundErrorDto, description: 'No user or role with those IDs exists' })
   assignRole(
     @Param('id') id: string,

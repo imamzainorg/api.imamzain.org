@@ -78,6 +78,7 @@ export class CampaignsController {
       'Paginated list of campaigns ordered by creation time (newest first). Optionally filter by lifecycle status. Requires permission: `newsletter:read`.',
   })
   @ApiOkResponse({ type: CampaignListResponseDto, description: 'Paginated list of campaigns with their current delivery counters' })
+  @ApiBadRequestResponse({ type: ValidationErrorDto, description: 'Invalid query parameters (page < 1, limit out of 1–100, or non-integer values)' })
   findAll(@Query() query: CampaignQueryDto) {
     return this.service.findAll(query);
   }

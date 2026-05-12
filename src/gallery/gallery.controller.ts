@@ -45,6 +45,7 @@ export class GalleryController {
   @ApiQuery({ name: 'tags', required: false, isArray: true, type: String, example: ['shrine'], description: 'Filter by tags — images must have ALL specified tags' })
   @ApiQuery({ name: 'locations', required: false, isArray: true, type: String, example: ['Karbala'], description: 'Filter by locations — images must have ALL specified locations' })
   @ApiOkResponse({ type: GalleryListResponseDto, description: 'Paginated list of gallery images' })
+  @ApiBadRequestResponse({ type: ValidationErrorDto, description: 'Invalid query parameters (page < 1, limit out of 1–100, or non-integer values)' })
   findAll(@Query() query: GalleryQueryDto, @Lang() lang: string | null) {
     return this.galleryService.findAll(query, lang);
   }
@@ -61,6 +62,7 @@ export class GalleryController {
   @ApiQuery({ name: 'page', required: false, type: Number, example: 1 })
   @ApiQuery({ name: 'limit', required: false, type: Number, example: 20 })
   @ApiOkResponse({ type: GalleryListResponseDto, description: 'Paginated list of trashed gallery images' })
+  @ApiBadRequestResponse({ type: ValidationErrorDto, description: 'Invalid query parameters (page < 1, limit out of 1–100, or non-integer values)' })
   @ApiUnauthorizedResponse({ type: UnauthorizedErrorDto, description: 'Missing or invalid JWT' })
   @ApiForbiddenResponse({ type: ForbiddenErrorDto, description: 'Insufficient permissions' })
   findTrash(@Query() query: PaginationDto) {

@@ -44,6 +44,7 @@ export class AcademicPapersController {
   @ApiQuery({ name: 'category_id', required: false, type: String, description: 'Filter by academic paper category UUID' })
   @ApiQuery({ name: 'search', required: false, type: String, example: 'فقه', description: 'Search across paper titles and abstracts' })
   @ApiOkResponse({ type: AcademicPaperListResponseDto, description: 'Paginated list of academic papers' })
+  @ApiBadRequestResponse({ type: ValidationErrorDto, description: 'Invalid query parameters (page < 1, limit out of 1–100, or non-integer values)' })
   findAll(@Query() query: AcademicPaperQueryDto, @Lang() lang: string | null) {
     return this.service.findAll(query, lang);
   }
@@ -60,6 +61,7 @@ export class AcademicPapersController {
   @ApiQuery({ name: 'page', required: false, type: Number, example: 1 })
   @ApiQuery({ name: 'limit', required: false, type: Number, example: 20 })
   @ApiOkResponse({ type: AcademicPaperListResponseDto, description: 'Paginated list of trashed academic papers' })
+  @ApiBadRequestResponse({ type: ValidationErrorDto, description: 'Invalid query parameters (page < 1, limit out of 1–100, or non-integer values)' })
   @ApiUnauthorizedResponse({ type: UnauthorizedErrorDto, description: 'Missing or invalid JWT' })
   @ApiForbiddenResponse({ type: ForbiddenErrorDto, description: 'Insufficient permissions' })
   findTrash(@Query() query: PaginationDto) {
