@@ -1,4 +1,5 @@
 import { BadRequestException, Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { resolveTranslation } from '../common/utils/translation.util';
 import {
@@ -290,7 +291,7 @@ export class DailyHadithsService {
 
   // ── Internals ──────────────────────────────────────────────────────────
 
-  private async audit(userId: string, action: string, resourceId: string, changes: Record<string, unknown>) {
+  private async audit(userId: string, action: string, resourceId: string, changes: Prisma.InputJsonValue) {
     try {
       await this.prisma.audit_logs.create({
         data: {

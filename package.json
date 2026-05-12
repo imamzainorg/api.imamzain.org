@@ -15,7 +15,7 @@
     "prisma:hydrate-media": "ts-node -P tsconfig.base.json prisma/hydrate-media.ts",
     "prisma:backfill-variants": "ts-node -P tsconfig.base.json prisma/backfill-media-variants.ts",
     "prisma:diagnose": "ts-node -P tsconfig.base.json prisma/seed-diagnose.ts",
-    "type-check": "tsc --noEmit",
+    "type-check": "tsc --noEmit -p tsconfig.build.json",
     "test": "jest --config jest.config.js",
     "test:watch": "jest --watch --config jest.config.js",
     "test:cov": "jest --coverage --config jest.config.js",

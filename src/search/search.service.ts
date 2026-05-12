@@ -65,7 +65,8 @@ export class SearchService {
 
     const buckets = await Promise.all(tasks);
 
-    const data: Record<string, { items: Hit[]; total: number }> & { q: string } = { q };
+    type SearchData = { q: string } & { [K in SearchResourceType]?: { items: Hit[]; total: number } };
+    const data: SearchData = { q };
     for (const { type, items } of buckets) {
       data[type] = { items, total: items.length };
     }
