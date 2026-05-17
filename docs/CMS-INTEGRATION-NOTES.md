@@ -1041,7 +1041,132 @@ success / failure shows up in application logs only.
 
 ---
 
-## 12. Open follow-ups (still not in this push)
+## 12. Round 8 (this push) — media pipeline refresh
+
+Three changes in the media-upload flow that the CMS needs to adjust
+for. Everything else in this push is either runtime-compatible or
+internal (see the "no-action" notes at the end of this section).
+
+### a. `POST /media/upload-url` — two new fields in the response
+
+**Old shape:**
+
+```jsonc
+{ "uploadUrl": "...", "key": "...", "publicUrl": "..." }
+```
+
+**New shape:**
+
+```jsonc
+{
+  "uploadUrl": "https://bucket.r2.cloudflarestorage.com/...?X-Amz-Signature=…",
+  "key":       "media/originals/9c8d4f7a-1b2e-4c5d-9e6f-7a8b9c0d1e2f/shrine-photo.jpg",
+  "publicUrl": "https://cdn.imamzain.org/media/originals/9c8d4f7a-1b2e-4c5d-9e6f-7a8b9c0d1e2f/shrine-photo.jpg",
+  "mediaId":   "9c8d4f7a-1b2e-4c5d-9e6f-7a8b9c0d1e2f",
+  "maxBytes":  26214400
+}
+```
+
+- **`mediaId`** — the UUID of the media row that will exist after
+  `/media/confirm`. It's pinned to that value at confirm time, so it's
+  safe to use *before* the upload completes. Use it to:
+  - Optimistically render the media-library tile while the PUT is in flight.
+  - Wire the id into a draft post body's `attachment_ids` list before
+    calling `/media/confirm` (the post draft endpoint accepts the id;
+    if the upload ultimately fails the attachment FK will reject it,
+    which is correct behaviour).
+  - Skip the second round-trip you used to need just to learn the id.
+- **`maxBytes`** — per-MIME upload cap, currently **25 MB** for every
+  image type. **Validate `file.size <= maxBytes` client-side before
+  starting the PUT.** If you skip this, the user sits through a full
+  upload, then hits 413 from `/media/confirm` (see point b). Recommended:
+  gate the file picker / drop-zone validation on this value rather than
+  hard-coding 25 MB in the CMS — the cap may change for new MIME types
+  (PDFs are planned at 150 MB) and you'll get it for free.
+
+### b. `POST /media/confirm` — new 413 case to handle
+
+If R2's authoritative `Content-Length` exceeds `maxBytes`, `/media/confirm`
+returns:
+
+```jsonc
+// HTTP 413 PayloadTooLarge
+{
+  "success": false,
+  "error":   "File exceeds the 25 MB limit for image/jpeg",
+  "timestamp": "...",
+  "path": "/api/v1/media/confirm"
+}
+```
+
+The R2 object is deleted in the same call, so the CMS does **not** need
+to do any cleanup. Just surface the `error` string verbatim in the
+upload-error UI — it already names both the cap and the MIME.
+
+If the CMS implements the client-side check in (a), this 413 only fires
+for adversarial / out-of-spec clients, not for normal user flows.
+
+### c. R2 key format changed for new uploads
+
+| Object                     | R2 key pattern                                          |
+| -------------------------- | ------------------------------------------------------- |
+| **New uploads**            | `media/originals/<mediaId>/<slug>.<ext>`                |
+| **Existing uploads**       | `media/<uuid>-<slug>.<ext>` (unchanged)                 |
+| **Variants** (all uploads) | `media/variants/<mediaId>/w{320,768,1280,1920}.webp`    |
+
+Both the new and legacy original-key formats keep working — `/media/confirm`
+accepts either, and `DELETE /media/:id` cleans up the right path
+automatically.
+
+The CMS normally treats `key` as an opaque blob handed back to
+`/media/confirm`, so no code change is required in the upload flow.
+**Only flag this if** you display the raw R2 key in a debug / inspector
+view, in which case the human-readable slug now sits inside the
+`<mediaId>/` folder instead of being prefixed with the random uuid.
+
+The `media.url` field on every media response is still the canonical
+public URL; consumers should keep reading it directly rather than
+reconstructing it from the key.
+
+### d. Image variants are now EXIF-oriented (no CMS action needed, just a UX win)
+
+Sideways phone photos used to come out sideways in the variants while
+the original looked correct (browsers auto-rotate based on EXIF
+orientation; sharp didn't unless asked). Variants are now rotated and
+the EXIF tag stripped, so what you see in the variant matches the
+original.
+
+If the CMS was previously preferring the original URL for previews to
+dodge sideways thumbnails, you can switch back to the largest variant
+for previews — variants are now visually identical to the EXIF-rotated
+original.
+
+### e. No-action items also shipped this round
+
+These are either runtime-compatible or invisible to the CMS:
+
+- **Originals are kept after variant generation** (not deleted). The
+  upload pipeline writes both the source and the four WebP variants to
+  R2 and keeps both, so future re-processing — AVIF, larger variants,
+  ML-driven features — remains possible. The CMS doesn't need to track
+  or manage originals separately; `DELETE /media/:id` still cleans both
+  folders in one call.
+- **`sanitize-html` bumped to 2.17.4** to patch the `<xmp>` raw-text
+  XSS reported by Apostrophe. The Tiptap allowlist never included
+  `<xmp>` so neither side was directly exposed; no config change needed.
+- **`fast-xml-builder` pinned to ^1.1.7 via npm overrides** to clear two
+  Dependabot alerts on a transitive AWS-SDK dep. Internal — no API
+  surface impact.
+- **400 `ApiBadRequestResponse` documented on every list / body
+  endpoint** in Scalar. The actual runtime behaviour is unchanged
+  (global `ValidationPipe` was already returning 400 for `?page=abc`
+  etc.); Scalar just now correctly shows the case alongside 200/404/etc.
+  No CMS code change needed; your existing validation-error handler
+  already covers it.
+
+---
+
+## 13. Open follow-ups (still not in this push)
 
 - Self-service password reset flow (would need an `email` column on
   `users` plus the `password_reset_tokens` table described in the
@@ -1052,3 +1177,6 @@ success / failure shows up in application logs only.
 - Versioning / revision history on content edits.
 - Sitemap-index / chunked sub-sitemaps once published-post count
   approaches the 50k-URL cap (likely years away).
+- PDF uploads through `/media/*` (cap infrastructure is in place at
+  `MAX_BYTES_BY_MIME`, but `application/pdf` is not on the MIME
+  allowlist yet — academic-paper `pdf_url` is still externally hosted).
