@@ -26,6 +26,26 @@ const ALLOWED_EXTENSIONS: Record<string, string> = {
 };
 
 const KEY_PREFIX = 'media/';
+const ORIGINALS_PREFIX = `${KEY_PREFIX}originals/`;
+
+/**
+ * Per-MIME upload caps in bytes. The image cap is tuned for sharp's
+ * in-memory decode on Render's standard plan (~512 MB RAM): a 25 MB JPEG
+ * comfortably fits even when sharp expands it to an uncompressed raster.
+ * Larger formats (e.g. PDF up to 150 MB for academic papers) can be
+ * added here without touching controller code.
+ */
+const MAX_BYTES_BY_MIME: Record<string, number> = {
+  'image/jpeg': 25 * 1024 * 1024,
+  'image/png': 25 * 1024 * 1024,
+  'image/gif': 25 * 1024 * 1024,
+  'image/webp': 25 * 1024 * 1024,
+};
+
+const DEFAULT_MAX_BYTES = 25 * 1024 * 1024;
+
+/** Match new-format original keys: `media/originals/<uuid>/<filename>`. */
+const ORIGINAL_KEY_PATTERN = /^media\/originals\/([0-9a-f-]{36})\//i;
 
 function slugifyFilename(filename: string): string {
   return filename
@@ -88,6 +108,22 @@ export class R2Service {
     return key.startsWith(KEY_PREFIX) && !key.includes('..') && !key.startsWith('/');
   }
 
+  /** Per-MIME byte cap. Falls back to a conservative 25 MB for unknown types. */
+  maxBytesFor(mimeType: string): number {
+    return MAX_BYTES_BY_MIME[mimeType] ?? DEFAULT_MAX_BYTES;
+  }
+
+  /**
+   * Extract the planned media row id from a new-format originals key.
+   * Returns null for legacy keys (`media/<uuid>-name.ext`) so the caller
+   * can fall back to generating a fresh id — the old layout did not
+   * embed the id in the path.
+   */
+  mediaIdFromKey(key: string): string | null {
+    const m = ORIGINAL_KEY_PATTERN.exec(key);
+    return m ? m[1] : null;
+  }
+
   async generateUploadUrl(filename: string, mimeType: string) {
     if (!ALLOWED_MIME_TYPES.has(mimeType)) {
       throw new BadRequestException(
@@ -95,10 +131,14 @@ export class R2Service {
       );
     }
 
+    // Pre-generate the media row id so the R2 layout mirrors the variants
+    // folder (`media/variants/<mediaId>/...`). The CMS sees a stable id
+    // before confirm runs, which is useful for client-side bookkeeping.
+    const mediaId = randomUUID();
     const slug = slugifyFilename(filename);
     const ext = ALLOWED_EXTENSIONS[mimeType];
-    const safeName = `${randomUUID()}-${slug || 'file'}.${ext}`;
-    const key = `${KEY_PREFIX}${safeName}`;
+    const safeName = `${slug || 'file'}.${ext}`;
+    const key = `${ORIGINALS_PREFIX}${mediaId}/${safeName}`;
 
     const command = new PutObjectCommand({
       Bucket: this.bucket,
@@ -109,7 +149,7 @@ export class R2Service {
     const uploadUrl = await getSignedUrl(this.client, command, { expiresIn: this.uploadUrlTtl });
     const publicUrl = `${this.publicBaseUrl}/${key}`;
 
-    return { uploadUrl, key, publicUrl };
+    return { uploadUrl, key, publicUrl, mediaId, maxBytes: this.maxBytesFor(mimeType) };
   }
 
   async deleteObject(key: string): Promise<void> {

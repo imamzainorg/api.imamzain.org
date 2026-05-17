@@ -1,4 +1,4 @@
-import { BadRequestException, ConflictException, ForbiddenException, Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, ForbiddenException, Injectable, Logger, NotFoundException, PayloadTooLargeException } from '@nestjs/common';
 import { Cron } from '@nestjs/schedule';
 import { PrismaService } from '../prisma/prisma.service';
 import { R2Service } from '../storage/r2.service';
@@ -55,12 +55,34 @@ export class MediaService {
     const actualMime = head.contentType ?? dto.mime_type;
     const actualSize = head.contentLength ?? dto.file_size;
 
+    // Enforce the MIME-aware size cap. Past this point sharp would try to
+    // decode the file into memory; rejecting here keeps the dyno safe and
+    // reclaims the storage we paid R2 for.
+    const maxBytes = this.r2Service.maxBytesFor(actualMime);
+    if (actualSize > maxBytes) {
+      await this.r2Service.deleteObject(dto.key).catch((err) => {
+        this.logger.warn(`Failed to delete oversized R2 object ${dto.key}: ${err}`);
+      });
+      await this.prisma.pending_media_uploads.deleteMany({ where: { key: dto.key } });
+      const maxMb = Math.round(maxBytes / 1024 / 1024);
+      throw new PayloadTooLargeException(
+        `File exceeds the ${maxMb} MB limit for ${actualMime}`,
+      );
+    }
+
     const publicBaseUrl = (process.env.R2_PUBLIC_BASE_URL ?? 'https://cdn.imamzain.org').replace(/\/$/, '');
     const url = `${publicBaseUrl}/${dto.key}`;
+
+    // For new-format keys (`media/originals/<uuid>/...`) we pin the media
+    // row's id to the same uuid baked into the path. That way the originals
+    // folder and the variants folder share the same `<media_id>` segment,
+    // making "all R2 objects for this row" a single prefix.
+    const plannedMediaId = this.r2Service.mediaIdFromKey(dto.key) ?? undefined;
 
     const media = await this.prisma.$transaction(async (tx) => {
       const created = await tx.media.create({
         data: {
+          ...(plannedMediaId ? { id: plannedMediaId } : {}),
           filename: dto.filename,
           alt_text: dto.alt_text ?? null,
           url,

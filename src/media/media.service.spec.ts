@@ -73,6 +73,8 @@ describe('MediaService', () => {
               u.replace('https://cdn.imamzain.org/', ''),
             ),
             deleteObject: jest.fn().mockResolvedValue(undefined),
+            maxBytesFor: jest.fn().mockReturnValue(25 * 1024 * 1024),
+            mediaIdFromKey: jest.fn().mockReturnValue(null),
           },
         },
         {
@@ -169,6 +171,58 @@ describe('MediaService', () => {
           'user-1',
         ),
       ).rejects.toThrow(ForbiddenException);
+    });
+
+    it('rejects oversized files with 413 and deletes the R2 object', async () => {
+      prisma.pending_media_uploads.findFirst.mockResolvedValue({
+        key: 'media/originals/abc/big.jpg',
+        requested_by: 'user-1',
+      });
+      // Simulate a 50 MB file (over the 25 MB cap)
+      r2.headObject.mockResolvedValueOnce({
+        contentType: 'image/jpeg',
+        contentLength: 50 * 1024 * 1024,
+      });
+
+      const { PayloadTooLargeException } = await import('@nestjs/common');
+      await expect(
+        service.confirmUpload(
+          {
+            key: 'media/originals/abc/big.jpg',
+            filename: 'big.jpg',
+            mime_type: 'image/jpeg',
+            file_size: 50 * 1024 * 1024,
+          },
+          'user-1',
+        ),
+      ).rejects.toThrow(PayloadTooLargeException);
+
+      expect(r2.deleteObject).toHaveBeenCalledWith('media/originals/abc/big.jpg');
+      expect(prismaMediaCreate).not.toHaveBeenCalled();
+    });
+
+    it('pins the new media row id to the uuid baked into a new-format key', async () => {
+      const plannedId = '9c8d4f7a-1b2e-4c5d-9e6f-7a8b9c0d1e2f';
+      r2.mediaIdFromKey.mockReturnValueOnce(plannedId);
+      prisma.pending_media_uploads.findFirst.mockResolvedValue({
+        key: `media/originals/${plannedId}/photo.jpg`,
+        requested_by: 'user-1',
+      });
+      prismaMediaCreate.mockResolvedValue({ ...baseMedia, id: plannedId });
+
+      await service.confirmUpload(
+        {
+          key: `media/originals/${plannedId}/photo.jpg`,
+          filename: 'photo.jpg',
+          mime_type: 'image/jpeg',
+          file_size: 10240,
+        },
+        'user-1',
+      );
+
+      expect(prismaMediaCreate).toHaveBeenCalledWith(
+        expect.objectContaining({ data: expect.objectContaining({ id: plannedId }) }),
+      );
     });
   });
 

@@ -21,6 +21,7 @@ import {
   ApiOkResponse,
   ApiOperation,
   ApiParam,
+  ApiPayloadTooLargeResponse,
   ApiQuery,
   ApiTags,
   ApiUnauthorizedResponse,
@@ -28,7 +29,7 @@ import {
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { CurrentUser, CurrentUserPayload } from '../common/decorators/current-user.decorator';
 import { RequirePermission } from '../common/decorators/require-permission.decorator';
-import { ConflictErrorDto, ForbiddenErrorDto, NotFoundErrorDto, UnauthorizedErrorDto, ValidationErrorDto } from '../common/dto/api-response.dto';
+import { ConflictErrorDto, ForbiddenErrorDto, NotFoundErrorDto, PayloadTooLargeErrorDto, UnauthorizedErrorDto, ValidationErrorDto } from '../common/dto/api-response.dto';
 import { PermissionGuard } from '../common/guards/permission.guard';
 import { ConfirmUploadDto, MediaQueryDto, RequestUploadUrlDto, UpdateMediaDto } from './dto/media.dto';
 import {
@@ -56,10 +57,14 @@ export class MediaController {
     description:
       'Step 1 of the two-step upload flow. Use the returned `uploadUrl` to PUT the file directly to R2, ' +
       'then call `POST /media/confirm` with the returned `key`. Allowed MIME types: ' +
-      '`image/jpeg`, `image/png`, `image/gif`, `image/webp`. The signed URL is bound to the ' +
-      'requesting user — only that user can confirm the upload. Requires permission: `media:create`.',
+      '`image/jpeg`, `image/png`, `image/gif`, `image/webp` (max **25 MB** each — exposed as `maxBytes` ' +
+      'in the response so the CMS should validate before starting the PUT). The signed URL is bound to the ' +
+      'requesting user — only that user can confirm the upload. The response also includes the ' +
+      '`mediaId` that will be created at confirm time, so the CMS can stage references while the ' +
+      'upload is in flight. R2 layout: originals at `media/originals/<mediaId>/<slug>.<ext>`; variants ' +
+      'at `media/variants/<mediaId>/w<width>.webp`. Requires permission: `media:create`.',
   })
-  @ApiOkResponse({ type: UploadUrlResponseDto, description: 'Returns a pre-signed PUT URL (valid for 15 minutes) and the storage key; use the key when calling POST /media/confirm' })
+  @ApiOkResponse({ type: UploadUrlResponseDto, description: 'Returns a pre-signed PUT URL (valid for 15 minutes), the storage key, the planned mediaId, and the per-MIME byte cap' })
   @ApiBadRequestResponse({ type: ValidationErrorDto, description: 'Validation failed, or MIME type not in the allowlist' })
   requestUploadUrl(@Body() dto: RequestUploadUrlDto, @CurrentUser() user: CurrentUserPayload) {
     return this.mediaService.requestUploadUrl(dto, user.id);
@@ -74,12 +79,16 @@ export class MediaController {
       'Step 2 of the two-step upload flow. Call after successfully PUTting the file to R2 using the signed URL. ' +
       'The server verifies the key is one this user requested via `/media/upload-url`, and authoritatively reads ' +
       'the actual stored Content-Type and Content-Length from R2 (client-supplied values are not trusted). ' +
-      'Requires permission: `media:create`.',
+      'If the stored size exceeds the per-MIME cap (currently 25 MB for images) the R2 object is deleted and ' +
+      'a 413 is returned. On success the media row is created with the same `mediaId` baked into the upload key, ' +
+      'EXIF-oriented WebP variants are generated synchronously, and both originals and variants share the ' +
+      '`<mediaId>` folder segment in R2. Requires permission: `media:create`.',
   })
-  @ApiCreatedResponse({ type: MediaCreatedResponseDto, description: 'Media record registered in the database; returns the full media object including the public CDN URL' })
+  @ApiCreatedResponse({ type: MediaCreatedResponseDto, description: 'Media record registered in the database; returns the full media object including the public CDN URL and the generated variants[]' })
   @ApiBadRequestResponse({ type: ValidationErrorDto, description: 'Validation failed, the key is not under the managed prefix, or the file was not uploaded to R2' })
   @ApiNotFoundResponse({ type: NotFoundErrorDto, description: 'No pending upload exists for that key — request a new upload URL first' })
   @ApiForbiddenResponse({ type: ForbiddenErrorDto, description: 'The key was issued to a different user' })
+  @ApiPayloadTooLargeResponse({ type: PayloadTooLargeErrorDto, description: 'Uploaded file exceeds the per-MIME byte cap (`maxBytes` from the upload-url response); R2 object is purged' })
   confirmUpload(@Body() dto: ConfirmUploadDto, @CurrentUser() user: CurrentUserPayload) {
     return this.mediaService.confirmUpload(dto, user.id);
   }

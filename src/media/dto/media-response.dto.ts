@@ -5,8 +5,22 @@ class UploadUrlDataDto {
   @ApiProperty({ example: 'https://bucket.r2.cloudflarestorage.com/upload?...' })
   uploadUrl: string;
 
-  @ApiProperty({ example: 'uploads/2024/image.jpg' })
+  @ApiProperty({ example: 'media/originals/9c8d4f7a-1b2e-4c5d-9e6f-7a8b9c0d1e2f/shrine-photo.jpg' })
   key: string;
+
+  @ApiProperty({
+    example: '9c8d4f7a-1b2e-4c5d-9e6f-7a8b9c0d1e2f',
+    description:
+      'The media row id that will be created on `POST /media/confirm`. Available before the PUT so the CMS can stage references (e.g. wire it into a draft post body) while the upload is in flight.',
+  })
+  mediaId: string;
+
+  @ApiProperty({
+    example: 26214400,
+    description:
+      'Hard upper bound on the bytes the client may PUT to `uploadUrl`. Validate client-side before starting the PUT — anything larger is rejected at `/media/confirm` with 413 and the R2 object is purged. Per-MIME (currently 25 MB for all image types).',
+  })
+  maxBytes: number;
 }
 
 export class UploadUrlResponseDto {

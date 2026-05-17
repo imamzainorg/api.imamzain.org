@@ -130,6 +130,48 @@ function ResponsiveImage({ media, sizes = "100vw", className }: Props) {
 - No `?w=…` query parameters.
 - No Cloudflare Image Resizing transforms.
 
+### Upload flow — new fields on `POST /media/upload-url`
+
+The response now includes two additional fields the CMS should consume:
+
+```jsonc
+{
+  "uploadUrl": "https://bucket.r2.cloudflarestorage.com/...?X-Amz-Signature=…",
+  "key":       "media/originals/9c8d4f7a-1b2e-4c5d-9e6f-7a8b9c0d1e2f/shrine-photo.jpg",
+  "mediaId":   "9c8d4f7a-1b2e-4c5d-9e6f-7a8b9c0d1e2f",  // ← the id the media row will get at confirm
+  "maxBytes":  26214400                                  // ← 25 MB for images
+}
+```
+
+- **`mediaId`**: pre-generated server-side and embedded in the R2 key.
+  Available before the PUT completes so the CMS can stage references
+  (e.g. wire it into a draft post body, optimistic UI in the media
+  library) without waiting for `/media/confirm`.
+- **`maxBytes`**: per-MIME upload cap. Validate against `File.size`
+  client-side before starting the PUT — otherwise the user uploads,
+  waits, then sees a 413 from `/media/confirm` with the R2 object
+  already purged. Surface a clear error like "Image exceeds 25 MB".
+
+### R2 storage layout (FYI)
+
+```text
+media/
+  originals/<mediaId>/<slug>.<ext>     ← the file the CMS uploaded
+  variants/<mediaId>/w{320,768,1280,1920}.webp
+```
+
+Originals are kept (not deleted after variant generation) so future
+re-processing — AVIF support, larger variants for 4K hero images,
+AI-driven features — remains possible. Variant URLs are stable and
+immutable; no cache-busting needed on the frontend.
+
+### Size cap rejection (413)
+
+If the file slips past client validation and the actual byte count
+exceeds `maxBytes`, `POST /media/confirm` returns 413 and deletes the
+R2 object as part of the same call (no orphan storage). Display the
+413's `error` message verbatim — it already names the limit and MIME.
+
 ---
 
 ## 3. HTML sanitisation on `posts.translations[].body`

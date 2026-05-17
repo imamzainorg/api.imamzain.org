@@ -15,6 +15,15 @@ import { R2Service } from '../storage/r2.service';
 export const VARIANT_WIDTHS = [320, 768, 1280, 1920] as const;
 const VARIANT_QUALITY = 82;
 
+/**
+ * Hard ceiling on input pixel count for sharp. Default is ~268 MP, which
+ * is high enough that a malicious 30000×30000 PNG (~3.6 GB decoded) would
+ * decode and OOM the dyno before failing. 50 MP comfortably handles every
+ * realistic camera output (current pro mirrorless tops out near 60 MP)
+ * while bounding worst-case memory.
+ */
+const SHARP_LIMIT_INPUT_PIXELS = 50_000_000;
+
 export interface VariantRow {
   id: string;
   width: number;
@@ -47,7 +56,7 @@ export class ImageVariantService {
 
     let metadata: sharp.Metadata;
     try {
-      metadata = await sharp(original).metadata();
+      metadata = await sharp(original, { limitInputPixels: SHARP_LIMIT_INPUT_PIXELS }).metadata();
     } catch (err) {
       this.logger.warn(`sharp.metadata failed for ${originalKey}: ${err}`);
       return [];
@@ -60,7 +69,10 @@ export class ImageVariantService {
 
     const results = await Promise.allSettled(
       targetWidths.map(async (width) => {
-        const buffer = await sharp(original)
+        // .rotate() applies the EXIF orientation tag then strips it, so
+        // sideways phone photos come out the right way up in every variant.
+        const buffer = await sharp(original, { limitInputPixels: SHARP_LIMIT_INPUT_PIXELS })
+          .rotate()
           .resize({ width, withoutEnlargement: true })
           .webp({ quality: VARIANT_QUALITY })
           .toBuffer();
