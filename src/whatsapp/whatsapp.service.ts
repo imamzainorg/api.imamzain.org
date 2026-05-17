@@ -1,10 +1,11 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import twilio = require('twilio');
 
 const E164_REGEX = /^\+[1-9]\d{1,14}$/;
 
 @Injectable()
 export class WhatsappService {
+  private readonly logger = new Logger(WhatsappService.name);
   private client: twilio.Twilio | null = null;
   private configured = false;
 
@@ -15,7 +16,7 @@ export class WhatsappService {
     const templateSid = process.env.TWILIO_TEMPLATE_SID;
 
     if (!sid || !token || !from || !templateSid) {
-      console.warn('[WhatsappService] Twilio not fully configured — WhatsApp sending disabled');
+      this.logger.warn('Twilio not fully configured — WhatsApp sending disabled');
       return;
     }
 
@@ -25,12 +26,12 @@ export class WhatsappService {
 
   async sendProxyVisitCompletion(visitorPhone: string, visitorName: string): Promise<boolean> {
     if (!this.configured || !this.client) {
-      console.warn('[WhatsappService] Not configured, skipping WhatsApp notification');
+      this.logger.warn('Not configured, skipping WhatsApp notification');
       return false;
     }
 
     if (!E164_REGEX.test(visitorPhone)) {
-      console.warn('[WhatsappService] Invalid phone number format:', visitorPhone);
+      this.logger.warn(`Invalid phone number format: ${visitorPhone}`);
       return false;
     }
 
@@ -41,10 +42,10 @@ export class WhatsappService {
         contentSid: process.env.TWILIO_TEMPLATE_SID,
         contentVariables: JSON.stringify({ '1': visitorName }),
       });
-      console.info('[WhatsappService] Sent, SID:', message.sid);
+      this.logger.log(`Sent, SID: ${message.sid}`);
       return true;
     } catch (err) {
-      console.error('[WhatsappService] Send error:', err);
+      this.logger.error(`Send error: ${err instanceof Error ? err.message : err}`);
       return false;
     }
   }
