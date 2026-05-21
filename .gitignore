@@ -9,3 +9,9 @@ dist/
 # noEmit:true in tsconfig.base.json is the real guard; this is the safety net.
 src/**/*.js
 test/**/*.js
+
+# AI helpers
+.claude/
+
+# vsocde settings
+.vscode/
