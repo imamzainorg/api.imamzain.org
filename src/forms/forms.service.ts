@@ -1,7 +1,11 @@
 import { Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { Prisma } from '@prisma/client';
 import { EmailService } from '../email/email.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { WhatsappService } from '../whatsapp/whatsapp.service';
+import { AuditService } from '../common/audit/audit.service';
+import { AUDIT_ACTIONS } from '../common/audit/audit.actions';
+import { buildPaginationMeta } from '../common/utils/pagination.util';
 import { CreateContactDto, UpdateContactDto } from './dto/contact.dto';
 import { CreateProxyVisitDto, UpdateProxyVisitDto } from './dto/proxy-visit.dto';
 
@@ -13,15 +17,8 @@ export class FormsService {
     private readonly prisma: PrismaService,
     private readonly emailService: EmailService,
     private readonly whatsappService: WhatsappService,
+    private readonly audit: AuditService,
   ) {}
-
-  private async writeAudit(data: any) {
-    try {
-      await this.prisma.audit_logs.create({ data });
-    } catch (err) {
-      this.logger.warn(`Failed to write audit log (${data.action}): ${err}`);
-    }
-  }
 
   async submitProxyVisit(dto: CreateProxyVisitDto) {
     const record = await this.prisma.proxy_visit_requests.create({
@@ -33,11 +30,11 @@ export class FormsService {
       },
     });
 
-    await this.writeAudit({
-      user_id: null,
-      action: 'PROXY_VISIT_SUBMITTED',
-      resource_type: 'proxy_visit_request',
-      resource_id: record.id,
+    await this.audit.write({
+      actorId: null,
+      action: AUDIT_ACTIONS.PROXY_VISIT_SUBMITTED,
+      resourceType: 'proxy_visit_request',
+      resourceId: record.id,
       changes: { method: 'POST', path: '/api/v1/forms/proxy-visit' },
     });
 
@@ -53,8 +50,10 @@ export class FormsService {
     if (!record) throw new NotFoundException('Request not found');
 
     const prevStatus = record.status;
-    const updateData: any = {};
-    if (dto.status) updateData.status = dto.status;
+    // Using UncheckedUpdateInput so we can set the scalar `processed_by` FK
+    // directly instead of going through the relation connect form.
+    const updateData: Prisma.proxy_visit_requestsUncheckedUpdateInput = {};
+    if (dto.status) updateData.status = dto.status as Prisma.proxy_visit_requestsUncheckedUpdateInput['status'];
 
     // Only stamp processed_by/processed_at when the status is actually
     // transitioning into a terminal state. Re-PATCHing the same status used
@@ -76,11 +75,11 @@ export class FormsService {
         .catch((err) => this.logger.warn(`Proxy-visit WhatsApp failed: ${err}`));
     }
 
-    await this.writeAudit({
-      user_id: adminId,
-      action: 'PROXY_VISIT_UPDATED',
-      resource_type: 'proxy_visit_request',
-      resource_id: id,
+    await this.audit.write({
+      actorId: adminId,
+      action: AUDIT_ACTIONS.PROXY_VISIT_UPDATED,
+      resourceType: 'proxy_visit_request',
+      resourceId: id,
       changes: { method: 'PATCH', path: `/api/v1/forms/proxy-visits/${id}`, from: prevStatus, to: dto.status },
     });
 
@@ -93,11 +92,11 @@ export class FormsService {
 
     await this.prisma.proxy_visit_requests.update({ where: { id }, data: { deleted_at: new Date() } });
 
-    await this.writeAudit({
-      user_id: adminId,
-      action: 'PROXY_VISIT_DELETED',
-      resource_type: 'proxy_visit_request',
-      resource_id: id,
+    await this.audit.write({
+      actorId: adminId,
+      action: AUDIT_ACTIONS.PROXY_VISIT_DELETED,
+      resourceType: 'proxy_visit_request',
+      resourceId: id,
       changes: { method: 'DELETE', path: `/api/v1/forms/proxy-visits/${id}` },
     });
 
@@ -106,15 +105,15 @@ export class FormsService {
 
   async findAllProxyVisits(page: number, limit: number, status?: string) {
     const skip = (page - 1) * limit;
-    const where: any = { deleted_at: null };
-    if (status) where.status = status;
+    const where: Prisma.proxy_visit_requestsWhereInput = { deleted_at: null };
+    if (status) where.status = status as Prisma.proxy_visit_requestsWhereInput['status'];
 
     const [items, total] = await Promise.all([
       this.prisma.proxy_visit_requests.findMany({ where, orderBy: [{ submitted_at: 'desc' }, { id: 'asc' }], skip, take: limit }),
       this.prisma.proxy_visit_requests.count({ where }),
     ]);
 
-    return { message: 'Requests fetched', data: { items, pagination: { page, limit, total, pages: Math.ceil(total / limit) } } };
+    return { message: 'Requests fetched', data: { items, pagination: buildPaginationMeta(page, limit, total) } };
   }
 
   async submitContact(dto: CreateContactDto) {
@@ -128,11 +127,11 @@ export class FormsService {
       },
     });
 
-    await this.writeAudit({
-      user_id: null,
-      action: 'CONTACT_SUBMITTED',
-      resource_type: 'contact_submission',
-      resource_id: record.id,
+    await this.audit.write({
+      actorId: null,
+      action: AUDIT_ACTIONS.CONTACT_SUBMITTED,
+      resourceType: 'contact_submission',
+      resourceId: record.id,
       changes: { method: 'POST', path: '/api/v1/forms/contact' },
     });
 
@@ -148,8 +147,8 @@ export class FormsService {
     if (!record) throw new NotFoundException('Submission not found');
 
     const prevStatus = record.status;
-    const updateData: any = {};
-    if (dto.status) updateData.status = dto.status;
+    const updateData: Prisma.contact_submissionsUncheckedUpdateInput = {};
+    if (dto.status) updateData.status = dto.status as Prisma.contact_submissionsUncheckedUpdateInput['status'];
     // Only stamp responder fields on transition into RESPONDED.
     if (dto.status === 'RESPONDED' && prevStatus !== 'RESPONDED') {
       updateData.responded_by = adminId;
@@ -158,11 +157,11 @@ export class FormsService {
 
     const updated = await this.prisma.contact_submissions.update({ where: { id }, data: updateData });
 
-    await this.writeAudit({
-      user_id: adminId,
-      action: 'CONTACT_UPDATED',
-      resource_type: 'contact_submission',
-      resource_id: id,
+    await this.audit.write({
+      actorId: adminId,
+      action: AUDIT_ACTIONS.CONTACT_UPDATED,
+      resourceType: 'contact_submission',
+      resourceId: id,
       changes: { method: 'PATCH', path: `/api/v1/forms/contacts/${id}` },
     });
 
@@ -175,11 +174,11 @@ export class FormsService {
 
     await this.prisma.contact_submissions.update({ where: { id }, data: { deleted_at: new Date() } });
 
-    await this.writeAudit({
-      user_id: adminId,
-      action: 'CONTACT_DELETED',
-      resource_type: 'contact_submission',
-      resource_id: id,
+    await this.audit.write({
+      actorId: adminId,
+      action: AUDIT_ACTIONS.CONTACT_DELETED,
+      resourceType: 'contact_submission',
+      resourceId: id,
       changes: { method: 'DELETE', path: `/api/v1/forms/contacts/${id}` },
     });
 
@@ -188,14 +187,14 @@ export class FormsService {
 
   async findAllContacts(page: number, limit: number, status?: string) {
     const skip = (page - 1) * limit;
-    const where: any = { deleted_at: null };
-    if (status) where.status = status;
+    const where: Prisma.contact_submissionsWhereInput = { deleted_at: null };
+    if (status) where.status = status as Prisma.contact_submissionsWhereInput['status'];
 
     const [items, total] = await Promise.all([
       this.prisma.contact_submissions.findMany({ where, orderBy: [{ submitted_at: 'desc' }, { id: 'asc' }], skip, take: limit }),
       this.prisma.contact_submissions.count({ where }),
     ]);
 
-    return { message: 'Submissions fetched', data: { items, pagination: { page, limit, total, pages: Math.ceil(total / limit) } } };
+    return { message: 'Submissions fetched', data: { items, pagination: buildPaginationMeta(page, limit, total) } };
   }
 }

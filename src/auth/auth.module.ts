@@ -1,4 +1,5 @@
 import { Module } from '@nestjs/common';
+import { ConfigModule, ConfigService } from '@nestjs/config';
 import { JwtModule } from '@nestjs/jwt';
 import { PassportModule } from '@nestjs/passport';
 import { AuthController } from './auth.controller';
@@ -6,17 +7,20 @@ import { AuthService } from './auth.service';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
 import { JwtStrategy } from './strategies/jwt.strategy';
 
-const JWT_SECRET = process.env.JWT_SECRET;
-if (!JWT_SECRET) {
-  throw new Error('JWT_SECRET is required');
-}
-
 @Module({
   imports: [
     PassportModule,
-    JwtModule.register({
-      secret: JWT_SECRET,
-      signOptions: { expiresIn: (process.env.JWT_EXPIRES_IN ?? '15m') as any },
+    JwtModule.registerAsync({
+      imports: [ConfigModule],
+      inject: [ConfigService],
+      useFactory: (config: ConfigService) => ({
+        secret: config.get<string>('JWT_SECRET'),
+        signOptions: {
+          // `JWT_EXPIRES_IN` is a string accepted by `ms` (e.g. "15m", "24h").
+          // The cast is the @nestjs/jwt type quirk, not real ambiguity.
+          expiresIn: config.get<string>('JWT_EXPIRES_IN', '15m') as unknown as number,
+        },
+      }),
     }),
   ],
   providers: [AuthService, JwtStrategy, JwtAuthGuard],

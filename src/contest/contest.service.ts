@@ -7,6 +7,7 @@ import {
 } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
+import { buildPaginationMeta } from "../common/utils/pagination.util";
 import { StartContestDto, SubmitContestDto } from "./dto/contest.dto";
 
 const PHONE_RE = /^\+?[\d\s-]{7,20}$/;
@@ -21,7 +22,7 @@ export class ContestService {
   async findAllAttempts(page: number, limit: number, submitted?: boolean) {
     const skip = (page - 1) * limit;
 
-    const where: any = {};
+    const where: Prisma.qutuf_sajjadiya_contest_attemptsWhereInput = {};
     if (submitted === true) where.submitted_at = { not: null };
     if (submitted === false) where.submitted_at = null;
 
@@ -50,7 +51,7 @@ export class ContestService {
       message: "Attempts fetched",
       data: {
         items,
-        pagination: { page, limit, total, pages: Math.ceil(total / limit) },
+        pagination: buildPaginationMeta(page, limit, total),
       },
     };
   }

@@ -1,20 +1,25 @@
 import { BadRequestException, Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
+import { AuditService } from '../common/audit/audit.service';
+import { AUDIT_ACTIONS } from '../common/audit/audit.actions';
 import { resolveTranslation } from '../common/utils/translation.util';
+import { buildPaginationMeta, resolvePagination } from '../common/utils/pagination.util';
 import { AcademicPaperQueryDto, CreateAcademicPaperDto, UpdateAcademicPaperDto } from './dto/academic-paper.dto';
 
 @Injectable()
 export class AcademicPapersService {
   private readonly logger = new Logger(AcademicPapersService.name);
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly audit: AuditService,
+  ) {}
 
   async findAll(query: AcademicPaperQueryDto, lang: string | null) {
-    const page = query.page ?? 1;
-    const limit = query.limit ?? 20;
-    const skip = (page - 1) * limit;
+    const { page, limit, skip } = resolvePagination(query);
 
-    const where: any = { deleted_at: null };
+    const where: Prisma.academic_papersWhereInput = { deleted_at: null };
     if (query.category_id) where.category_id = query.category_id;
 
     if (query.search) {
@@ -43,7 +48,7 @@ export class AcademicPapersService {
     ]);
 
     const mapped = items.map((p) => ({ ...p, translation: resolveTranslation(p.academic_paper_translations, lang) }));
-    return { message: 'Papers fetched', data: { items: mapped, pagination: { page, limit, total, pages: Math.ceil(total / limit) } } };
+    return { message: 'Papers fetched', data: { items: mapped, pagination: buildPaginationMeta(page, limit, total) } };
   }
 
   async findOne(id: string, lang: string | null) {
@@ -90,11 +95,13 @@ export class AcademicPapersService {
       return created;
     });
 
-    try {
-      await this.prisma.audit_logs.create({
-        data: { user_id: userId, action: 'ACADEMIC_PAPER_CREATED', resource_type: 'academic_paper', resource_id: paper.id, changes: { method: 'POST', path: '/api/v1/academic-papers' } },
-      });
-    } catch {}
+    await this.audit.write({
+      actorId: userId,
+      action: AUDIT_ACTIONS.ACADEMIC_PAPER_CREATED,
+      resourceType: 'academic_paper',
+      resourceId: paper.id,
+      changes: { method: 'POST', path: '/api/v1/academic-papers' },
+    });
 
     return { message: 'Paper created', data: paper };
   }
@@ -111,14 +118,32 @@ export class AcademicPapersService {
     }
 
     await this.prisma.$transaction(async (tx) => {
-      const { translations, ...rest } = dto;
-      await tx.academic_papers.update({ where: { id }, data: { ...rest, updated_at: new Date() } });
-      if (translations) {
-        for (const t of translations) {
+      // Build an explicit Prisma input rather than spreading the DTO so DTO
+      // additions don't silently leak into the data payload.
+      const updateData: Prisma.academic_papersUpdateInput = { updated_at: new Date() };
+      if (dto.category_id !== undefined) {
+        updateData.academic_paper_categories = { connect: { id: dto.category_id } };
+      }
+      if (dto.published_year !== undefined) updateData.published_year = dto.published_year;
+      if (dto.pdf_url !== undefined) updateData.pdf_url = dto.pdf_url;
+
+      await tx.academic_papers.update({ where: { id }, data: updateData });
+
+      if (dto.translations) {
+        for (const t of dto.translations) {
+          const trData = {
+            title: t.title,
+            abstract: t.abstract ?? null,
+            authors: t.authors ?? [],
+            keywords: t.keywords ?? [],
+            publication_venue: t.publication_venue ?? null,
+            page_count: t.page_count ?? null,
+            is_default: t.is_default ?? false,
+          };
           await tx.academic_paper_translations.upsert({
             where: { paper_id_lang: { paper_id: id, lang: t.lang } },
-            create: { paper_id: id, lang: t.lang, title: t.title, abstract: t.abstract ?? null, authors: t.authors ?? [], keywords: t.keywords ?? [], publication_venue: t.publication_venue ?? null, page_count: t.page_count ?? null, is_default: t.is_default ?? false },
-            update: { title: t.title, abstract: t.abstract ?? null, authors: t.authors ?? [], keywords: t.keywords ?? [], publication_venue: t.publication_venue ?? null, page_count: t.page_count ?? null, is_default: t.is_default ?? false },
+            create: { paper_id: id, lang: t.lang, ...trData },
+            update: trData,
           });
         }
 
@@ -129,11 +154,13 @@ export class AcademicPapersService {
       }
     });
 
-    try {
-      await this.prisma.audit_logs.create({
-        data: { user_id: userId, action: 'ACADEMIC_PAPER_UPDATED', resource_type: 'academic_paper', resource_id: id, changes: { method: 'PATCH', path: `/api/v1/academic-papers/${id}` } },
-      });
-    } catch {}
+    await this.audit.write({
+      actorId: userId,
+      action: AUDIT_ACTIONS.ACADEMIC_PAPER_UPDATED,
+      resourceType: 'academic_paper',
+      resourceId: id,
+      changes: { method: 'PATCH', path: `/api/v1/academic-papers/${id}` },
+    });
 
     return { message: 'Paper updated', data: null };
   }
@@ -141,7 +168,7 @@ export class AcademicPapersService {
   /** List soft-deleted academic papers (admin trash view). */
   async findTrash(page: number, limit: number) {
     const skip = (page - 1) * limit;
-    const where = { deleted_at: { not: null } };
+    const where: Prisma.academic_papersWhereInput = { deleted_at: { not: null } };
 
     const [items, total] = await Promise.all([
       this.prisma.academic_papers.findMany({
@@ -159,7 +186,7 @@ export class AcademicPapersService {
 
     return {
       message: 'Trash fetched',
-      data: { items, pagination: { page, limit, total, pages: Math.ceil(total / limit) } },
+      data: { items, pagination: buildPaginationMeta(page, limit, total) },
     };
   }
 
@@ -175,19 +202,13 @@ export class AcademicPapersService {
       data: { deleted_at: null, updated_at: new Date() },
     });
 
-    try {
-      await this.prisma.audit_logs.create({
-        data: {
-          user_id: userId,
-          action: 'ACADEMIC_PAPER_RESTORED',
-          resource_type: 'academic_paper',
-          resource_id: id,
-          changes: { method: 'POST', path: `/api/v1/academic-papers/${id}/restore` },
-        },
-      });
-    } catch (err) {
-      this.logger.warn(`Failed to write ACADEMIC_PAPER_RESTORED audit: ${err}`);
-    }
+    await this.audit.write({
+      actorId: userId,
+      action: AUDIT_ACTIONS.ACADEMIC_PAPER_RESTORED,
+      resourceType: 'academic_paper',
+      resourceId: id,
+      changes: { method: 'POST', path: `/api/v1/academic-papers/${id}/restore` },
+    });
 
     return { message: 'Paper restored', data: null };
   }
@@ -198,11 +219,13 @@ export class AcademicPapersService {
 
     await this.prisma.academic_papers.update({ where: { id }, data: { deleted_at: new Date() } });
 
-    try {
-      await this.prisma.audit_logs.create({
-        data: { user_id: userId, action: 'ACADEMIC_PAPER_DELETED', resource_type: 'academic_paper', resource_id: id, changes: { method: 'DELETE', path: `/api/v1/academic-papers/${id}` } },
-      });
-    } catch {}
+    await this.audit.write({
+      actorId: userId,
+      action: AUDIT_ACTIONS.ACADEMIC_PAPER_DELETED,
+      resourceType: 'academic_paper',
+      resourceId: id,
+      changes: { method: 'DELETE', path: `/api/v1/academic-papers/${id}` },
+    });
 
     return { message: 'Paper deleted', data: null };
   }

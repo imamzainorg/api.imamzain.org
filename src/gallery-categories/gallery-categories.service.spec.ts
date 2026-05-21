@@ -2,6 +2,7 @@ import { Test, TestingModule } from "@nestjs/testing";
 import { NotFoundException } from "@nestjs/common";
 import { GalleryCategoriesService } from "./gallery-categories.service";
 import { PrismaService } from "../prisma/prisma.service";
+import { AuditService } from "../common/audit/audit.service";
 
 const baseCategory = {
   id: "cat-1",
@@ -44,6 +45,7 @@ describe("GalleryCategoriesService", () => {
             $transaction: jest.fn(),
           },
         },
+        { provide: AuditService, useValue: { write: jest.fn().mockResolvedValue(true) } },
       ],
     }).compile();
 

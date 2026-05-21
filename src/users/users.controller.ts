@@ -24,6 +24,7 @@ import {
   ApiTags,
   ApiUnauthorizedResponse,
 } from '@nestjs/swagger';
+import { Throttle } from '@nestjs/throttler';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { CurrentUser, CurrentUserPayload } from '../common/decorators/current-user.decorator';
 import { RequirePermission } from '../common/decorators/require-permission.decorator';
@@ -136,6 +137,7 @@ export class UsersController {
 
   @Post(':id/reset-password')
   @HttpCode(200)
+  @Throttle({ default: { limit: 10, ttl: 900_000 } })
   @RequirePermission('users:update')
   @ApiOperation({
     summary: 'Admin-driven password reset',

@@ -1,6 +1,8 @@
 import { BadRequestException, ConflictException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { Prisma, site_setting_type } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
+import { AuditService } from '../common/audit/audit.service';
+import { AUDIT_ACTIONS } from '../common/audit/audit.actions';
 import { UpsertSettingDto } from './dto/setting.dto';
 
 type SettingRow = Prisma.site_settingsGetPayload<{}>;
@@ -19,7 +21,10 @@ export interface DecodedSetting {
 export class SettingsService {
   private readonly logger = new Logger(SettingsService.name);
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly audit: AuditService,
+  ) {}
 
   /**
    * Decode the text-stored `value` into the type declared on the row.
@@ -133,19 +138,12 @@ export class SettingsService {
       },
     });
 
-    try {
-      await this.prisma.audit_logs.create({
-        data: {
-          user_id: actorId,
-          action: existing ? 'SETTING_UPDATED' : 'SETTING_CREATED',
-          resource_type: 'site_setting',
-          resource_id: null,
-          changes: { method: 'PUT', path: `/api/v1/settings/${key}`, key },
-        },
-      });
-    } catch (err) {
-      this.logger.warn(`Failed to write settings audit: ${err}`);
-    }
+    await this.audit.write({
+      actorId,
+      action: existing ? AUDIT_ACTIONS.SETTING_UPDATED : AUDIT_ACTIONS.SETTING_CREATED,
+      resourceType: 'site_setting',
+      changes: { method: 'PUT', path: `/api/v1/settings/${key}`, key },
+    });
 
     return { message: existing ? 'Setting updated' : 'Setting created', data: this.decode(row) };
   }
@@ -156,19 +154,12 @@ export class SettingsService {
 
     await this.prisma.site_settings.delete({ where: { key } });
 
-    try {
-      await this.prisma.audit_logs.create({
-        data: {
-          user_id: actorId,
-          action: 'SETTING_DELETED',
-          resource_type: 'site_setting',
-          resource_id: null,
-          changes: { method: 'DELETE', path: `/api/v1/settings/${key}`, key },
-        },
-      });
-    } catch (err) {
-      this.logger.warn(`Failed to write settings audit: ${err}`);
-    }
+    await this.audit.write({
+      actorId,
+      action: AUDIT_ACTIONS.SETTING_DELETED,
+      resourceType: 'site_setting',
+      changes: { method: 'DELETE', path: `/api/v1/settings/${key}`, key },
+    });
 
     return { message: 'Setting deleted', data: null };
   }

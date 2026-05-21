@@ -1,7 +1,10 @@
-import { BadRequestException, Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
+import { AuditService } from '../common/audit/audit.service';
+import { AUDIT_ACTIONS, AuditAction } from '../common/audit/audit.actions';
 import { resolveTranslation } from '../common/utils/translation.util';
+import { buildPaginationMeta, resolvePagination } from '../common/utils/pagination.util';
 import {
   CreateDailyHadithDto,
   DailyHadithQueryDto,
@@ -34,9 +37,10 @@ const MS_PER_DAY = 24 * 60 * 60 * 1000;
  */
 @Injectable()
 export class DailyHadithsService {
-  private readonly logger = new Logger(DailyHadithsService.name);
-
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly audit: AuditService,
+  ) {}
 
   // ── Public ─────────────────────────────────────────────────────────────
 
@@ -88,11 +92,9 @@ export class DailyHadithsService {
   // ── Admin (CMS) ────────────────────────────────────────────────────────
 
   async findAll(query: DailyHadithQueryDto, lang: string | null) {
-    const page = query.page ?? 1;
-    const limit = query.limit ?? 20;
-    const skip = (page - 1) * limit;
+    const { page, limit, skip } = resolvePagination(query);
 
-    const where: any = { deleted_at: null };
+    const where: Prisma.daily_hadithsWhereInput = { deleted_at: null };
     if (query.is_active !== undefined) where.is_active = query.is_active;
 
     const [items, total] = await Promise.all([
@@ -113,7 +115,7 @@ export class DailyHadithsService {
           ...h,
           translation: resolveTranslation(h.daily_hadith_translations, lang),
         })),
-        pagination: { page, limit, total, pages: Math.ceil(total / limit) },
+        pagination: buildPaginationMeta(page, limit, total),
       },
     };
   }
@@ -170,7 +172,7 @@ export class DailyHadithsService {
       return created;
     });
 
-    await this.audit(userId, 'DAILY_HADITH_CREATED', hadith.id, {
+    await this.writeAudit(userId, AUDIT_ACTIONS.DAILY_HADITH_CREATED, hadith.id, {
       method: 'POST',
       path: '/api/v1/daily-hadiths',
     });
@@ -183,7 +185,7 @@ export class DailyHadithsService {
     if (!hadith) throw new NotFoundException('Hadith not found');
 
     await this.prisma.$transaction(async (tx) => {
-      const data: any = { updated_at: new Date() };
+      const data: Prisma.daily_hadithsUpdateInput = { updated_at: new Date() };
       if (dto.display_order !== undefined) data.display_order = dto.display_order;
       if (dto.is_active !== undefined) data.is_active = dto.is_active;
       await tx.daily_hadiths.update({ where: { id }, data });
@@ -211,7 +213,7 @@ export class DailyHadithsService {
       }
     });
 
-    await this.audit(userId, 'DAILY_HADITH_UPDATED', id, {
+    await this.writeAudit(userId, AUDIT_ACTIONS.DAILY_HADITH_UPDATED, id, {
       method: 'PATCH',
       path: `/api/v1/daily-hadiths/${id}`,
     });
@@ -228,7 +230,7 @@ export class DailyHadithsService {
       data: { deleted_at: new Date() },
     });
 
-    await this.audit(userId, 'DAILY_HADITH_DELETED', id, {
+    await this.writeAudit(userId, AUDIT_ACTIONS.DAILY_HADITH_DELETED, id, {
       method: 'DELETE',
       path: `/api/v1/daily-hadiths/${id}`,
     });
@@ -265,7 +267,7 @@ export class DailyHadithsService {
       update: { hadith_id: dto.hadith_id, created_by: userId, created_at: new Date() },
     });
 
-    await this.audit(userId, 'DAILY_HADITH_PINNED', dto.hadith_id, {
+    await this.writeAudit(userId, AUDIT_ACTIONS.DAILY_HADITH_PINNED, dto.hadith_id, {
       method: 'POST',
       path: '/api/v1/daily-hadiths/pins',
       pin_date: toDateOnly(pinDate),
@@ -281,7 +283,7 @@ export class DailyHadithsService {
 
     await this.prisma.daily_hadith_pins.delete({ where: { pin_date: pinDate } });
 
-    await this.audit(userId, 'DAILY_HADITH_UNPINNED', existing.hadith_id, {
+    await this.writeAudit(userId, AUDIT_ACTIONS.DAILY_HADITH_UNPINNED, existing.hadith_id, {
       method: 'DELETE',
       path: `/api/v1/daily-hadiths/pins/${pinDateInput}`,
     });
@@ -291,20 +293,14 @@ export class DailyHadithsService {
 
   // ── Internals ──────────────────────────────────────────────────────────
 
-  private async audit(userId: string, action: string, resourceId: string, changes: Prisma.InputJsonValue) {
-    try {
-      await this.prisma.audit_logs.create({
-        data: {
-          user_id: userId,
-          action,
-          resource_type: 'daily_hadith',
-          resource_id: resourceId,
-          changes,
-        },
-      });
-    } catch (err) {
-      this.logger.warn(`Failed to write ${action} audit: ${err}`);
-    }
+  private writeAudit(actorId: string, action: AuditAction, resourceId: string, changes: Prisma.InputJsonValue) {
+    return this.audit.write({
+      actorId,
+      action,
+      resourceType: 'daily_hadith',
+      resourceId,
+      changes,
+    });
   }
 }
 

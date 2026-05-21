@@ -2,6 +2,7 @@ import { Test, TestingModule } from "@nestjs/testing";
 import { BadRequestException, NotFoundException } from "@nestjs/common";
 import { PostsService } from "./posts.service";
 import { PrismaService } from "../prisma/prisma.service";
+import { AuditService } from "../common/audit/audit.service";
 
 const basePost = {
   id: "post-1",
@@ -38,6 +39,7 @@ const basePost = {
 describe("PostsService", () => {
   let service: PostsService;
   let prisma: any;
+  let audit: any;
 
   const mockTx = {
     posts: { create: jest.fn(), update: jest.fn() },
@@ -53,6 +55,7 @@ describe("PostsService", () => {
   };
 
   beforeEach(async () => {
+    audit = { write: jest.fn().mockResolvedValue(true) };
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         PostsService,
@@ -64,6 +67,7 @@ describe("PostsService", () => {
               findFirst: jest.fn(),
               count: jest.fn(),
               update: jest.fn().mockResolvedValue({}),
+              updateMany: jest.fn().mockResolvedValue({ count: 1 }),
             },
             post_translations: { findFirst: jest.fn() },
             post_categories: { findFirst: jest.fn() },
@@ -72,6 +76,7 @@ describe("PostsService", () => {
             $transaction: jest.fn(),
           },
         },
+        { provide: AuditService, useValue: audit },
       ],
     }).compile();
 
@@ -158,15 +163,17 @@ describe("PostsService", () => {
   });
 
   describe("findBySlug", () => {
-    it("delegates to findOne after finding post_id from slug", async () => {
+    it("returns post resolved from slug in a single query", async () => {
       prisma.post_translations.findFirst.mockResolvedValue({
         post_id: "post-1",
+        posts: basePost,
       });
-      prisma.posts.findFirst.mockResolvedValue(basePost);
 
       const result = await service.findBySlug("unwaan", "ar");
 
       expect(result.data.id).toBe("post-1");
+      // findOne (a second posts.findFirst) must NOT fire — single query.
+      expect(prisma.posts.findFirst).not.toHaveBeenCalled();
     });
 
     it("throws NotFoundException when slug not found", async () => {
@@ -175,6 +182,32 @@ describe("PostsService", () => {
       await expect(
         service.findBySlug("nonexistent-slug", null),
       ).rejects.toThrow(NotFoundException);
+    });
+  });
+
+  describe("trackView", () => {
+    it("uses a single conditional updateMany and returns the message on hit", async () => {
+      prisma.posts.updateMany.mockResolvedValue({ count: 1 });
+
+      const result = await service.trackView("post-1");
+
+      expect(prisma.posts.updateMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({
+            id: "post-1",
+            deleted_at: null,
+            is_published: true,
+          }),
+          data: { views: { increment: 1 } },
+        }),
+      );
+      expect(result.message).toBe("View tracked");
+    });
+
+    it("throws NotFoundException when no row matched", async () => {
+      prisma.posts.updateMany.mockResolvedValue({ count: 0 });
+
+      await expect(service.trackView("ghost")).rejects.toThrow(NotFoundException);
     });
   });
 
@@ -406,12 +439,12 @@ describe("PostsService", () => {
 
       await service.runScheduledPublish();
 
-      expect(prisma.$transaction).not.toHaveBeenCalled();
+      expect(prisma.posts.update).not.toHaveBeenCalled();
     });
 
     it("flips is_published and writes a scheduled audit entry per due post", async () => {
       prisma.posts.findMany.mockResolvedValue([{ id: "post-1" }, { id: "post-2" }]);
-      prisma.$transaction.mockResolvedValue([{}, {}]);
+      prisma.posts.update.mockResolvedValue({});
 
       await service.runScheduledPublish();
 
@@ -424,18 +457,20 @@ describe("PostsService", () => {
           }),
         }),
       );
-      expect(prisma.$transaction).toHaveBeenCalledTimes(2);
+      expect(prisma.posts.update).toHaveBeenCalledTimes(2);
+      expect(audit.write).toHaveBeenCalledTimes(2);
     });
 
-    it("continues when one transaction fails", async () => {
+    it("continues when one update fails", async () => {
       prisma.posts.findMany.mockResolvedValue([{ id: "post-1" }, { id: "post-2" }]);
-      prisma.$transaction
+      prisma.posts.update
         .mockRejectedValueOnce(new Error("DB error"))
-        .mockResolvedValueOnce([{}, {}]);
+        .mockResolvedValueOnce({});
 
       await service.runScheduledPublish();
 
-      expect(prisma.$transaction).toHaveBeenCalledTimes(2);
+      expect(prisma.posts.update).toHaveBeenCalledTimes(2);
+      expect(audit.write).toHaveBeenCalledTimes(1);
     });
   });
 });

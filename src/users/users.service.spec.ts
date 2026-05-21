@@ -3,6 +3,7 @@ import { ConflictException, NotFoundException } from '@nestjs/common';
 import * as bcrypt from 'bcryptjs';
 import { UsersService } from './users.service';
 import { PrismaService } from '../prisma/prisma.service';
+import { AuditService } from '../common/audit/audit.service';
 
 jest.mock('bcryptjs');
 
@@ -42,6 +43,7 @@ describe('UsersService', () => {
             audit_logs: { create: jest.fn().mockResolvedValue({}) },
           },
         },
+        { provide: AuditService, useValue: { write: jest.fn().mockResolvedValue(true) } },
       ],
     }).compile();
 

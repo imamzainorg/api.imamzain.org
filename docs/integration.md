@@ -436,7 +436,10 @@ Inline event handlers (`onclick`, etc.) are **stripped**.
 ### Allowed URL schemes
 
 - `href`: `http`, `https`, `mailto`, `tel`
-- `<img src>`: `http`, `https`, `data`
+- `<img src>`: `http`, `https`, `data` — but `data:` URLs are restricted
+  to image MIME types only: `image/png`, `image/jpeg`, `image/gif`,
+  `image/webp`, `image/svg+xml`. Any other `data:` MIME (notably
+  `data:text/html`) causes the entire `<img>` element to be dropped.
 
 Protocol-relative URLs (`//example.com/x.png`) are allowed.
 
@@ -529,6 +532,8 @@ per-endpoint limits:
 | --- | --- | --- |
 | `POST /auth/login` | 10 / 15 min / IP | Anti-brute-force |
 | `POST /auth/refresh` | 30 / 15 min / IP | Limits stolen-token replay |
+| `PATCH /auth/me/password` | 5 / 15 min / IP | Anti-brute-force on current-password check |
+| `POST /users/:id/reset-password` | 10 / 15 min / IP | Anti-abuse on admin-driven reset |
 | `POST /newsletter/subscribe` | 5 / 15 min / IP | Anti-spam signups |
 | `POST /newsletter/unsubscribe` | 5 / 15 min / IP | Symmetric with subscribe |
 | `POST /forms/contact` | 300 / hour / IP | Generous; flooding goes to admin inbox |

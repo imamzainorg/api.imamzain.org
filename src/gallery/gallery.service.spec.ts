@@ -2,6 +2,7 @@ import { Test, TestingModule } from "@nestjs/testing";
 import { NotFoundException } from "@nestjs/common";
 import { GalleryService } from "./gallery.service";
 import { PrismaService } from "../prisma/prisma.service";
+import { AuditService } from "../common/audit/audit.service";
 
 const baseImage = {
   media_id: "media-1",
@@ -47,6 +48,7 @@ describe("GalleryService", () => {
             $transaction: jest.fn(),
           },
         },
+        { provide: AuditService, useValue: { write: jest.fn().mockResolvedValue(true) } },
       ],
     }).compile();
 

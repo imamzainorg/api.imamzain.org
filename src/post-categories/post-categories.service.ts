@@ -1,32 +1,40 @@
 import { ConflictException, Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
+import { AuditService } from '../common/audit/audit.service';
+import { AUDIT_ACTIONS } from '../common/audit/audit.actions';
 import { softDeleteSuffix, stripSoftDeleteSuffix } from '../common/utils/soft-delete.util';
 import { resolveTranslation } from '../common/utils/translation.util';
+import { buildPaginationMeta } from '../common/utils/pagination.util';
 import { CreatePostCategoryDto, UpdatePostCategoryDto } from './dto/post-category.dto';
 
 @Injectable()
 export class PostCategoriesService {
   private readonly logger = new Logger(PostCategoriesService.name);
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly audit: AuditService,
+  ) {}
 
   async findAll(lang: string | null, page: number, limit: number) {
     const skip = (page - 1) * limit;
+    const where: Prisma.post_categoriesWhereInput = { deleted_at: null };
     const [categories, total] = await Promise.all([
       this.prisma.post_categories.findMany({
-        where: { deleted_at: null },
+        where,
         include: { post_category_translations: true },
         orderBy: [{ created_at: 'desc' }, { id: 'asc' }],
         skip,
         take: limit,
       }),
-      this.prisma.post_categories.count({ where: { deleted_at: null } }),
+      this.prisma.post_categories.count({ where }),
     ]);
     const items = categories.map((c) => ({
       ...c,
       translation: resolveTranslation(c.post_category_translations, lang),
     }));
-    return { message: 'Categories fetched', data: { items, pagination: { page, limit, total, pages: Math.ceil(total / limit) } } };
+    return { message: 'Categories fetched', data: { items, pagination: buildPaginationMeta(page, limit, total) } };
   }
 
   async findOne(id: string, lang: string | null) {
@@ -56,17 +64,13 @@ export class PostCategoriesService {
       return created;
     });
 
-    try {
-      await this.prisma.audit_logs.create({
-        data: {
-          user_id: actorId,
-          action: 'POST_CATEGORY_CREATED',
-          resource_type: 'post_category',
-          resource_id: category.id,
-          changes: { method: 'POST', path: '/api/v1/post-categories' },
-        },
-      });
-    } catch {}
+    await this.audit.write({
+      actorId,
+      action: AUDIT_ACTIONS.POST_CATEGORY_CREATED,
+      resourceType: 'post_category',
+      resourceId: category.id,
+      changes: { method: 'POST', path: '/api/v1/post-categories' },
+    });
 
     return { message: 'Category created', data: category };
   }
@@ -85,17 +89,13 @@ export class PostCategoriesService {
       }
     }
 
-    try {
-      await this.prisma.audit_logs.create({
-        data: {
-          user_id: actorId,
-          action: 'POST_CATEGORY_UPDATED',
-          resource_type: 'post_category',
-          resource_id: id,
-          changes: { method: 'PATCH', path: `/api/v1/post-categories/${id}` },
-        },
-      });
-    } catch {}
+    await this.audit.write({
+      actorId,
+      action: AUDIT_ACTIONS.POST_CATEGORY_UPDATED,
+      resourceType: 'post_category',
+      resourceId: id,
+      changes: { method: 'PATCH', path: `/api/v1/post-categories/${id}` },
+    });
 
     return { message: 'Category updated', data: null };
   }
@@ -103,7 +103,7 @@ export class PostCategoriesService {
   /** List soft-deleted post categories. */
   async findTrash(page: number, limit: number) {
     const skip = (page - 1) * limit;
-    const where = { deleted_at: { not: null } };
+    const where: Prisma.post_categoriesWhereInput = { deleted_at: { not: null } };
     const [items, total] = await Promise.all([
       this.prisma.post_categories.findMany({
         where,
@@ -116,7 +116,7 @@ export class PostCategoriesService {
     ]);
     return {
       message: 'Trash fetched',
-      data: { items, pagination: { page, limit, total, pages: Math.ceil(total / limit) } },
+      data: { items, pagination: buildPaginationMeta(page, limit, total) },
     };
   }
 
@@ -160,19 +160,13 @@ export class PostCategoriesService {
       await tx.post_categories.update({ where: { id }, data: { deleted_at: null } });
     });
 
-    try {
-      await this.prisma.audit_logs.create({
-        data: {
-          user_id: actorId,
-          action: 'POST_CATEGORY_RESTORED',
-          resource_type: 'post_category',
-          resource_id: id,
-          changes: { method: 'POST', path: `/api/v1/post-categories/${id}/restore` },
-        },
-      });
-    } catch (err) {
-      this.logger.warn(`Failed to write POST_CATEGORY_RESTORED audit: ${err}`);
-    }
+    await this.audit.write({
+      actorId,
+      action: AUDIT_ACTIONS.POST_CATEGORY_RESTORED,
+      resourceType: 'post_category',
+      resourceId: id,
+      changes: { method: 'POST', path: `/api/v1/post-categories/${id}/restore` },
+    });
 
     return { message: 'Category restored', data: null };
   }
@@ -201,17 +195,13 @@ export class PostCategoriesService {
       await tx.post_categories.update({ where: { id }, data: { deleted_at: deletedAt } });
     });
 
-    try {
-      await this.prisma.audit_logs.create({
-        data: {
-          user_id: actorId,
-          action: 'POST_CATEGORY_DELETED',
-          resource_type: 'post_category',
-          resource_id: id,
-          changes: { method: 'DELETE', path: `/api/v1/post-categories/${id}` },
-        },
-      });
-    } catch {}
+    await this.audit.write({
+      actorId,
+      action: AUDIT_ACTIONS.POST_CATEGORY_DELETED,
+      resourceType: 'post_category',
+      resourceId: id,
+      changes: { method: 'DELETE', path: `/api/v1/post-categories/${id}` },
+    });
 
     return { message: 'Category deleted', data: null };
   }

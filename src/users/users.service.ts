@@ -1,13 +1,21 @@
 import { ConflictException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import * as bcrypt from 'bcryptjs';
 import { PrismaService } from '../prisma/prisma.service';
+import { AuditService } from '../common/audit/audit.service';
+import { AUDIT_ACTIONS } from '../common/audit/audit.actions';
+import { resolveBcryptRounds } from '../common/utils/bcrypt.util';
+import { toPublicUser } from '../common/utils/user-mapper.util';
+import { buildPaginationMeta } from '../common/utils/pagination.util';
 import { AdminResetPasswordDto, AssignRoleDto, CreateUserDto, UpdateUserDto } from './dto/user.dto';
 
 @Injectable()
 export class UsersService {
   private readonly logger = new Logger(UsersService.name);
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly audit: AuditService,
+  ) {}
 
   async findAll(page: number, limit: number) {
     const skip = (page - 1) * limit;
@@ -32,10 +40,7 @@ export class UsersService {
     const mapped = items.map(({ deleted_at, ...u }) => ({ ...u, is_active: deleted_at === null }));
     return {
       message: 'Users fetched',
-      data: {
-        items: mapped,
-        pagination: { page, limit, total, pages: Math.ceil(total / limit) },
-      },
+      data: { items: mapped, pagination: buildPaginationMeta(page, limit, total) },
     };
   }
 
@@ -64,10 +69,15 @@ export class UsersService {
       }
     }
 
-    const { password_hash, ...rest } = user as any;
+    const { password_hash: _pw, user_roles, ...rest } = user;
     return {
       message: 'User fetched',
-      data: { ...rest, is_active: rest.deleted_at === null, permissions: Array.from(permissionSet) },
+      data: {
+        ...rest,
+        user_roles,
+        is_active: rest.deleted_at === null,
+        permissions: Array.from(permissionSet),
+      },
     };
   }
 
@@ -77,27 +87,21 @@ export class UsersService {
     });
     if (existing) throw new ConflictException('Username is already taken');
 
-    const rounds = parseInt(process.env.BCRYPT_ROUNDS ?? '12', 10);
-    const password_hash = await bcrypt.hash(dto.password, rounds);
+    const password_hash = await bcrypt.hash(dto.password, resolveBcryptRounds());
 
     const user = await this.prisma.users.create({
       data: { username: dto.username, password_hash },
     });
 
-    try {
-      await this.prisma.audit_logs.create({
-        data: {
-          user_id: actorId,
-          action: 'USER_CREATED',
-          resource_type: 'user',
-          resource_id: user.id,
-          changes: { method: 'POST', path: '/api/v1/users' },
-        },
-      });
-    } catch {}
+    await this.audit.write({
+      actorId,
+      action: AUDIT_ACTIONS.USER_CREATED,
+      resourceType: 'user',
+      resourceId: user.id,
+      changes: { method: 'POST', path: '/api/v1/users' },
+    });
 
-    const { password_hash: _, ...result } = user as any;
-    return { message: 'User created', data: result };
+    return { message: 'User created', data: toPublicUser(user) };
   }
 
   async update(id: string, dto: UpdateUserDto, actorId: string) {
@@ -116,20 +120,15 @@ export class UsersService {
       data: { ...dto, updated_at: new Date() },
     });
 
-    try {
-      await this.prisma.audit_logs.create({
-        data: {
-          user_id: actorId,
-          action: 'USER_UPDATED',
-          resource_type: 'user',
-          resource_id: id,
-          changes: { method: 'PATCH', path: `/api/v1/users/${id}` },
-        },
-      });
-    } catch {}
+    await this.audit.write({
+      actorId,
+      action: AUDIT_ACTIONS.USER_UPDATED,
+      resourceType: 'user',
+      resourceId: id,
+      changes: { method: 'PATCH', path: `/api/v1/users/${id}` },
+    });
 
-    const { password_hash, ...result } = updated as any;
-    return { message: 'User updated', data: result };
+    return { message: 'User updated', data: toPublicUser(updated) };
   }
 
   /**
@@ -148,9 +147,7 @@ export class UsersService {
     const user = await this.prisma.users.findFirst({ where: { id: userId, deleted_at: null } });
     if (!user) throw new NotFoundException('User not found');
 
-    const rounds = parseInt(process.env.BCRYPT_ROUNDS ?? '12', 10);
-    const safeRounds = Number.isFinite(rounds) && rounds >= 4 && rounds <= 15 ? rounds : 12;
-    const password_hash = await bcrypt.hash(dto.new_password, safeRounds);
+    const password_hash = await bcrypt.hash(dto.new_password, resolveBcryptRounds());
 
     await this.prisma.$transaction([
       this.prisma.users.update({
@@ -167,19 +164,13 @@ export class UsersService {
       }),
     ]);
 
-    try {
-      await this.prisma.audit_logs.create({
-        data: {
-          user_id: actorId,
-          action: 'USER_PASSWORD_RESET_BY_ADMIN',
-          resource_type: 'user',
-          resource_id: userId,
-          changes: { method: 'POST', path: `/api/v1/users/${userId}/reset-password` },
-        },
-      });
-    } catch (err) {
-      this.logger.warn(`Failed to write USER_PASSWORD_RESET_BY_ADMIN audit: ${err}`);
-    }
+    await this.audit.write({
+      actorId,
+      action: AUDIT_ACTIONS.USER_PASSWORD_RESET_BY_ADMIN,
+      resourceType: 'user',
+      resourceId: userId,
+      changes: { method: 'POST', path: `/api/v1/users/${userId}/reset-password` },
+    });
 
     return { message: 'Password reset; user must re-authenticate', data: null };
   }
@@ -190,17 +181,13 @@ export class UsersService {
 
     await this.prisma.users.update({ where: { id }, data: { deleted_at: new Date() } });
 
-    try {
-      await this.prisma.audit_logs.create({
-        data: {
-          user_id: actorId,
-          action: 'USER_DELETED',
-          resource_type: 'user',
-          resource_id: id,
-          changes: { method: 'DELETE', path: `/api/v1/users/${id}` },
-        },
-      });
-    } catch {}
+    await this.audit.write({
+      actorId,
+      action: AUDIT_ACTIONS.USER_DELETED,
+      resourceType: 'user',
+      resourceId: id,
+      changes: { method: 'DELETE', path: `/api/v1/users/${id}` },
+    });
 
     return { message: 'User deleted', data: null };
   }
@@ -219,17 +206,13 @@ export class UsersService {
       update: {},
     });
 
-    try {
-      await this.prisma.audit_logs.create({
-        data: {
-          user_id: actorId,
-          action: 'ROLE_ASSIGNED_TO_USER',
-          resource_type: 'user',
-          resource_id: userId,
-          changes: { method: 'POST', path: `/api/v1/users/${userId}/roles`, role_id: dto.role_id },
-        },
-      });
-    } catch {}
+    await this.audit.write({
+      actorId,
+      action: AUDIT_ACTIONS.ROLE_ASSIGNED_TO_USER,
+      resourceType: 'user',
+      resourceId: userId,
+      changes: { method: 'POST', path: `/api/v1/users/${userId}/roles`, role_id: dto.role_id },
+    });
 
     return { message: 'Role assigned', data: null };
   }
@@ -242,17 +225,13 @@ export class UsersService {
       where: { user_id_role_id: { user_id: userId, role_id: roleId } },
     });
 
-    try {
-      await this.prisma.audit_logs.create({
-        data: {
-          user_id: actorId,
-          action: 'ROLE_REMOVED_FROM_USER',
-          resource_type: 'user',
-          resource_id: userId,
-          changes: { method: 'DELETE', path: `/api/v1/users/${userId}/roles/${roleId}`, roleId },
-        },
-      });
-    } catch {}
+    await this.audit.write({
+      actorId,
+      action: AUDIT_ACTIONS.ROLE_REMOVED_FROM_USER,
+      resourceType: 'user',
+      resourceId: userId,
+      changes: { method: 'DELETE', path: `/api/v1/users/${userId}/roles/${roleId}`, roleId },
+    });
 
     return { message: 'Role removed', data: null };
   }

@@ -1,32 +1,40 @@
 import { ConflictException, Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
+import { AuditService } from '../common/audit/audit.service';
+import { AUDIT_ACTIONS } from '../common/audit/audit.actions';
 import { softDeleteSuffix, stripSoftDeleteSuffix } from '../common/utils/soft-delete.util';
 import { resolveTranslation } from '../common/utils/translation.util';
+import { buildPaginationMeta } from '../common/utils/pagination.util';
 import { CreateAcademicPaperCategoryDto, UpdateAcademicPaperCategoryDto } from './dto/academic-paper-category.dto';
 
 @Injectable()
 export class AcademicPaperCategoriesService {
   private readonly logger = new Logger(AcademicPaperCategoriesService.name);
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly audit: AuditService,
+  ) {}
 
   async findAll(lang: string | null, page: number, limit: number) {
     const skip = (page - 1) * limit;
+    const where: Prisma.academic_paper_categoriesWhereInput = { deleted_at: null };
     const [categories, total] = await Promise.all([
       this.prisma.academic_paper_categories.findMany({
-        where: { deleted_at: null },
+        where,
         include: { academic_paper_category_translations: true },
         orderBy: [{ created_at: 'desc' }, { id: 'asc' }],
         skip,
         take: limit,
       }),
-      this.prisma.academic_paper_categories.count({ where: { deleted_at: null } }),
+      this.prisma.academic_paper_categories.count({ where }),
     ]);
     const items = categories.map((c) => ({
       ...c,
       translation: resolveTranslation(c.academic_paper_category_translations, lang),
     }));
-    return { message: 'Categories fetched', data: { items, pagination: { page, limit, total, pages: Math.ceil(total / limit) } } };
+    return { message: 'Categories fetched', data: { items, pagination: buildPaginationMeta(page, limit, total) } };
   }
 
   async findOne(id: string, lang: string | null) {
@@ -56,11 +64,13 @@ export class AcademicPaperCategoriesService {
       return created;
     });
 
-    try {
-      await this.prisma.audit_logs.create({
-        data: { user_id: actorId, action: 'ACADEMIC_PAPER_CATEGORY_CREATED', resource_type: 'academic_paper_category', resource_id: category.id, changes: { method: 'POST', path: '/api/v1/academic-paper-categories' } },
-      });
-    } catch {}
+    await this.audit.write({
+      actorId,
+      action: AUDIT_ACTIONS.ACADEMIC_PAPER_CATEGORY_CREATED,
+      resourceType: 'academic_paper_category',
+      resourceId: category.id,
+      changes: { method: 'POST', path: '/api/v1/academic-paper-categories' },
+    });
 
     return { message: 'Category created', data: category };
   }
@@ -79,11 +89,13 @@ export class AcademicPaperCategoriesService {
       }
     }
 
-    try {
-      await this.prisma.audit_logs.create({
-        data: { user_id: actorId, action: 'ACADEMIC_PAPER_CATEGORY_UPDATED', resource_type: 'academic_paper_category', resource_id: id, changes: { method: 'PATCH', path: `/api/v1/academic-paper-categories/${id}` } },
-      });
-    } catch {}
+    await this.audit.write({
+      actorId,
+      action: AUDIT_ACTIONS.ACADEMIC_PAPER_CATEGORY_UPDATED,
+      resourceType: 'academic_paper_category',
+      resourceId: id,
+      changes: { method: 'PATCH', path: `/api/v1/academic-paper-categories/${id}` },
+    });
 
     return { message: 'Category updated', data: null };
   }
@@ -91,7 +103,7 @@ export class AcademicPaperCategoriesService {
   /** List soft-deleted academic paper categories. */
   async findTrash(page: number, limit: number) {
     const skip = (page - 1) * limit;
-    const where = { deleted_at: { not: null } };
+    const where: Prisma.academic_paper_categoriesWhereInput = { deleted_at: { not: null } };
     const [items, total] = await Promise.all([
       this.prisma.academic_paper_categories.findMany({
         where,
@@ -104,7 +116,7 @@ export class AcademicPaperCategoriesService {
     ]);
     return {
       message: 'Trash fetched',
-      data: { items, pagination: { page, limit, total, pages: Math.ceil(total / limit) } },
+      data: { items, pagination: buildPaginationMeta(page, limit, total) },
     };
   }
 
@@ -144,13 +156,13 @@ export class AcademicPaperCategoriesService {
       await tx.academic_paper_categories.update({ where: { id }, data: { deleted_at: null } });
     });
 
-    try {
-      await this.prisma.audit_logs.create({
-        data: { user_id: actorId, action: 'ACADEMIC_PAPER_CATEGORY_RESTORED', resource_type: 'academic_paper_category', resource_id: id, changes: { method: 'POST', path: `/api/v1/academic-paper-categories/${id}/restore` } },
-      });
-    } catch (err) {
-      this.logger.warn(`Failed to write ACADEMIC_PAPER_CATEGORY_RESTORED audit: ${err}`);
-    }
+    await this.audit.write({
+      actorId,
+      action: AUDIT_ACTIONS.ACADEMIC_PAPER_CATEGORY_RESTORED,
+      resourceType: 'academic_paper_category',
+      resourceId: id,
+      changes: { method: 'POST', path: `/api/v1/academic-paper-categories/${id}/restore` },
+    });
 
     return { message: 'Category restored', data: null };
   }
@@ -177,11 +189,13 @@ export class AcademicPaperCategoriesService {
       await tx.academic_paper_categories.update({ where: { id }, data: { deleted_at: deletedAt } });
     });
 
-    try {
-      await this.prisma.audit_logs.create({
-        data: { user_id: actorId, action: 'ACADEMIC_PAPER_CATEGORY_DELETED', resource_type: 'academic_paper_category', resource_id: id, changes: { method: 'DELETE', path: `/api/v1/academic-paper-categories/${id}` } },
-      });
-    } catch {}
+    await this.audit.write({
+      actorId,
+      action: AUDIT_ACTIONS.ACADEMIC_PAPER_CATEGORY_DELETED,
+      resourceType: 'academic_paper_category',
+      resourceId: id,
+      changes: { method: 'DELETE', path: `/api/v1/academic-paper-categories/${id}` },
+    });
 
     return { message: 'Category deleted', data: null };
   }

@@ -1,16 +1,31 @@
-import { ConflictException, Injectable, Logger, NotFoundException, UnauthorizedException } from '@nestjs/common';
+import { ConflictException, Injectable, NotFoundException, UnauthorizedException } from '@nestjs/common';
+import { Prisma } from '@prisma/client';
 import * as crypto from 'crypto';
 import { PrismaService } from '../prisma/prisma.service';
+import { AuditService } from '../common/audit/audit.service';
+import { AUDIT_ACTIONS } from '../common/audit/audit.actions';
+import { buildPaginationMeta } from '../common/utils/pagination.util';
 import { SubscribeDto, UnsubscribeDto } from './dto/newsletter.dto';
 
-const UNSUBSCRIBE_SECRET =
-  process.env.NEWSLETTER_UNSUBSCRIBE_SECRET ?? process.env.JWT_SECRET ?? '';
+function resolveUnsubscribeSecret(): string {
+  const secret = process.env.NEWSLETTER_UNSUBSCRIBE_SECRET ?? process.env.JWT_SECRET;
+  if (!secret) {
+    // Empty string here would produce HMAC tokens an attacker can forge.
+    // Refuse to boot so the misconfig is caught immediately rather than
+    // silently disabling unsubscribe-token verification.
+    throw new Error('NEWSLETTER_UNSUBSCRIBE_SECRET (or JWT_SECRET) is required');
+  }
+  return secret;
+}
 
 @Injectable()
 export class NewsletterService {
-  private readonly logger = new Logger(NewsletterService.name);
+  private readonly unsubscribeSecret = resolveUnsubscribeSecret();
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly audit: AuditService,
+  ) {}
 
   /**
    * HMAC of the subscriber id, returned to the client at subscribe time and
@@ -23,7 +38,7 @@ export class NewsletterService {
    */
   signUnsubscribeToken(subscriberId: string): string {
     return crypto
-      .createHmac('sha256', UNSUBSCRIBE_SECRET)
+      .createHmac('sha256', this.unsubscribeSecret)
       .update(subscriberId)
       .digest('hex');
   }
@@ -53,13 +68,13 @@ export class NewsletterService {
         data: { is_active: true, unsubscribed_at: null, deleted_at: null },
       });
 
-      try {
-        await this.prisma.audit_logs.create({
-          data: { user_id: null, action: 'NEWSLETTER_RESUBSCRIBED', resource_type: 'newsletter_subscriber', resource_id: existing.id, changes: { method: 'POST', path: '/api/v1/newsletter/subscribe' } },
-        });
-      } catch (err) {
-        this.logger.warn(`Failed to write NEWSLETTER_RESUBSCRIBED audit: ${err}`);
-      }
+      await this.audit.write({
+        actorId: null,
+        action: AUDIT_ACTIONS.NEWSLETTER_RESUBSCRIBED,
+        resourceType: 'newsletter_subscriber',
+        resourceId: existing.id,
+        changes: { method: 'POST', path: '/api/v1/newsletter/subscribe' },
+      });
 
       return {
         message: 'Successfully resubscribed',
@@ -72,22 +87,22 @@ export class NewsletterService {
       subscriber = await this.prisma.newsletter_subscribers.create({
         data: { email: dto.email, is_active: true },
       });
-    } catch (err: any) {
+    } catch (err: unknown) {
       // Concurrent subscribe with the same email lost the race; turn the
       // P2002 unique violation into a clean 409 instead of a 500.
-      if (err?.code === 'P2002') {
+      if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002') {
         throw new ConflictException('This email is already subscribed');
       }
       throw err;
     }
 
-    try {
-      await this.prisma.audit_logs.create({
-        data: { user_id: null, action: 'NEWSLETTER_SUBSCRIBED', resource_type: 'newsletter_subscriber', resource_id: subscriber.id, changes: { method: 'POST', path: '/api/v1/newsletter/subscribe' } },
-      });
-    } catch (err) {
-      this.logger.warn(`Failed to write NEWSLETTER_SUBSCRIBED audit: ${err}`);
-    }
+    await this.audit.write({
+      actorId: null,
+      action: AUDIT_ACTIONS.NEWSLETTER_SUBSCRIBED,
+      resourceType: 'newsletter_subscriber',
+      resourceId: subscriber.id,
+      changes: { method: 'POST', path: '/api/v1/newsletter/subscribe' },
+    });
 
     return {
       message: 'Successfully subscribed',
@@ -117,13 +132,13 @@ export class NewsletterService {
       data: { is_active: false, unsubscribed_at: new Date() },
     });
 
-    try {
-      await this.prisma.audit_logs.create({
-        data: { user_id: null, action: 'NEWSLETTER_UNSUBSCRIBED', resource_type: 'newsletter_subscriber', resource_id: subscriber.id, changes: { method: 'POST', path: '/api/v1/newsletter/unsubscribe' } },
-      });
-    } catch (err) {
-      this.logger.warn(`Failed to write NEWSLETTER_UNSUBSCRIBED audit: ${err}`);
-    }
+    await this.audit.write({
+      actorId: null,
+      action: AUDIT_ACTIONS.NEWSLETTER_UNSUBSCRIBED,
+      resourceType: 'newsletter_subscriber',
+      resourceId: subscriber.id,
+      changes: { method: 'POST', path: '/api/v1/newsletter/unsubscribe' },
+    });
 
     return { message: 'Successfully unsubscribed', data: updated };
   }
@@ -131,7 +146,7 @@ export class NewsletterService {
   async findAll(page: number, limit: number, filters: { search?: string; is_active?: boolean }) {
     const skip = (page - 1) * limit;
 
-    const where: any = { deleted_at: null };
+    const where: Prisma.newsletter_subscribersWhereInput = { deleted_at: null };
     if (filters.is_active !== undefined) where.is_active = filters.is_active;
     else where.is_active = true;
     if (filters.search) where.email = { contains: filters.search, mode: 'insensitive' };
@@ -146,7 +161,7 @@ export class NewsletterService {
       this.prisma.newsletter_subscribers.count({ where }),
     ]);
 
-    return { message: 'Subscribers fetched', data: { items, pagination: { page, limit, total, pages: Math.ceil(total / limit) } } };
+    return { message: 'Subscribers fetched', data: { items, pagination: buildPaginationMeta(page, limit, total) } };
   }
 
   /**
@@ -170,19 +185,13 @@ export class NewsletterService {
       data: { is_active: false, unsubscribed_at: new Date() },
     });
 
-    try {
-      await this.prisma.audit_logs.create({
-        data: {
-          user_id: actorId,
-          action: 'NEWSLETTER_UNSUBSCRIBED_BY_ADMIN',
-          resource_type: 'newsletter_subscriber',
-          resource_id: id,
-          changes: { method: 'POST', path: `/api/v1/newsletter/subscribers/${id}/unsubscribe` },
-        },
-      });
-    } catch (err) {
-      this.logger.warn(`Failed to write NEWSLETTER_UNSUBSCRIBED_BY_ADMIN audit: ${err}`);
-    }
+    await this.audit.write({
+      actorId,
+      action: AUDIT_ACTIONS.NEWSLETTER_UNSUBSCRIBED_BY_ADMIN,
+      resourceType: 'newsletter_subscriber',
+      resourceId: id,
+      changes: { method: 'POST', path: `/api/v1/newsletter/subscribers/${id}/unsubscribe` },
+    });
 
     return { message: 'Successfully unsubscribed', data: updated };
   }
@@ -207,19 +216,13 @@ export class NewsletterService {
       data: { is_active: true, unsubscribed_at: null },
     });
 
-    try {
-      await this.prisma.audit_logs.create({
-        data: {
-          user_id: actorId,
-          action: 'NEWSLETTER_RESUBSCRIBED_BY_ADMIN',
-          resource_type: 'newsletter_subscriber',
-          resource_id: id,
-          changes: { method: 'POST', path: `/api/v1/newsletter/subscribers/${id}/resubscribe` },
-        },
-      });
-    } catch (err) {
-      this.logger.warn(`Failed to write NEWSLETTER_RESUBSCRIBED_BY_ADMIN audit: ${err}`);
-    }
+    await this.audit.write({
+      actorId,
+      action: AUDIT_ACTIONS.NEWSLETTER_RESUBSCRIBED_BY_ADMIN,
+      resourceType: 'newsletter_subscriber',
+      resourceId: id,
+      changes: { method: 'POST', path: `/api/v1/newsletter/subscribers/${id}/resubscribe` },
+    });
 
     return { message: 'Successfully resubscribed', data: updated };
   }
@@ -230,13 +233,13 @@ export class NewsletterService {
 
     await this.prisma.newsletter_subscribers.update({ where: { id }, data: { deleted_at: new Date() } });
 
-    try {
-      await this.prisma.audit_logs.create({
-        data: { user_id: actorId, action: 'NEWSLETTER_SUBSCRIBER_DELETED', resource_type: 'newsletter_subscriber', resource_id: id, changes: { method: 'DELETE', path: `/api/v1/newsletter/subscribers/${id}` } },
-      });
-    } catch (err) {
-      this.logger.warn(`Failed to write NEWSLETTER_SUBSCRIBER_DELETED audit: ${err}`);
-    }
+    await this.audit.write({
+      actorId,
+      action: AUDIT_ACTIONS.NEWSLETTER_SUBSCRIBER_DELETED,
+      resourceType: 'newsletter_subscriber',
+      resourceId: id,
+      changes: { method: 'DELETE', path: `/api/v1/newsletter/subscribers/${id}` },
+    });
 
     return { message: 'Subscriber deleted', data: null };
   }

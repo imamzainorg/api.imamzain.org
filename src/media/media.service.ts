@@ -1,9 +1,13 @@
 import { BadRequestException, ConflictException, ForbiddenException, Injectable, Logger, NotFoundException, PayloadTooLargeException } from '@nestjs/common';
 import { Cron } from '@nestjs/schedule';
+import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { R2Service } from '../storage/r2.service';
+import { AuditService } from '../common/audit/audit.service';
+import { AUDIT_ACTIONS } from '../common/audit/audit.actions';
+import { buildPaginationMeta, resolvePagination } from '../common/utils/pagination.util';
 import { ConfirmUploadDto, RequestUploadUrlDto, UpdateMediaDto } from './dto/media.dto';
-import { ImageVariantService, VARIANT_WIDTHS } from './image-variant.service';
+import { ImageVariantService } from './image-variant.service';
 
 @Injectable()
 export class MediaService {
@@ -13,6 +17,7 @@ export class MediaService {
     private readonly prisma: PrismaService,
     private readonly r2Service: R2Service,
     private readonly variants: ImageVariantService,
+    private readonly audit: AuditService,
   ) {}
 
   async requestUploadUrl(dto: RequestUploadUrlDto, userId: string) {
@@ -105,23 +110,17 @@ export class MediaService {
     // created if some / all variants fail.
     const generatedVariants = await this.variants.generateForMedia(media.id, dto.key);
 
-    try {
-      await this.prisma.audit_logs.create({
-        data: {
-          user_id: userId,
-          action: 'MEDIA_CREATED',
-          resource_type: 'media',
-          resource_id: media.id,
-          changes: {
-            method: 'POST',
-            path: '/api/v1/media/confirm',
-            variants_generated: generatedVariants.length,
-          },
-        },
-      });
-    } catch (err) {
-      this.logger.warn(`Failed to write MEDIA_CREATED audit: ${err}`);
-    }
+    await this.audit.write({
+      actorId: userId,
+      action: AUDIT_ACTIONS.MEDIA_CREATED,
+      resourceType: 'media',
+      resourceId: media.id,
+      changes: {
+        method: 'POST',
+        path: '/api/v1/media/confirm',
+        variants_generated: generatedVariants.length,
+      },
+    });
 
     return { message: 'Media created', data: { ...media, variants: generatedVariants } };
   }
@@ -137,23 +136,17 @@ export class MediaService {
     const key = this.r2Service.keyFromPublicUrl(media.url);
     const variants = await this.variants.generateForMedia(id, key);
 
-    try {
-      await this.prisma.audit_logs.create({
-        data: {
-          user_id: actorId,
-          action: 'MEDIA_VARIANTS_REGENERATED',
-          resource_type: 'media',
-          resource_id: id,
-          changes: {
-            method: 'POST',
-            path: `/api/v1/media/${id}/regenerate-variants`,
-            variants_generated: variants.length,
-          },
-        },
-      });
-    } catch (err) {
-      this.logger.warn(`Failed to write MEDIA_VARIANTS_REGENERATED audit: ${err}`);
-    }
+    await this.audit.write({
+      actorId,
+      action: AUDIT_ACTIONS.MEDIA_VARIANTS_REGENERATED,
+      resourceType: 'media',
+      resourceId: id,
+      changes: {
+        method: 'POST',
+        path: `/api/v1/media/${id}/regenerate-variants`,
+        variants_generated: variants.length,
+      },
+    });
 
     return { message: 'Variants regenerated', data: { ...media, variants } };
   }
@@ -192,11 +185,9 @@ export class MediaService {
   }
 
   async findAll(query: { page?: number; limit?: number; search?: string; mime_type?: string }) {
-    const page = query.page ?? 1;
-    const limit = query.limit ?? 20;
-    const skip = (page - 1) * limit;
+    const { page, limit, skip } = resolvePagination(query);
 
-    const where: any = {};
+    const where: Prisma.mediaWhereInput = {};
     if (query.mime_type) where.mime_type = query.mime_type;
     if (query.search) {
       where.OR = [
@@ -220,7 +211,7 @@ export class MediaService {
 
     return {
       message: 'Media fetched',
-      data: { items: itemsWithVariants, pagination: { page, limit, total, pages: Math.ceil(total / limit) } },
+      data: { items: itemsWithVariants, pagination: buildPaginationMeta(page, limit, total) },
     };
   }
 
@@ -235,21 +226,21 @@ export class MediaService {
     const media = await this.prisma.media.findUnique({ where: { id } });
     if (!media) throw new NotFoundException('Media not found');
 
-    const updated = await this.prisma.media.update({ where: { id }, data: dto });
+    // Build the update payload explicitly. A bare `data: dto` spread would
+    // let future DTO fields leak into the row update unchecked.
+    const updateData: Prisma.mediaUpdateInput = {};
+    if (dto.alt_text !== undefined) updateData.alt_text = dto.alt_text;
+    if (dto.filename !== undefined) updateData.filename = dto.filename;
 
-    try {
-      await this.prisma.audit_logs.create({
-        data: {
-          user_id: userId,
-          action: 'MEDIA_UPDATED',
-          resource_type: 'media',
-          resource_id: id,
-          changes: { method: 'PATCH', path: `/api/v1/media/${id}` },
-        },
-      });
-    } catch (err) {
-      this.logger.warn(`Failed to write MEDIA_UPDATED audit: ${err}`);
-    }
+    const updated = await this.prisma.media.update({ where: { id }, data: updateData });
+
+    await this.audit.write({
+      actorId: userId,
+      action: AUDIT_ACTIONS.MEDIA_UPDATED,
+      resourceType: 'media',
+      resourceId: id,
+      changes: { method: 'PATCH', path: `/api/v1/media/${id}` },
+    });
 
     return { message: 'Media updated', data: updated };
   }
@@ -284,19 +275,13 @@ export class MediaService {
       this.variants.deleteR2Variants(id),
     ]);
 
-    try {
-      await this.prisma.audit_logs.create({
-        data: {
-          user_id: userId,
-          action: 'MEDIA_DELETED',
-          resource_type: 'media',
-          resource_id: id,
-          changes: { method: 'DELETE', path: `/api/v1/media/${id}` },
-        },
-      });
-    } catch (err) {
-      this.logger.warn(`Failed to write MEDIA_DELETED audit: ${err}`);
-    }
+    await this.audit.write({
+      actorId: userId,
+      action: AUDIT_ACTIONS.MEDIA_DELETED,
+      resourceType: 'media',
+      resourceId: id,
+      changes: { method: 'DELETE', path: `/api/v1/media/${id}` },
+    });
 
     return { message: 'Media deleted', data: null };
   }

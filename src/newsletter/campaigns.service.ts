@@ -6,10 +6,13 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { Cron, CronExpression } from '@nestjs/schedule';
-import { newsletter_campaign_status } from '@prisma/client';
+import { newsletter_campaign_status, Prisma } from '@prisma/client';
 import { EmailService } from '../email/email.service';
 import { PrismaService } from '../prisma/prisma.service';
+import { AuditService } from '../common/audit/audit.service';
+import { AUDIT_ACTIONS } from '../common/audit/audit.actions';
 import { sanitizeEditorHtml } from '../common/utils/html-sanitize.util';
+import { buildPaginationMeta, resolvePagination } from '../common/utils/pagination.util';
 import { NewsletterService } from './newsletter.service';
 import {
   CampaignQueryDto,
@@ -57,6 +60,7 @@ export class CampaignsService {
     private readonly prisma: PrismaService,
     private readonly newsletter: NewsletterService,
     private readonly email: EmailService,
+    private readonly audit: AuditService,
   ) {}
 
   // ── CRUD ──────────────────────────────────────────────────────────────
@@ -75,29 +79,21 @@ export class CampaignsService {
       },
     });
 
-    try {
-      await this.prisma.audit_logs.create({
-        data: {
-          user_id: userId,
-          action: 'NEWSLETTER_CAMPAIGN_CREATED',
-          resource_type: 'newsletter_campaign',
-          resource_id: campaign.id,
-          changes: { method: 'POST', path: '/api/v1/newsletter/campaigns', status },
-        },
-      });
-    } catch (err) {
-      this.logger.warn(`Failed to write NEWSLETTER_CAMPAIGN_CREATED audit: ${err}`);
-    }
+    await this.audit.write({
+      actorId: userId,
+      action: AUDIT_ACTIONS.NEWSLETTER_CAMPAIGN_CREATED,
+      resourceType: 'newsletter_campaign',
+      resourceId: campaign.id,
+      changes: { method: 'POST', path: '/api/v1/newsletter/campaigns', status },
+    });
 
     return { message: 'Campaign created', data: campaign };
   }
 
   async findAll(query: CampaignQueryDto) {
-    const page = query.page ?? 1;
-    const limit = query.limit ?? 20;
-    const skip = (page - 1) * limit;
+    const { page, limit, skip } = resolvePagination(query);
 
-    const where = query.status ? { status: query.status } : {};
+    const where: Prisma.newsletter_campaignsWhereInput = query.status ? { status: query.status } : {};
 
     const [items, total] = await Promise.all([
       this.prisma.newsletter_campaigns.findMany({
@@ -111,7 +107,7 @@ export class CampaignsService {
 
     return {
       message: 'Campaigns fetched',
-      data: { items, pagination: { page, limit, total, pages: Math.ceil(total / limit) } },
+      data: { items, pagination: buildPaginationMeta(page, limit, total) },
     };
   }
 
@@ -130,7 +126,7 @@ export class CampaignsService {
       );
     }
 
-    const data: Record<string, unknown> = { updated_at: new Date() };
+    const data: Prisma.newsletter_campaignsUpdateInput = { updated_at: new Date() };
     if (dto.subject !== undefined) data.subject = dto.subject;
     if (dto.body_html !== undefined) data.body_html = sanitizeEditorHtml(dto.body_html);
     if (dto.scheduled_at !== undefined) {
@@ -143,19 +139,13 @@ export class CampaignsService {
 
     const updated = await this.prisma.newsletter_campaigns.update({ where: { id }, data });
 
-    try {
-      await this.prisma.audit_logs.create({
-        data: {
-          user_id: userId,
-          action: 'NEWSLETTER_CAMPAIGN_UPDATED',
-          resource_type: 'newsletter_campaign',
-          resource_id: id,
-          changes: { method: 'PATCH', path: `/api/v1/newsletter/campaigns/${id}` },
-        },
-      });
-    } catch (err) {
-      this.logger.warn(`Failed to write NEWSLETTER_CAMPAIGN_UPDATED audit: ${err}`);
-    }
+    await this.audit.write({
+      actorId: userId,
+      action: AUDIT_ACTIONS.NEWSLETTER_CAMPAIGN_UPDATED,
+      resourceType: 'newsletter_campaign',
+      resourceId: id,
+      changes: { method: 'PATCH', path: `/api/v1/newsletter/campaigns/${id}` },
+    });
 
     return { message: 'Campaign updated', data: updated };
   }
@@ -173,19 +163,13 @@ export class CampaignsService {
     // newsletter_campaign_recipients cascades via FK ON DELETE CASCADE.
     await this.prisma.newsletter_campaigns.delete({ where: { id } });
 
-    try {
-      await this.prisma.audit_logs.create({
-        data: {
-          user_id: userId,
-          action: 'NEWSLETTER_CAMPAIGN_DELETED',
-          resource_type: 'newsletter_campaign',
-          resource_id: id,
-          changes: { method: 'DELETE', path: `/api/v1/newsletter/campaigns/${id}` },
-        },
-      });
-    } catch (err) {
-      this.logger.warn(`Failed to write NEWSLETTER_CAMPAIGN_DELETED audit: ${err}`);
-    }
+    await this.audit.write({
+      actorId: userId,
+      action: AUDIT_ACTIONS.NEWSLETTER_CAMPAIGN_DELETED,
+      resourceType: 'newsletter_campaign',
+      resourceId: id,
+      changes: { method: 'DELETE', path: `/api/v1/newsletter/campaigns/${id}` },
+    });
 
     return { message: 'Campaign deleted', data: null };
   }
@@ -221,23 +205,17 @@ export class CampaignsService {
       throw new BadRequestException('No active subscribers to send to');
     }
 
-    try {
-      await this.prisma.audit_logs.create({
-        data: {
-          user_id: userId,
-          action: 'NEWSLETTER_CAMPAIGN_SEND_QUEUED',
-          resource_type: 'newsletter_campaign',
-          resource_id: id,
-          changes: {
-            method: 'POST',
-            path: `/api/v1/newsletter/campaigns/${id}/send`,
-            recipient_count: recipientCount,
-          },
-        },
-      });
-    } catch (err) {
-      this.logger.warn(`Failed to write SEND_QUEUED audit: ${err}`);
-    }
+    await this.audit.write({
+      actorId: userId,
+      action: AUDIT_ACTIONS.NEWSLETTER_CAMPAIGN_SEND_QUEUED,
+      resourceType: 'newsletter_campaign',
+      resourceId: id,
+      changes: {
+        method: 'POST',
+        path: `/api/v1/newsletter/campaigns/${id}/send`,
+        recipient_count: recipientCount,
+      },
+    });
 
     return { message: 'Campaign queued for sending', data: { id, recipient_count: recipientCount } };
   }
@@ -251,19 +229,13 @@ export class CampaignsService {
       throw new ConflictException('Campaign is not in a cancellable state');
     }
 
-    try {
-      await this.prisma.audit_logs.create({
-        data: {
-          user_id: userId,
-          action: 'NEWSLETTER_CAMPAIGN_CANCELLED',
-          resource_type: 'newsletter_campaign',
-          resource_id: id,
-          changes: { method: 'POST', path: `/api/v1/newsletter/campaigns/${id}/cancel` },
-        },
-      });
-    } catch (err) {
-      this.logger.warn(`Failed to write CANCELLED audit: ${err}`);
-    }
+    await this.audit.write({
+      actorId: userId,
+      action: AUDIT_ACTIONS.NEWSLETTER_CAMPAIGN_CANCELLED,
+      resourceType: 'newsletter_campaign',
+      resourceId: id,
+      changes: { method: 'POST', path: `/api/v1/newsletter/campaigns/${id}/cancel` },
+    });
 
     return { message: 'Campaign cancelled', data: null };
   }

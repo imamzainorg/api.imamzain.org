@@ -1,32 +1,40 @@
 import { ConflictException, Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
+import { AuditService } from '../common/audit/audit.service';
+import { AUDIT_ACTIONS } from '../common/audit/audit.actions';
 import { softDeleteSuffix, stripSoftDeleteSuffix } from '../common/utils/soft-delete.util';
 import { resolveTranslation } from '../common/utils/translation.util';
+import { buildPaginationMeta } from '../common/utils/pagination.util';
 import { CreateGalleryCategoryDto, UpdateGalleryCategoryDto } from './dto/gallery-category.dto';
 
 @Injectable()
 export class GalleryCategoriesService {
   private readonly logger = new Logger(GalleryCategoriesService.name);
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly audit: AuditService,
+  ) {}
 
   async findAll(lang: string | null, page: number, limit: number) {
     const skip = (page - 1) * limit;
+    const where: Prisma.gallery_categoriesWhereInput = { deleted_at: null };
     const [categories, total] = await Promise.all([
       this.prisma.gallery_categories.findMany({
-        where: { deleted_at: null },
+        where,
         include: { gallery_category_translations: true },
         orderBy: [{ created_at: 'desc' }, { id: 'asc' }],
         skip,
         take: limit,
       }),
-      this.prisma.gallery_categories.count({ where: { deleted_at: null } }),
+      this.prisma.gallery_categories.count({ where }),
     ]);
     const items = categories.map((c) => ({
       ...c,
       translation: resolveTranslation(c.gallery_category_translations, lang),
     }));
-    return { message: 'Categories fetched', data: { items, pagination: { page, limit, total, pages: Math.ceil(total / limit) } } };
+    return { message: 'Categories fetched', data: { items, pagination: buildPaginationMeta(page, limit, total) } };
   }
 
   async findOne(id: string, lang: string | null) {
@@ -56,11 +64,13 @@ export class GalleryCategoriesService {
       return created;
     });
 
-    try {
-      await this.prisma.audit_logs.create({
-        data: { user_id: actorId, action: 'GALLERY_CATEGORY_CREATED', resource_type: 'gallery_category', resource_id: category.id, changes: { method: 'POST', path: '/api/v1/gallery-categories' } },
-      });
-    } catch {}
+    await this.audit.write({
+      actorId,
+      action: AUDIT_ACTIONS.GALLERY_CATEGORY_CREATED,
+      resourceType: 'gallery_category',
+      resourceId: category.id,
+      changes: { method: 'POST', path: '/api/v1/gallery-categories' },
+    });
 
     return { message: 'Category created', data: category };
   }
@@ -79,11 +89,13 @@ export class GalleryCategoriesService {
       }
     }
 
-    try {
-      await this.prisma.audit_logs.create({
-        data: { user_id: actorId, action: 'GALLERY_CATEGORY_UPDATED', resource_type: 'gallery_category', resource_id: id, changes: { method: 'PATCH', path: `/api/v1/gallery-categories/${id}` } },
-      });
-    } catch {}
+    await this.audit.write({
+      actorId,
+      action: AUDIT_ACTIONS.GALLERY_CATEGORY_UPDATED,
+      resourceType: 'gallery_category',
+      resourceId: id,
+      changes: { method: 'PATCH', path: `/api/v1/gallery-categories/${id}` },
+    });
 
     return { message: 'Category updated', data: null };
   }
@@ -91,7 +103,7 @@ export class GalleryCategoriesService {
   /** List soft-deleted gallery categories. */
   async findTrash(page: number, limit: number) {
     const skip = (page - 1) * limit;
-    const where = { deleted_at: { not: null } };
+    const where: Prisma.gallery_categoriesWhereInput = { deleted_at: { not: null } };
     const [items, total] = await Promise.all([
       this.prisma.gallery_categories.findMany({
         where,
@@ -104,7 +116,7 @@ export class GalleryCategoriesService {
     ]);
     return {
       message: 'Trash fetched',
-      data: { items, pagination: { page, limit, total, pages: Math.ceil(total / limit) } },
+      data: { items, pagination: buildPaginationMeta(page, limit, total) },
     };
   }
 
@@ -144,13 +156,13 @@ export class GalleryCategoriesService {
       await tx.gallery_categories.update({ where: { id }, data: { deleted_at: null } });
     });
 
-    try {
-      await this.prisma.audit_logs.create({
-        data: { user_id: actorId, action: 'GALLERY_CATEGORY_RESTORED', resource_type: 'gallery_category', resource_id: id, changes: { method: 'POST', path: `/api/v1/gallery-categories/${id}/restore` } },
-      });
-    } catch (err) {
-      this.logger.warn(`Failed to write GALLERY_CATEGORY_RESTORED audit: ${err}`);
-    }
+    await this.audit.write({
+      actorId,
+      action: AUDIT_ACTIONS.GALLERY_CATEGORY_RESTORED,
+      resourceType: 'gallery_category',
+      resourceId: id,
+      changes: { method: 'POST', path: `/api/v1/gallery-categories/${id}/restore` },
+    });
 
     return { message: 'Category restored', data: null };
   }
@@ -177,11 +189,13 @@ export class GalleryCategoriesService {
       await tx.gallery_categories.update({ where: { id }, data: { deleted_at: deletedAt } });
     });
 
-    try {
-      await this.prisma.audit_logs.create({
-        data: { user_id: actorId, action: 'GALLERY_CATEGORY_DELETED', resource_type: 'gallery_category', resource_id: id, changes: { method: 'DELETE', path: `/api/v1/gallery-categories/${id}` } },
-      });
-    } catch {}
+    await this.audit.write({
+      actorId,
+      action: AUDIT_ACTIONS.GALLERY_CATEGORY_DELETED,
+      resourceType: 'gallery_category',
+      resourceId: id,
+      changes: { method: 'DELETE', path: `/api/v1/gallery-categories/${id}` },
+    });
 
     return { message: 'Category deleted', data: null };
   }

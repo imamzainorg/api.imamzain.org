@@ -3,6 +3,7 @@ import { UnauthorizedException } from "@nestjs/common";
 import { JwtService } from "@nestjs/jwt";
 import { AuthService } from "./auth.service";
 import { PrismaService } from "../prisma/prisma.service";
+import { AuditService } from "../common/audit/audit.service";
 
 jest.mock("bcryptjs", () => ({
   compare: jest.fn(),
@@ -35,11 +36,14 @@ describe("AuthService", () => {
   let service: AuthService;
   let prisma: any;
   let jwtService: any;
+  let audit: any;
 
   beforeEach(async () => {
+    audit = { write: jest.fn().mockResolvedValue(true) };
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         AuthService,
+        { provide: AuditService, useValue: audit },
         {
           provide: PrismaService,
           useValue: {
@@ -168,10 +172,10 @@ describe("AuthService", () => {
       ).rejects.toThrow(UnauthorizedException);
     });
 
-    it("still succeeds even if audit_logs.create throws", async () => {
+    it("still succeeds even if audit write fails", async () => {
       prisma.users.findFirst.mockResolvedValue(mockUser);
       (bcrypt.compare as jest.Mock).mockResolvedValue(true);
-      prisma.audit_logs.create.mockRejectedValue(new Error("DB error"));
+      audit.write.mockResolvedValueOnce(false);
 
       const result = await service.login(
         { username: "admin", password: "secret" },

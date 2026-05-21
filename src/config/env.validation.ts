@@ -5,6 +5,7 @@ import {
   IsInt,
   IsOptional,
   IsString,
+  Max,
   Min,
   ValidateIf,
   validateSync,
@@ -39,6 +40,14 @@ class EnvironmentVariables {
   @IsString()
   JWT_EXPIRES_IN: string = "24h";
 
+  // bcrypt cost factor. The hashing helper clamps to [4, 15] at runtime;
+  // validation here is a sanity check on the env declaration itself.
+  @IsOptional()
+  @IsInt()
+  @Min(4)
+  @Max(15)
+  BCRYPT_ROUNDS?: number;
+
   // Required in production; optional in development/test so contributors
   // can boot without R2 access. Missing keys cause boot failure in prod.
   @ValidateIf((o) => o.NODE_ENV === NodeEnv.Production)
@@ -61,6 +70,12 @@ class EnvironmentVariables {
   @IsString()
   R2_PUBLIC_BASE_URL?: string;
 
+  @IsOptional()
+  @IsInt()
+  @Min(60)
+  @Max(86_400)
+  R2_UPLOAD_URL_TTL_SECONDS?: number;
+
   // Required in production: explicit comma-separated allowlist of CORS origins.
   // Without this, CORS would fall back to a permissive default.
   @ValidateIf((o) => o.NODE_ENV === NodeEnv.Production)
@@ -70,6 +85,82 @@ class EnvironmentVariables {
   @IsOptional()
   @IsBooleanString()
   EXPOSE_DOCS?: string;
+
+  @IsOptional()
+  @IsString()
+  LOG_LEVEL?: string;
+
+  @IsOptional()
+  @IsString()
+  SENTRY_DSN?: string;
+
+  // Newsletter unsubscribe-token signing. Falls back to JWT_SECRET at runtime
+  // if unset, so it's only required as its own var when you want token
+  // rotation independent of JWT.
+  @IsOptional()
+  @IsString()
+  NEWSLETTER_UNSUBSCRIBE_SECRET?: string;
+
+  @IsOptional()
+  @IsString()
+  NEWSLETTER_UNSUBSCRIBE_URL_BASE?: string;
+
+  // Outbound email — kept optional so a missing SMTP config silently
+  // disables delivery (matches current behaviour). Tighten to required-in-
+  // production once the team confirms every prod env has these set.
+  @IsOptional()
+  @IsString()
+  SMTP_HOST?: string;
+
+  @IsOptional()
+  @IsInt()
+  SMTP_PORT?: number;
+
+  @IsOptional()
+  @IsString()
+  SMTP_USER?: string;
+
+  @IsOptional()
+  @IsString()
+  SMTP_PASS?: string;
+
+  @IsOptional()
+  @IsBooleanString()
+  SMTP_SECURE?: string;
+
+  @IsOptional()
+  @IsString()
+  EMAIL_FROM?: string;
+
+  @IsOptional()
+  @IsString()
+  EMAIL_TO?: string;
+
+  @IsOptional()
+  @IsString()
+  PUBLIC_SITE_URL?: string;
+
+  @IsOptional()
+  @IsString()
+  PUBLIC_SITE_NAME?: string;
+
+  // Twilio / WhatsApp — optional everywhere; service skips notifications
+  // when credentials are absent.
+  @IsOptional()
+  @IsString()
+  TWILIO_ACCOUNT_SID?: string;
+
+  @IsOptional()
+  @IsString()
+  TWILIO_AUTH_TOKEN?: string;
+
+  @IsOptional()
+  @IsString()
+  TWILIO_WHATSAPP_FROM?: string;
+
+  @IsOptional()
+  @IsString()
+  TWILIO_TEMPLATE_SID?: string;
 
   // YouTube Data API — both optional. If either is missing the sync
   // service skips runs and the homepage returns an empty videos array.

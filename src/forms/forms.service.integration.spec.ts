@@ -55,10 +55,13 @@ describeIfDb("FormsService (integration)", () => {
     });
     adminId = admin.id;
 
+    const { AuditService } = await import("../common/audit/audit.service");
+    const audit = new AuditService(prisma as unknown as PrismaService);
     service = new FormsService(
       prisma as unknown as PrismaService,
       mockEmail as unknown as EmailService,
       mockWhatsapp as unknown as WhatsappService,
+      audit,
     );
   });
 

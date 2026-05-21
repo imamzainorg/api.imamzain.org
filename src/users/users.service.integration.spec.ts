@@ -14,6 +14,7 @@ import * as bcrypt from 'bcryptjs'
 import { ConflictException, NotFoundException } from '@nestjs/common'
 import { UsersService } from './users.service'
 import { PrismaService } from '../prisma/prisma.service'
+import { AuditService } from '../common/audit/audit.service'
 import { prisma, cleanDatabase } from '../../test/db-helpers'
 
 const describeIfDb = process.env.DATABASE_TEST_URL ? describe : describe.skip
@@ -26,7 +27,8 @@ describeIfDb('UsersService (integration)', () => {
 
     beforeEach(async () => {
         await cleanDatabase()
-        service = new UsersService(prisma as unknown as PrismaService)
+        const audit = new AuditService(prisma as unknown as PrismaService)
+        service = new UsersService(prisma as unknown as PrismaService, audit)
     })
 
     // ─── create ───────────────────────────────────────────────────────────────

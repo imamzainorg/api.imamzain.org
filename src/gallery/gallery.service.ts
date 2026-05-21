@@ -1,28 +1,25 @@
 import { Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
+import { AuditService } from '../common/audit/audit.service';
+import { AUDIT_ACTIONS } from '../common/audit/audit.actions';
+import { resolveTranslation } from '../common/utils/translation.util';
+import { buildPaginationMeta, resolvePagination } from '../common/utils/pagination.util';
 import { CreateGalleryImageDto, GalleryQueryDto, UpdateGalleryImageDto } from './dto/gallery.dto';
-
-function resolveTranslation(translations: any[], lang: string | null) {
-  if (!translations || translations.length === 0) return null;
-  if (lang) {
-    const match = translations.find((t) => t.lang === lang);
-    if (match) return match;
-  }
-  return translations.find((t) => t.is_default) ?? translations[0];
-}
 
 @Injectable()
 export class GalleryService {
   private readonly logger = new Logger(GalleryService.name);
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly audit: AuditService,
+  ) {}
 
   async findAll(query: GalleryQueryDto, lang: string | null) {
-    const page = query.page ?? 1;
-    const limit = query.limit ?? 20;
-    const skip = (page - 1) * limit;
+    const { page, limit, skip } = resolvePagination(query);
 
-    const where: any = { deleted_at: null };
+    const where: Prisma.gallery_imagesWhereInput = { deleted_at: null };
     if (query.category_id) where.category_id = query.category_id;
     if (query.tags && query.tags.length > 0) where.tags = { hasEvery: query.tags };
     if (query.locations && query.locations.length > 0) where.locations = { hasEvery: query.locations };
@@ -46,7 +43,7 @@ export class GalleryService {
       ...img,
       translation: resolveTranslation(img.gallery_image_translations, lang),
     }));
-    return { message: 'Gallery fetched', data: { items: mapped, pagination: { page, limit, total, pages: Math.ceil(total / limit) } } };
+    return { message: 'Gallery fetched', data: { items: mapped, pagination: buildPaginationMeta(page, limit, total) } };
   }
 
   async findOne(id: string, lang: string | null) {
@@ -92,17 +89,13 @@ export class GalleryService {
       return created;
     });
 
-    try {
-      await this.prisma.audit_logs.create({
-        data: {
-          user_id: userId,
-          action: 'GALLERY_IMAGE_CREATED',
-          resource_type: 'gallery_image',
-          resource_id: image.media_id,
-          changes: { method: 'POST', path: '/api/v1/gallery' },
-        },
-      });
-    } catch {}
+    await this.audit.write({
+      actorId: userId,
+      action: AUDIT_ACTIONS.GALLERY_IMAGE_CREATED,
+      resourceType: 'gallery_image',
+      resourceId: image.media_id,
+      changes: { method: 'POST', path: '/api/v1/gallery' },
+    });
 
     return { message: 'Gallery image created', data: image };
   }
@@ -119,13 +112,26 @@ export class GalleryService {
     }
 
     await this.prisma.$transaction(async (tx) => {
-      // Defensively strip media_id (the primary key) and translations from
-      // the data spread; the DTO no longer exposes media_id, but this guards
-      // the service against future DTO regressions.
-      const { translations, media_id: _media_id, ...rest } = dto as any;
-      await tx.gallery_images.update({ where: { media_id: id }, data: { ...rest, updated_at: new Date() } });
-      if (translations) {
-        for (const t of translations) {
+      // Build the update payload explicitly so DTO additions can't slip into
+      // the row data (e.g. an accidental media_id field that would attempt
+      // to repoint the PK).
+      const updateData: Prisma.gallery_imagesUpdateInput = { updated_at: new Date() };
+      if (dto.category_id !== undefined) {
+        updateData.gallery_categories = dto.category_id
+          ? { connect: { id: dto.category_id } }
+          : { disconnect: true };
+      }
+      if (dto.taken_at !== undefined) {
+        updateData.taken_at = dto.taken_at ? new Date(dto.taken_at) : null;
+      }
+      if (dto.author !== undefined) updateData.author = dto.author;
+      if (dto.tags !== undefined) updateData.tags = dto.tags;
+      if (dto.locations !== undefined) updateData.locations = dto.locations;
+
+      await tx.gallery_images.update({ where: { media_id: id }, data: updateData });
+
+      if (dto.translations) {
+        for (const t of dto.translations) {
           await tx.gallery_image_translations.upsert({
             where: { media_id_lang: { media_id: id, lang: t.lang } },
             create: { media_id: id, lang: t.lang, title: t.title, description: t.description ?? null },
@@ -135,17 +141,13 @@ export class GalleryService {
       }
     });
 
-    try {
-      await this.prisma.audit_logs.create({
-        data: {
-          user_id: userId,
-          action: 'GALLERY_IMAGE_UPDATED',
-          resource_type: 'gallery_image',
-          resource_id: id,
-          changes: { method: 'PATCH', path: `/api/v1/gallery/${id}` },
-        },
-      });
-    } catch {}
+    await this.audit.write({
+      actorId: userId,
+      action: AUDIT_ACTIONS.GALLERY_IMAGE_UPDATED,
+      resourceType: 'gallery_image',
+      resourceId: id,
+      changes: { method: 'PATCH', path: `/api/v1/gallery/${id}` },
+    });
 
     return { message: 'Gallery image updated', data: null };
   }
@@ -153,7 +155,7 @@ export class GalleryService {
   /** List soft-deleted gallery images (admin trash view). */
   async findTrash(page: number, limit: number) {
     const skip = (page - 1) * limit;
-    const where = { deleted_at: { not: null } };
+    const where: Prisma.gallery_imagesWhereInput = { deleted_at: { not: null } };
 
     const [items, total] = await Promise.all([
       this.prisma.gallery_images.findMany({
@@ -172,7 +174,7 @@ export class GalleryService {
 
     return {
       message: 'Trash fetched',
-      data: { items, pagination: { page, limit, total, pages: Math.ceil(total / limit) } },
+      data: { items, pagination: buildPaginationMeta(page, limit, total) },
     };
   }
 
@@ -188,19 +190,13 @@ export class GalleryService {
       data: { deleted_at: null, updated_at: new Date() },
     });
 
-    try {
-      await this.prisma.audit_logs.create({
-        data: {
-          user_id: userId,
-          action: 'GALLERY_IMAGE_RESTORED',
-          resource_type: 'gallery_image',
-          resource_id: id,
-          changes: { method: 'POST', path: `/api/v1/gallery/${id}/restore` },
-        },
-      });
-    } catch (err) {
-      this.logger.warn(`Failed to write GALLERY_IMAGE_RESTORED audit: ${err}`);
-    }
+    await this.audit.write({
+      actorId: userId,
+      action: AUDIT_ACTIONS.GALLERY_IMAGE_RESTORED,
+      resourceType: 'gallery_image',
+      resourceId: id,
+      changes: { method: 'POST', path: `/api/v1/gallery/${id}/restore` },
+    });
 
     return { message: 'Gallery image restored', data: null };
   }
@@ -211,17 +207,13 @@ export class GalleryService {
 
     await this.prisma.gallery_images.update({ where: { media_id: id }, data: { deleted_at: new Date() } });
 
-    try {
-      await this.prisma.audit_logs.create({
-        data: {
-          user_id: userId,
-          action: 'GALLERY_IMAGE_DELETED',
-          resource_type: 'gallery_image',
-          resource_id: id,
-          changes: { method: 'DELETE', path: `/api/v1/gallery/${id}` },
-        },
-      });
-    } catch {}
+    await this.audit.write({
+      actorId: userId,
+      action: AUDIT_ACTIONS.GALLERY_IMAGE_DELETED,
+      resourceType: 'gallery_image',
+      resourceId: id,
+      changes: { method: 'DELETE', path: `/api/v1/gallery/${id}` },
+    });
 
     return { message: 'Gallery image deleted', data: null };
   }

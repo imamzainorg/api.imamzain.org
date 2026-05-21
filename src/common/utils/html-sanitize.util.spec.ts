@@ -46,6 +46,14 @@ describe('sanitizeEditorHtml', () => {
     expect(sanitizeEditorHtml(html)).toContain('data:image/png');
   });
 
+  it('rejects non-image data: MIME types in <img src>', () => {
+    const cleaned = sanitizeEditorHtml('<img src="data:text/html;base64,PHNjcmlwdD4=" alt="x">');
+    // The whole <img> element is dropped because the data: MIME is not in
+    // the image allowlist; sanitize-html drops the element wholesale.
+    expect(cleaned).not.toContain('data:text/html');
+    expect(cleaned).not.toContain('<img');
+  });
+
   it('adds rel=noopener noreferrer to target=_blank links', () => {
     const cleaned = sanitizeEditorHtml('<a href="https://example.com" target="_blank">x</a>');
     expect(cleaned).toMatch(/rel="noopener noreferrer"/);

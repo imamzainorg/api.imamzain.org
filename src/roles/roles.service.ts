@@ -1,10 +1,16 @@
 import { ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
+import { AuditService } from '../common/audit/audit.service';
+import { AUDIT_ACTIONS } from '../common/audit/audit.actions';
+import { buildPaginationMeta } from '../common/utils/pagination.util';
 import { AssignPermissionDto, CreateRoleDto, UpdateRoleDto } from './dto/role.dto';
 
 @Injectable()
 export class RolesService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly audit: AuditService,
+  ) {}
 
   async findAll(lang: string | null, page: number, limit: number) {
     const skip = (page - 1) * limit;
@@ -25,7 +31,7 @@ export class RolesService {
       }),
       this.prisma.roles.count(),
     ]);
-    return { message: 'Roles fetched', data: { items: roles, pagination: { page, limit, total, pages: Math.ceil(total / limit) } } };
+    return { message: 'Roles fetched', data: { items: roles, pagination: buildPaginationMeta(page, limit, total) } };
   }
 
   async findOne(id: string, lang: string | null) {
@@ -63,17 +69,13 @@ export class RolesService {
       return created;
     });
 
-    try {
-      await this.prisma.audit_logs.create({
-        data: {
-          user_id: actorId,
-          action: 'ROLE_CREATED',
-          resource_type: 'role',
-          resource_id: role.id,
-          changes: { method: 'POST', path: '/api/v1/roles' },
-        },
-      });
-    } catch {}
+    await this.audit.write({
+      actorId,
+      action: AUDIT_ACTIONS.ROLE_CREATED,
+      resourceType: 'role',
+      resourceId: role.id,
+      changes: { method: 'POST', path: '/api/v1/roles' },
+    });
 
     return { message: 'Role created', data: role };
   }
@@ -105,17 +107,13 @@ export class RolesService {
       return r;
     });
 
-    try {
-      await this.prisma.audit_logs.create({
-        data: {
-          user_id: actorId,
-          action: 'ROLE_UPDATED',
-          resource_type: 'role',
-          resource_id: id,
-          changes: { method: 'PATCH', path: `/api/v1/roles/${id}` },
-        },
-      });
-    } catch {}
+    await this.audit.write({
+      actorId,
+      action: AUDIT_ACTIONS.ROLE_UPDATED,
+      resourceType: 'role',
+      resourceId: id,
+      changes: { method: 'PATCH', path: `/api/v1/roles/${id}` },
+    });
 
     return { message: 'Role updated', data: updated };
   }
@@ -138,17 +136,13 @@ export class RolesService {
       await tx.roles.delete({ where: { id } });
     });
 
-    try {
-      await this.prisma.audit_logs.create({
-        data: {
-          user_id: actorId,
-          action: 'ROLE_DELETED',
-          resource_type: 'role',
-          resource_id: id,
-          changes: { method: 'DELETE', path: `/api/v1/roles/${id}` },
-        },
-      });
-    } catch {}
+    await this.audit.write({
+      actorId,
+      action: AUDIT_ACTIONS.ROLE_DELETED,
+      resourceType: 'role',
+      resourceId: id,
+      changes: { method: 'DELETE', path: `/api/v1/roles/${id}` },
+    });
 
     return { message: 'Role deleted', data: null };
   }
@@ -163,17 +157,13 @@ export class RolesService {
       update: {},
     });
 
-    try {
-      await this.prisma.audit_logs.create({
-        data: {
-          user_id: actorId,
-          action: 'PERMISSION_ASSIGNED_TO_ROLE',
-          resource_type: 'role',
-          resource_id: roleId,
-          changes: { method: 'POST', path: `/api/v1/roles/${roleId}/permissions`, permissionId: dto.permissionId },
-        },
-      });
-    } catch {}
+    await this.audit.write({
+      actorId,
+      action: AUDIT_ACTIONS.PERMISSION_ASSIGNED_TO_ROLE,
+      resourceType: 'role',
+      resourceId: roleId,
+      changes: { method: 'POST', path: `/api/v1/roles/${roleId}/permissions`, permissionId: dto.permissionId },
+    });
 
     return { message: 'Permission assigned', data: null };
   }
@@ -189,17 +179,13 @@ export class RolesService {
       throw new NotFoundException('Permission is not assigned to this role');
     }
 
-    try {
-      await this.prisma.audit_logs.create({
-        data: {
-          user_id: actorId,
-          action: 'PERMISSION_REMOVED_FROM_ROLE',
-          resource_type: 'role',
-          resource_id: roleId,
-          changes: { method: 'DELETE', path: `/api/v1/roles/${roleId}/permissions/${permissionId}`, permissionId },
-        },
-      });
-    } catch {}
+    await this.audit.write({
+      actorId,
+      action: AUDIT_ACTIONS.PERMISSION_REMOVED_FROM_ROLE,
+      resourceType: 'role',
+      resourceId: roleId,
+      changes: { method: 'DELETE', path: `/api/v1/roles/${roleId}/permissions/${permissionId}`, permissionId },
+    });
 
     return { message: 'Permission removed', data: null };
   }
@@ -214,6 +200,6 @@ export class RolesService {
       }),
       this.prisma.permissions.count(),
     ]);
-    return { message: 'Permissions fetched', data: { items: permissions, pagination: { page, limit, total, pages: Math.ceil(total / limit) } } };
+    return { message: 'Permissions fetched', data: { items: permissions, pagination: buildPaginationMeta(page, limit, total) } };
   }
 }

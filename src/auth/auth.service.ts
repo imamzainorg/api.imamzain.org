@@ -1,20 +1,31 @@
 import { Injectable, Logger, UnauthorizedException } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
+import { Prisma } from '@prisma/client';
 import * as bcrypt from 'bcryptjs';
 import * as crypto from 'crypto';
 import { PrismaService } from '../prisma/prisma.service';
+import { AuditService } from '../common/audit/audit.service';
+import { AUDIT_ACTIONS } from '../common/audit/audit.actions';
+import { resolveBcryptRounds } from '../common/utils/bcrypt.util';
 import { ChangePasswordDto, LoginDto, RefreshTokenDto } from './dto/auth.dto';
 
 const REFRESH_TOKEN_TTL_DAYS = 7;
-const DEFAULT_BCRYPT_ROUNDS = 12;
 
-function resolveBcryptRounds(): number {
-  const raw = process.env.BCRYPT_ROUNDS;
-  if (!raw) return DEFAULT_BCRYPT_ROUNDS;
-  const parsed = parseInt(raw, 10);
-  if (Number.isNaN(parsed) || parsed < 4 || parsed > 15) return DEFAULT_BCRYPT_ROUNDS;
-  return parsed;
-}
+type PrismaTxClient = Prisma.TransactionClient | PrismaService;
+
+const USER_WITH_PERMISSIONS_INCLUDE = {
+  user_roles: {
+    include: {
+      roles: {
+        include: { role_permissions: { include: { permissions: true } } },
+      },
+    },
+  },
+} satisfies Prisma.usersInclude;
+
+type UserWithPermissions = Prisma.usersGetPayload<{
+  include: typeof USER_WITH_PERMISSIONS_INCLUDE;
+}>;
 
 @Injectable()
 export class AuthService {
@@ -23,13 +34,14 @@ export class AuthService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly jwtService: JwtService,
+    private readonly audit: AuditService,
   ) {}
 
   private hashToken(raw: string): string {
     return crypto.createHash('sha256').update(raw).digest('hex');
   }
 
-  private async issueRefreshToken(userId: string, tx: PrismaService | any = this.prisma): Promise<string> {
+  private async issueRefreshToken(userId: string, tx: PrismaTxClient = this.prisma): Promise<string> {
     const raw = crypto.randomBytes(40).toString('hex');
     const hash = this.hashToken(raw);
     const expiresAt = new Date();
@@ -42,22 +54,27 @@ export class AuthService {
     return raw;
   }
 
+  private async findUserWithPermissions(
+    tx: PrismaTxClient,
+    where: Prisma.usersWhereInput,
+  ): Promise<UserWithPermissions | null> {
+    return tx.users.findFirst({ where, include: USER_WITH_PERMISSIONS_INCLUDE });
+  }
+
+  private flattenPermissions(user: UserWithPermissions): string[] {
+    const set = new Set<string>();
+    for (const ur of user.user_roles) {
+      for (const rp of ur.roles.role_permissions) {
+        set.add(rp.permissions.name);
+      }
+    }
+    return Array.from(set);
+  }
+
   async login(dto: LoginDto, ip: string, userAgent: string) {
-    const user = await this.prisma.users.findFirst({
-      where: { username: dto.username, deleted_at: null },
-      include: {
-        user_roles: {
-          include: {
-            roles: {
-              include: {
-                role_permissions: {
-                  include: { permissions: true },
-                },
-              },
-            },
-          },
-        },
-      },
+    const user = await this.findUserWithPermissions(this.prisma, {
+      username: dto.username,
+      deleted_at: null,
     });
 
     if (!user) {
@@ -69,33 +86,21 @@ export class AuthService {
       throw new UnauthorizedException('Invalid credentials');
     }
 
-    const permissionSet = new Set<string>();
-    for (const userRole of user.user_roles) {
-      for (const rp of userRole.roles.role_permissions) {
-        permissionSet.add(rp.permissions.name);
-      }
-    }
-    const permissions = Array.from(permissionSet);
+    const permissions = this.flattenPermissions(user);
 
     const payload = { sub: user.id, username: user.username, permissions, token_version: user.token_version };
     const accessToken = this.jwtService.sign(payload);
     const refreshToken = await this.issueRefreshToken(user.id);
 
-    try {
-      await this.prisma.audit_logs.create({
-        data: {
-          user_id: user.id,
-          action: 'USER_LOGIN',
-          resource_type: 'user',
-          resource_id: user.id,
-          ip_address: ip,
-          user_agent: userAgent,
-          changes: { method: 'POST', path: '/api/v1/auth/login' },
-        },
-      });
-    } catch (err) {
-      this.logger.warn(`Failed to write USER_LOGIN audit log: ${err}`);
-    }
+    await this.audit.write({
+      actorId: user.id,
+      action: AUDIT_ACTIONS.USER_LOGIN,
+      resourceType: 'user',
+      resourceId: user.id,
+      ipAddress: ip,
+      userAgent,
+      changes: { method: 'POST', path: '/api/v1/auth/login' },
+    });
 
     const roles = user.user_roles.map((ur) => ur.roles.name);
 
@@ -155,35 +160,21 @@ export class AuthService {
         throw new UnauthorizedException('Refresh token already rotated');
       }
 
-      const fullUser = await tx.users.findUnique({
-        where: { id: stored.user_id },
-        include: {
-          user_roles: {
-            include: {
-              roles: {
-                include: { role_permissions: { include: { permissions: true } } },
-              },
-            },
-          },
-        },
-      });
-
-      const permissionSet = new Set<string>();
-      for (const userRole of fullUser!.user_roles) {
-        for (const rp of userRole.roles.role_permissions) {
-          permissionSet.add(rp.permissions.name);
-        }
+      const fullUser = await this.findUserWithPermissions(tx, { id: stored.user_id });
+      if (!fullUser) {
+        throw new UnauthorizedException('Account is disabled');
       }
-      const permissions = Array.from(permissionSet);
+
+      const permissions = this.flattenPermissions(fullUser);
 
       const payload = {
-        sub: fullUser!.id,
-        username: fullUser!.username,
+        sub: fullUser.id,
+        username: fullUser.username,
         permissions,
-        token_version: fullUser!.token_version,
+        token_version: fullUser.token_version,
       };
       const accessToken = this.jwtService.sign(payload);
-      const newRefreshToken = await this.issueRefreshToken(fullUser!.id, tx);
+      const newRefreshToken = await this.issueRefreshToken(fullUser.id, tx);
 
       return { accessToken, newRefreshToken };
     });
@@ -212,32 +203,10 @@ export class AuthService {
   }
 
   async getMe(userId: string) {
-    const user = await this.prisma.users.findFirst({
-      where: { id: userId, deleted_at: null },
-      include: {
-        user_roles: {
-          include: {
-            roles: {
-              include: {
-                role_permissions: {
-                  include: { permissions: true },
-                },
-              },
-            },
-          },
-        },
-      },
-    });
+    const user = await this.findUserWithPermissions(this.prisma, { id: userId, deleted_at: null });
 
     if (!user) {
       throw new UnauthorizedException();
-    }
-
-    const permissionSet = new Set<string>();
-    for (const userRole of user.user_roles) {
-      for (const rp of userRole.roles.role_permissions) {
-        permissionSet.add(rp.permissions.name);
-      }
     }
 
     return {
@@ -247,7 +216,7 @@ export class AuthService {
         username: user.username,
         created_at: user.created_at,
         roles: user.user_roles.map((ur) => ur.roles.name),
-        permissions: Array.from(permissionSet),
+        permissions: this.flattenPermissions(user),
       },
     };
   }
@@ -282,20 +251,14 @@ export class AuthService {
       });
     });
 
-    try {
-      await this.prisma.audit_logs.create({
-        data: {
-          user_id: userId,
-          action: 'PASSWORD_CHANGED',
-          resource_type: 'user',
-          resource_id: userId,
-          ip_address: ip,
-          changes: { method: 'PATCH', path: '/api/v1/auth/me/password' },
-        },
-      });
-    } catch (err) {
-      this.logger.warn(`Failed to write PASSWORD_CHANGED audit log: ${err}`);
-    }
+    await this.audit.write({
+      actorId: userId,
+      action: AUDIT_ACTIONS.PASSWORD_CHANGED,
+      resourceType: 'user',
+      resourceId: userId,
+      ipAddress: ip,
+      changes: { method: 'PATCH', path: '/api/v1/auth/me/password' },
+    });
 
     return { message: 'Password changed successfully', data: null };
   }

@@ -1,8 +1,13 @@
+// NewsletterService now refuses to boot without a signing secret, so we
+// install a deterministic test value before importing it.
+process.env.NEWSLETTER_UNSUBSCRIBE_SECRET = process.env.NEWSLETTER_UNSUBSCRIBE_SECRET ?? 'test-newsletter-secret';
+
 import { Test, TestingModule } from '@nestjs/testing';
 import { ConflictException, NotFoundException, UnauthorizedException } from '@nestjs/common';
 import * as crypto from 'crypto';
 import { NewsletterService } from './newsletter.service';
 import { PrismaService } from '../prisma/prisma.service';
+import { AuditService } from '../common/audit/audit.service';
 
 const SUB_ID = 'sub-1';
 
@@ -18,7 +23,7 @@ const activeSubscriber = {
 const inactiveSubscriber = { ...activeSubscriber, is_active: false };
 
 function tokenFor(id: string) {
-  const secret = process.env.NEWSLETTER_UNSUBSCRIBE_SECRET ?? process.env.JWT_SECRET ?? '';
+  const secret = process.env.NEWSLETTER_UNSUBSCRIBE_SECRET!;
   return crypto.createHmac('sha256', secret).update(id).digest('hex');
 }
 
@@ -44,6 +49,7 @@ describe('NewsletterService', () => {
             audit_logs: { create: jest.fn().mockResolvedValue({}) },
           },
         },
+        { provide: AuditService, useValue: { write: jest.fn().mockResolvedValue(true) } },
       ],
     }).compile();
 
@@ -89,7 +95,13 @@ describe('NewsletterService', () => {
 
     it('maps a P2002 race into ConflictException', async () => {
       prisma.newsletter_subscribers.findUnique.mockResolvedValue(null);
-      const p2002 = Object.assign(new Error('Unique violation'), { code: 'P2002' });
+      // Construct a real PrismaClientKnownRequestError so the service's
+      // `instanceof` guard matches.
+      const { Prisma } = await import('@prisma/client');
+      const p2002 = new Prisma.PrismaClientKnownRequestError('Unique violation', {
+        code: 'P2002',
+        clientVersion: '0.0.0-test',
+      });
       prisma.newsletter_subscribers.create.mockRejectedValue(p2002);
 
       await expect(service.subscribe({ email: 'user@example.com' })).rejects.toThrow(ConflictException);

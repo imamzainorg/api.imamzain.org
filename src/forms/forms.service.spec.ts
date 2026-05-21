@@ -4,6 +4,7 @@ import { FormsService } from "./forms.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { EmailService } from "../email/email.service";
 import { WhatsappService } from "../whatsapp/whatsapp.service";
+import { AuditService } from "../common/audit/audit.service";
 
 const baseProxyVisit = {
   id: "pv-1",
@@ -69,6 +70,7 @@ describe("FormsService", () => {
             sendProxyVisitCompletion: jest.fn().mockResolvedValue(true),
           },
         },
+        { provide: AuditService, useValue: { write: jest.fn().mockResolvedValue(true) } },
       ],
     }).compile();
 

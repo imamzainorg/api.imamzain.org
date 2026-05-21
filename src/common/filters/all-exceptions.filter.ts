@@ -4,18 +4,24 @@ import {
   ExceptionFilter,
   HttpException,
   HttpStatus,
+  Logger,
 } from "@nestjs/common";
 import { SentryExceptionCaptured } from "@sentry/nestjs";
+import { Prisma } from "@prisma/client";
 import { Request, Response } from "express";
 import * as Sentry from "@sentry/node";
 
+type RequestWithId = Request & { id?: string };
+
 @Catch()
 export class AllExceptionsFilter implements ExceptionFilter {
+  private readonly logger = new Logger(AllExceptionsFilter.name);
+
   @SentryExceptionCaptured()
   catch(exception: unknown, host: ArgumentsHost) {
     const ctx = host.switchToHttp();
     const response = ctx.getResponse<Response>();
-    const request = ctx.getRequest<Request>();
+    const request = ctx.getRequest<RequestWithId>();
 
     let status = HttpStatus.INTERNAL_SERVER_ERROR;
     let message = "Internal server error";
@@ -28,46 +34,47 @@ export class AllExceptionsFilter implements ExceptionFilter {
       if (typeof body === "string") {
         message = body;
       } else if (typeof body === "object" && body !== null) {
-        const bodyObj = body as Record<string, any>;
+        const bodyObj = body as Record<string, unknown>;
         if (Array.isArray(bodyObj.message)) {
-          errors = bodyObj.message;
+          errors = bodyObj.message as string[];
           message = "Validation failed";
+        } else if (typeof bodyObj.message === "string") {
+          message = bodyObj.message;
+        } else if (typeof bodyObj.error === "string") {
+          message = bodyObj.error;
         } else {
-          message = bodyObj.message ?? bodyObj.error ?? "Error";
+          message = "Error";
         }
       }
-    } else {
-      const code = (exception as any)?.code;
-
-      if (code === "P2002") {
+    } else if (exception instanceof Prisma.PrismaClientKnownRequestError) {
+      if (exception.code === "P2002") {
         status = HttpStatus.CONFLICT;
         message = "A record with that value already exists";
-      } else if (code === "P2025") {
+      } else if (exception.code === "P2025") {
         status = HttpStatus.NOT_FOUND;
         message = "Record not found";
-      } else if (code === "P2003") {
+      } else if (exception.code === "P2003") {
         status = HttpStatus.BAD_REQUEST;
         message = "Foreign key constraint failed — referenced record does not exist";
       } else {
-        status = HttpStatus.INTERNAL_SERVER_ERROR;
-        message = "Internal server error";
-
-        console.error("[AllExceptionsFilter]", exception);
-
+        this.logger.error(`Unhandled Prisma error ${exception.code}`, exception.stack);
         if (process.env.NODE_ENV === "production" && process.env.SENTRY_DSN) {
           Sentry.captureException(exception);
         }
       }
+    } else {
+      this.logger.error("Unhandled exception", exception instanceof Error ? exception.stack : String(exception));
+      if (process.env.NODE_ENV === "production" && process.env.SENTRY_DSN) {
+        Sentry.captureException(exception);
+      }
     }
 
-    const requestId = (request as any)?.id ?? undefined;
-
-    const errorBody: Record<string, any> = {
+    const errorBody: Record<string, unknown> = {
       success: false,
       error: message,
       timestamp: new Date().toISOString(),
       path: request.url,
-      requestId,
+      requestId: request.id,
     };
 
     if (errors) {

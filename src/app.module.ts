@@ -6,6 +6,7 @@ import { ThrottlerGuard, ThrottlerModule } from "@nestjs/throttler";
 import { LoggerModule } from "nestjs-pino";
 import { validateEnv } from "./config/env.validation";
 import { PrismaModule } from "./prisma/prisma.module";
+import { AuditModule } from "./common/audit/audit.module";
 import { AuthModule } from "./auth/auth.module";
 import { StorageModule } from "./storage/storage.module";
 import { EmailModule } from "./email/email.module";
@@ -72,6 +73,7 @@ import { SentryModule } from "@sentry/nestjs/setup";
     }),
     ThrottlerModule.forRoot([{ ttl: 900_000, limit: 1_000 }]),
     PrismaModule,
+    AuditModule,
     AuthModule,
     StorageModule,
     EmailModule,

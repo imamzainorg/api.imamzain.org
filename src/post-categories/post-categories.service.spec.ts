@@ -2,6 +2,7 @@ import { Test, TestingModule } from "@nestjs/testing";
 import { ConflictException, NotFoundException } from "@nestjs/common";
 import { PostCategoriesService } from "./post-categories.service";
 import { PrismaService } from "../prisma/prisma.service";
+import { AuditService } from "../common/audit/audit.service";
 
 const baseCategory = { id: "cat-1", deleted_at: null };
 
@@ -40,6 +41,7 @@ describe("PostCategoriesService", () => {
             $transaction: jest.fn(),
           },
         },
+        { provide: AuditService, useValue: { write: jest.fn().mockResolvedValue(true) } },
       ],
     }).compile();
 

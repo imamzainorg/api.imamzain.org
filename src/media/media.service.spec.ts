@@ -4,6 +4,7 @@ import { MediaService } from './media.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { R2Service } from '../storage/r2.service';
 import { ImageVariantService } from './image-variant.service';
+import { AuditService } from '../common/audit/audit.service';
 
 const baseMedia = {
   id: 'media-1',
@@ -86,6 +87,7 @@ describe('MediaService', () => {
             deleteR2Variants: jest.fn().mockResolvedValue(undefined),
           },
         },
+        { provide: AuditService, useValue: { write: jest.fn().mockResolvedValue(true) } },
       ],
     }).compile();
 

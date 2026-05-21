@@ -1,21 +1,26 @@
 import { BadRequestException, ConflictException, Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
+import { AuditService } from '../common/audit/audit.service';
+import { AUDIT_ACTIONS } from '../common/audit/audit.actions';
 import { softDeleteSuffix, stripSoftDeleteSuffix } from '../common/utils/soft-delete.util';
 import { resolveTranslation } from '../common/utils/translation.util';
+import { buildPaginationMeta, resolvePagination } from '../common/utils/pagination.util';
 import { BookQueryDto, CreateBookDto, UpdateBookDto } from './dto/book.dto';
 
 @Injectable()
 export class BooksService {
   private readonly logger = new Logger(BooksService.name);
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly audit: AuditService,
+  ) {}
 
   async findAll(query: BookQueryDto, lang: string | null) {
-    const page = query.page ?? 1;
-    const limit = query.limit ?? 20;
-    const skip = (page - 1) * limit;
+    const { page, limit, skip } = resolvePagination(query);
 
-    const where: any = { deleted_at: null };
+    const where: Prisma.booksWhereInput = { deleted_at: null };
     if (query.category_id) where.category_id = query.category_id;
 
     if (query.search) {
@@ -40,7 +45,7 @@ export class BooksService {
     ]);
 
     const mapped = items.map((b) => ({ ...b, translation: resolveTranslation(b.book_translations, lang) }));
-    return { message: 'Books fetched', data: { items: mapped, pagination: { page, limit, total, pages: Math.ceil(total / limit) } } };
+    return { message: 'Books fetched', data: { items: mapped, pagination: buildPaginationMeta(page, limit, total) } };
   }
 
   async findOne(id: string, lang: string | null) {
@@ -58,9 +63,11 @@ export class BooksService {
   }
 
   async trackView(id: string) {
-    const book = await this.prisma.books.findFirst({ where: { id, deleted_at: null } });
-    if (!book) throw new NotFoundException('Book not found');
-    await this.prisma.books.update({ where: { id }, data: { views: { increment: 1 } } });
+    const result = await this.prisma.books.updateMany({
+      where: { id, deleted_at: null },
+      data: { views: { increment: 1 } },
+    });
+    if (result.count === 0) throw new NotFoundException('Book not found');
     return { message: 'View tracked', data: null };
   }
 
@@ -109,11 +116,13 @@ export class BooksService {
       return created;
     });
 
-    try {
-      await this.prisma.audit_logs.create({
-        data: { user_id: userId, action: 'BOOK_CREATED', resource_type: 'book', resource_id: book.id, changes: { method: 'POST', path: '/api/v1/books' } },
-      });
-    } catch {}
+    await this.audit.write({
+      actorId: userId,
+      action: AUDIT_ACTIONS.BOOK_CREATED,
+      resourceType: 'book',
+      resourceId: book.id,
+      changes: { method: 'POST', path: '/api/v1/books' },
+    });
 
     return { message: 'Book created', data: book };
   }
@@ -140,14 +149,42 @@ export class BooksService {
     }
 
     await this.prisma.$transaction(async (tx) => {
-      const { translations, ...rest } = dto;
-      await tx.books.update({ where: { id }, data: { ...rest, updated_at: new Date() } });
-      if (translations) {
-        for (const t of translations) {
+      // Build an explicit Prisma input — avoids spreading attacker-controlled
+      // DTO fields into a `data` payload that could include relation IDs we
+      // didn't intend to update.
+      const updateData: Prisma.booksUpdateInput = { updated_at: new Date() };
+      if (dto.category_id !== undefined) updateData.book_categories = { connect: { id: dto.category_id } };
+      if (dto.cover_image_id !== undefined) updateData.media = { connect: { id: dto.cover_image_id } };
+      if (dto.isbn !== undefined) updateData.isbn = dto.isbn;
+      if (dto.pages !== undefined) updateData.pages = dto.pages;
+      if (dto.publish_year !== undefined) updateData.publish_year = dto.publish_year;
+      if (dto.part_number !== undefined) updateData.part_number = dto.part_number;
+      if (dto.parts !== undefined) updateData.parts = dto.parts;
+
+      await tx.books.update({ where: { id }, data: updateData });
+
+      if (dto.translations) {
+        for (const t of dto.translations) {
           await tx.book_translations.upsert({
             where: { book_id_lang: { book_id: id, lang: t.lang } },
-            create: { book_id: id, lang: t.lang, title: t.title, author: t.author ?? null, publisher: t.publisher ?? null, description: t.description ?? null, series: t.series ?? null, is_default: t.is_default ?? false },
-            update: { title: t.title, author: t.author ?? null, publisher: t.publisher ?? null, description: t.description ?? null, series: t.series ?? null, is_default: t.is_default ?? false },
+            create: {
+              book_id: id,
+              lang: t.lang,
+              title: t.title,
+              author: t.author ?? null,
+              publisher: t.publisher ?? null,
+              description: t.description ?? null,
+              series: t.series ?? null,
+              is_default: t.is_default ?? false,
+            },
+            update: {
+              title: t.title,
+              author: t.author ?? null,
+              publisher: t.publisher ?? null,
+              description: t.description ?? null,
+              series: t.series ?? null,
+              is_default: t.is_default ?? false,
+            },
           });
         }
 
@@ -158,11 +195,13 @@ export class BooksService {
       }
     });
 
-    try {
-      await this.prisma.audit_logs.create({
-        data: { user_id: userId, action: 'BOOK_UPDATED', resource_type: 'book', resource_id: id, changes: { method: 'PATCH', path: `/api/v1/books/${id}` } },
-      });
-    } catch {}
+    await this.audit.write({
+      actorId: userId,
+      action: AUDIT_ACTIONS.BOOK_UPDATED,
+      resourceType: 'book',
+      resourceId: id,
+      changes: { method: 'PATCH', path: `/api/v1/books/${id}` },
+    });
 
     return { message: 'Book updated', data: null };
   }
@@ -170,7 +209,7 @@ export class BooksService {
   /** List soft-deleted books (admin trash view). */
   async findTrash(page: number, limit: number) {
     const skip = (page - 1) * limit;
-    const where = { deleted_at: { not: null } };
+    const where: Prisma.booksWhereInput = { deleted_at: { not: null } };
 
     const [items, total] = await Promise.all([
       this.prisma.books.findMany({
@@ -195,7 +234,7 @@ export class BooksService {
 
     return {
       message: 'Trash fetched',
-      data: { items: mapped, pagination: { page, limit, total, pages: Math.ceil(total / limit) } },
+      data: { items: mapped, pagination: buildPaginationMeta(page, limit, total) },
     };
   }
 
@@ -232,19 +271,13 @@ export class BooksService {
       },
     });
 
-    try {
-      await this.prisma.audit_logs.create({
-        data: {
-          user_id: userId,
-          action: 'BOOK_RESTORED',
-          resource_type: 'book',
-          resource_id: id,
-          changes: { method: 'POST', path: `/api/v1/books/${id}/restore` },
-        },
-      });
-    } catch (err) {
-      this.logger.warn(`Failed to write BOOK_RESTORED audit: ${err}`);
-    }
+    await this.audit.write({
+      actorId: userId,
+      action: AUDIT_ACTIONS.BOOK_RESTORED,
+      resourceType: 'book',
+      resourceId: id,
+      changes: { method: 'POST', path: `/api/v1/books/${id}/restore` },
+    });
 
     return { message: 'Book restored', data: null };
   }
@@ -264,11 +297,13 @@ export class BooksService {
       data: { deleted_at: deletedAt, ...isbnUpdate },
     });
 
-    try {
-      await this.prisma.audit_logs.create({
-        data: { user_id: userId, action: 'BOOK_DELETED', resource_type: 'book', resource_id: id, changes: { method: 'DELETE', path: `/api/v1/books/${id}` } },
-      });
-    } catch {}
+    await this.audit.write({
+      actorId: userId,
+      action: AUDIT_ACTIONS.BOOK_DELETED,
+      resourceType: 'book',
+      resourceId: id,
+      changes: { method: 'DELETE', path: `/api/v1/books/${id}` },
+    });
 
     return { message: 'Book deleted', data: null };
   }

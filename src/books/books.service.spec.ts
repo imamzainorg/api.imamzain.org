@@ -6,6 +6,7 @@ import {
 } from "@nestjs/common";
 import { BooksService } from "./books.service";
 import { PrismaService } from "../prisma/prisma.service";
+import { AuditService } from "../common/audit/audit.service";
 
 const baseBook = {
   id: "book-1",
@@ -57,6 +58,7 @@ describe("BooksService", () => {
             $transaction: jest.fn(),
           },
         },
+        { provide: AuditService, useValue: { write: jest.fn().mockResolvedValue(true) } },
       ],
     }).compile();
 

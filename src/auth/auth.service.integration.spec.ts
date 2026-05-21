@@ -15,6 +15,7 @@ import { UnauthorizedException } from '@nestjs/common'
 import { JwtService } from '@nestjs/jwt'
 import { AuthService } from './auth.service'
 import { PrismaService } from '../prisma/prisma.service'
+import { AuditService } from '../common/audit/audit.service'
 import { prisma, cleanDatabase } from '../../test/db-helpers'
 
 const describeIfDb = process.env.DATABASE_TEST_URL ? describe : describe.skip
@@ -31,7 +32,8 @@ describeIfDb('AuthService (integration)', () => {
             secret: process.env.JWT_SECRET ?? 'test-secret',
             signOptions: { expiresIn: '1h' },
         })
-        service = new AuthService(prisma as unknown as PrismaService, jwtService)
+        const audit = new AuditService(prisma as unknown as PrismaService)
+        service = new AuthService(prisma as unknown as PrismaService, jwtService, audit)
     })
 
     // ─── login ───────────────────────────────────────────────────────────────

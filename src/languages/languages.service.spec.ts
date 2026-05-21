@@ -2,6 +2,7 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { NotFoundException } from '@nestjs/common';
 import { LanguagesService } from './languages.service';
 import { PrismaService } from '../prisma/prisma.service';
+import { AuditService } from '../common/audit/audit.service';
 
 const baseLang = {
   code: 'ar',
@@ -14,8 +15,10 @@ const baseLang = {
 describe('LanguagesService', () => {
   let service: LanguagesService;
   let prisma: any;
+  let audit: { write: jest.Mock };
 
   beforeEach(async () => {
+    audit = { write: jest.fn().mockResolvedValue(true) };
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         LanguagesService,
@@ -31,6 +34,7 @@ describe('LanguagesService', () => {
             audit_logs: { create: jest.fn().mockResolvedValue({}) },
           },
         },
+        { provide: AuditService, useValue: audit },
       ],
     }).compile();
 
@@ -71,7 +75,7 @@ describe('LanguagesService', () => {
   });
 
   describe('create', () => {
-    it('creates language and logs audit with resource_id null (not a UUID)', async () => {
+    it('creates language and logs audit without a resource_id (key is not a UUID)', async () => {
       prisma.languages.create.mockResolvedValue(baseLang);
 
       const result = await service.create(
@@ -79,11 +83,15 @@ describe('LanguagesService', () => {
         'actor-1',
       );
 
-      expect(prisma.audit_logs.create).toHaveBeenCalledWith(
+      expect(audit.write).toHaveBeenCalledWith(
         expect.objectContaining({
-          data: expect.objectContaining({ resource_id: null }),
+          action: 'LANGUAGE_CREATED',
+          resourceType: 'language',
         }),
       );
+      // No resourceId supplied — AuditService persists null in that case.
+      const call = audit.write.mock.calls[0][0];
+      expect(call.resourceId).toBeUndefined();
       expect(result.data.code).toBe('ar');
     });
 
@@ -99,17 +107,20 @@ describe('LanguagesService', () => {
   });
 
   describe('update', () => {
-    it('updates language and logs audit with resource_id null', async () => {
+    it('updates language and logs audit without a resource_id', async () => {
       prisma.languages.findFirst.mockResolvedValue(baseLang);
       prisma.languages.update.mockResolvedValue({ ...baseLang, is_active: false });
 
       const result = await service.update('ar', { is_active: false }, 'actor-1');
 
-      expect(prisma.audit_logs.create).toHaveBeenCalledWith(
+      expect(audit.write).toHaveBeenCalledWith(
         expect.objectContaining({
-          data: expect.objectContaining({ resource_id: null }),
+          action: 'LANGUAGE_UPDATED',
+          resourceType: 'language',
         }),
       );
+      const call = audit.write.mock.calls[0][0];
+      expect(call.resourceId).toBeUndefined();
       expect(result.message).toBe('Language updated');
     });
 

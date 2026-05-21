@@ -58,6 +58,21 @@ const TIPTAP_ALLOWED_TAGS = [
 ];
 
 /**
+ * Allowlist of `data:` MIME types permitted inside <img src>. Restricting
+ * to image MIMEs at the sanitizer layer blocks `data:text/html;base64,...`
+ * payloads that would otherwise be live HTML embedded in the article body.
+ */
+const ALLOWED_DATA_IMG_MIMES = new Set([
+  'image/png',
+  'image/jpeg',
+  'image/gif',
+  'image/webp',
+  'image/svg+xml',
+]);
+
+const DATA_URL_MIME_RE = /^data:([^;,]+)[;,]/i;
+
+/**
  * Sanitise HTML produced by the rich-text editor.
  * Returns the cleaned HTML; never throws on malformed input.
  */
@@ -75,13 +90,28 @@ export function sanitizeEditorHtml(html: string | null | undefined): string {
     },
     allowedSchemes: ['http', 'https', 'mailto', 'tel'],
     allowedSchemesByTag: {
-      // data: is permitted on <img> only, restricted to image MIMEs by the
-      // class-validator pattern on the editor side; the public site can
-      // still display embedded thumbnails this way.
+      // data: is permitted on <img> only; the per-attribute filter below
+      // pins the MIME so `data:text/html;base64,...` is rejected.
       img: ['http', 'https', 'data'],
     },
     allowedSchemesAppliedToAttributes: ['href', 'src'],
     allowProtocolRelative: true,
+    exclusiveFilter: (frame) => {
+      // Drop <img> elements whose data: URL MIME is not in the image
+      // allowlist. sanitize-html's scheme allowlist alone accepts any MIME
+      // after the `data:` prefix, so we filter here as a second gate.
+      if (frame.tag === 'img') {
+        const src = frame.attribs?.src;
+        if (typeof src === 'string' && src.toLowerCase().startsWith('data:')) {
+          const match = DATA_URL_MIME_RE.exec(src);
+          const mime = match?.[1]?.trim().toLowerCase();
+          if (!mime || !ALLOWED_DATA_IMG_MIMES.has(mime)) {
+            return true; // drop
+          }
+        }
+      }
+      return false;
+    },
     transformTags: {
       // Pair target=_blank with rel=noopener noreferrer to block reverse
       // tab-nabbing on whatever surface renders the body.

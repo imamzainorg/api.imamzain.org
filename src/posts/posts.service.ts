@@ -1,11 +1,22 @@
 import { BadRequestException, ConflictException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { Cron, CronExpression } from '@nestjs/schedule';
+import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
+import { AuditService } from '../common/audit/audit.service';
+import { AUDIT_ACTIONS } from '../common/audit/audit.actions';
 import { sanitizeEditorHtml } from '../common/utils/html-sanitize.util';
 import { readingTimeMinutes } from '../common/utils/reading-time.util';
 import { softDeleteSuffix, stripSoftDeleteSuffix } from '../common/utils/soft-delete.util';
 import { resolveTranslation } from '../common/utils/translation.util';
+import { buildPaginationMeta, resolvePagination } from '../common/utils/pagination.util';
 import { BulkIdsDto, BulkPublishDto, CreatePostDto, PostQueryDto, PostSort, PostStatus, TogglePublishDto, UpdatePostDto } from './dto/post.dto';
+
+const POST_DETAIL_INCLUDE = {
+  post_translations: true,
+  post_categories: { include: { post_category_translations: true } },
+  media: true,
+  post_attachments: { include: { media: true }, orderBy: { display_order: 'asc' } },
+} satisfies Prisma.postsInclude;
 
 /** Decorate a translation row with the derived `reading_time_minutes`. */
 function withReadingTime<T extends { body?: string | null }>(t: T): T & { reading_time_minutes: number } {
@@ -16,14 +27,15 @@ function withReadingTime<T extends { body?: string | null }>(t: T): T & { readin
 export class PostsService {
   private readonly logger = new Logger(PostsService.name);
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly audit: AuditService,
+  ) {}
 
   async findAll(query: PostQueryDto, lang: string | null, isAdmin = false) {
-    const page = query.page ?? 1;
-    const limit = query.limit ?? 20;
-    const skip = (page - 1) * limit;
+    const { page, limit, skip } = resolvePagination(query);
 
-    const where: any = { deleted_at: null };
+    const where: Prisma.postsWhereInput = { deleted_at: null };
     if (!isAdmin) {
       where.is_published = true;
     } else if (query.status && query.status !== PostStatus.All) {
@@ -62,6 +74,11 @@ export class PostsService {
       };
     }
 
+    const orderBy: Prisma.postsOrderByWithRelationInput[] =
+      query.sort === PostSort.Views
+        ? [{ views: 'desc' }, { id: 'asc' }]
+        : [{ published_at: 'desc' }, { created_at: 'desc' }, { id: 'asc' }];
+
     const [items, total] = await Promise.all([
       this.prisma.posts.findMany({
         where,
@@ -75,10 +92,7 @@ export class PostsService {
             orderBy: { display_order: 'asc' },
           },
         },
-        orderBy:
-          query.sort === PostSort.Views
-            ? [{ views: 'desc' }, { id: 'asc' }]
-            : [{ published_at: 'desc' }, { created_at: 'desc' }, { id: 'asc' }],
+        orderBy,
         skip,
         take: limit,
       }),
@@ -96,23 +110,15 @@ export class PostsService {
 
     return {
       message: 'Posts fetched',
-      data: { items: mapped, pagination: { page, limit, total, pages: Math.ceil(total / limit) } },
+      data: { items: mapped, pagination: buildPaginationMeta(page, limit, total) },
     };
   }
 
   async findOne(id: string, lang: string | null, isAdmin = false) {
-    const where: any = { id, deleted_at: null };
+    const where: Prisma.postsWhereInput = { id, deleted_at: null };
     if (!isAdmin) where.is_published = true;
 
-    const post = await this.prisma.posts.findFirst({
-      where,
-      include: {
-        post_translations: true,
-        post_categories: { include: { post_category_translations: true } },
-        media: true,
-        post_attachments: { include: { media: true }, orderBy: { display_order: 'asc' } },
-      },
-    });
+    const post = await this.prisma.posts.findFirst({ where, include: POST_DETAIL_INCLUDE });
 
     if (!post) throw new NotFoundException('Post not found');
 
@@ -125,13 +131,30 @@ export class PostsService {
   }
 
   async findBySlug(slug: string, lang: string | null) {
-    const where: any = { slug, posts: { deleted_at: null, is_published: true } };
-    if (lang) where.lang = lang;
+    // Single query: join through post_translations and pull the post + all
+    // relations in one round trip. The previous implementation looked the
+    // translation up, then re-called findOne() — two queries for the same
+    // post.
+    const translationWhere: Prisma.post_translationsWhereInput = {
+      slug,
+      posts: { deleted_at: null, is_published: true },
+    };
+    if (lang) translationWhere.lang = lang;
 
-    const translation = await this.prisma.post_translations.findFirst({ where });
-    if (!translation) throw new NotFoundException('Post not found');
+    const translation = await this.prisma.post_translations.findFirst({
+      where: translationWhere,
+      include: { posts: { include: POST_DETAIL_INCLUDE } },
+    });
 
-    return this.findOne(translation.post_id, lang);
+    if (!translation || !translation.posts) throw new NotFoundException('Post not found');
+
+    const post = translation.posts;
+    const decorated = post.post_translations.map(withReadingTime);
+
+    return {
+      message: 'Post fetched',
+      data: { ...post, post_translations: decorated, translation: resolveTranslation(decorated, lang) },
+    };
   }
 
   async create(dto: CreatePostDto, userId: string) {
@@ -213,17 +236,13 @@ export class PostsService {
       return created;
     });
 
-    try {
-      await this.prisma.audit_logs.create({
-        data: {
-          user_id: userId,
-          action: 'POST_CREATED',
-          resource_type: 'post',
-          resource_id: post.id,
-          changes: { method: 'POST', path: '/api/v1/posts' },
-        },
-      });
-    } catch {}
+    await this.audit.write({
+      actorId: userId,
+      action: AUDIT_ACTIONS.POST_CREATED,
+      resourceType: 'post',
+      resourceId: post.id,
+      changes: { method: 'POST', path: '/api/v1/posts' },
+    });
 
     return { message: 'Post created', data: post };
   }
@@ -257,9 +276,13 @@ export class PostsService {
     }
 
     await this.prisma.$transaction(async (tx) => {
-      const updateData: any = { updated_at: new Date() };
-      if (dto.category_id !== undefined) updateData.category_id = dto.category_id;
-      if (dto.cover_image_id !== undefined) updateData.cover_image_id = dto.cover_image_id;
+      const updateData: Prisma.postsUpdateInput = { updated_at: new Date() };
+      if (dto.category_id !== undefined) updateData.post_categories = { connect: { id: dto.category_id } };
+      if (dto.cover_image_id !== undefined) {
+        updateData.media = dto.cover_image_id
+          ? { connect: { id: dto.cover_image_id } }
+          : { disconnect: true };
+      }
       if (dto.is_published !== undefined) updateData.is_published = dto.is_published;
       if (dto.is_featured !== undefined) updateData.is_featured = dto.is_featured;
       if (dto.published_at !== undefined) {
@@ -325,17 +348,13 @@ export class PostsService {
       }
     });
 
-    try {
-      await this.prisma.audit_logs.create({
-        data: {
-          user_id: userId,
-          action: 'POST_UPDATED',
-          resource_type: 'post',
-          resource_id: id,
-          changes: { method: 'PATCH', path: `/api/v1/posts/${id}` },
-        },
-      });
-    } catch {}
+    await this.audit.write({
+      actorId: userId,
+      action: AUDIT_ACTIONS.POST_UPDATED,
+      resourceType: 'post',
+      resourceId: id,
+      changes: { method: 'PATCH', path: `/api/v1/posts/${id}` },
+    });
 
     return { message: 'Post updated', data: null };
   }
@@ -344,26 +363,21 @@ export class PostsService {
     const post = await this.prisma.posts.findFirst({ where: { id, deleted_at: null } });
     if (!post) throw new NotFoundException('Post not found');
 
-    const updateData: any = { is_published: dto.is_published, updated_at: new Date() };
+    const updateData: Prisma.postsUpdateInput = { is_published: dto.is_published, updated_at: new Date() };
     if (dto.is_published && !post.published_at) {
       updateData.published_at = new Date();
     }
 
     await this.prisma.posts.update({ where: { id }, data: updateData });
 
-    const action = dto.is_published ? 'POST_PUBLISHED' : 'POST_UNPUBLISHED';
-
-    try {
-      await this.prisma.audit_logs.create({
-        data: {
-          user_id: userId,
-          action,
-          resource_type: 'post',
-          resource_id: id,
-          changes: { method: 'PATCH', path: `/api/v1/posts/${id}/publish`, is_published: dto.is_published },
-        },
-      });
-    } catch {}
+    const action = dto.is_published ? AUDIT_ACTIONS.POST_PUBLISHED : AUDIT_ACTIONS.POST_UNPUBLISHED;
+    await this.audit.write({
+      actorId: userId,
+      action,
+      resourceType: 'post',
+      resourceId: id,
+      changes: { method: 'PATCH', path: `/api/v1/posts/${id}/publish`, is_published: dto.is_published },
+    });
 
     return { message: `Post ${dto.is_published ? 'published' : 'unpublished'}`, data: null };
   }
@@ -398,31 +412,36 @@ export class PostsService {
 
     for (const { id } of due) {
       try {
-        await this.prisma.$transaction([
-          this.prisma.posts.update({
-            where: { id },
-            data: { is_published: true, updated_at: now },
-          }),
-          this.prisma.audit_logs.create({
-            data: {
-              user_id: null,
-              action: 'POST_PUBLISHED',
-              resource_type: 'post',
-              resource_id: id,
-              changes: { scheduled: true, by: 'cron' },
-            },
-          }),
-        ]);
+        await this.prisma.posts.update({
+          where: { id },
+          data: { is_published: true, updated_at: now },
+        });
       } catch (err) {
         this.logger.warn(`Scheduled publish failed for post ${id}: ${err}`);
+        continue;
       }
+
+      await this.audit.write({
+        actorId: null,
+        action: AUDIT_ACTIONS.POST_PUBLISHED,
+        resourceType: 'post',
+        resourceId: id,
+        changes: { scheduled: true, by: 'cron' },
+      });
     }
   }
 
+  /**
+   * Increment the view counter for a published post. Single conditional
+   * update — no SELECT-then-UPDATE race that would let a soft-delete between
+   * the two queries still bump the counter.
+   */
   async trackView(id: string) {
-    const post = await this.prisma.posts.findFirst({ where: { id, deleted_at: null, is_published: true } });
-    if (!post) throw new NotFoundException('Post not found');
-    await this.prisma.posts.update({ where: { id }, data: { views: { increment: 1 } } });
+    const result = await this.prisma.posts.updateMany({
+      where: { id, deleted_at: null, is_published: true },
+      data: { views: { increment: 1 } },
+    });
+    if (result.count === 0) throw new NotFoundException('Post not found');
     return { message: 'View tracked', data: null };
   }
 
@@ -433,7 +452,7 @@ export class PostsService {
    */
   async findTrash(page: number, limit: number) {
     const skip = (page - 1) * limit;
-    const where = { deleted_at: { not: null } };
+    const where: Prisma.postsWhereInput = { deleted_at: { not: null } };
 
     const [items, total] = await Promise.all([
       this.prisma.posts.findMany({
@@ -461,7 +480,7 @@ export class PostsService {
 
     return {
       message: 'Trash fetched',
-      data: { items: mapped, pagination: { page, limit, total, pages: Math.ceil(total / limit) } },
+      data: { items: mapped, pagination: buildPaginationMeta(page, limit, total) },
     };
   }
 
@@ -510,19 +529,13 @@ export class PostsService {
       });
     });
 
-    try {
-      await this.prisma.audit_logs.create({
-        data: {
-          user_id: userId,
-          action: 'POST_RESTORED',
-          resource_type: 'post',
-          resource_id: id,
-          changes: { method: 'POST', path: `/api/v1/posts/${id}/restore` },
-        },
-      });
-    } catch (err) {
-      this.logger.warn(`Failed to write POST_RESTORED audit: ${err}`);
-    }
+    await this.audit.write({
+      actorId: userId,
+      action: AUDIT_ACTIONS.POST_RESTORED,
+      resourceType: 'post',
+      resourceId: id,
+      changes: { method: 'POST', path: `/api/v1/posts/${id}/restore` },
+    });
 
     return { message: 'Post restored', data: null };
   }
@@ -562,24 +575,25 @@ export class PostsService {
     }
 
     const now = new Date();
-    const action = dto.is_published ? 'POST_PUBLISHED' : 'POST_UNPUBLISHED';
+    const action = dto.is_published ? AUDIT_ACTIONS.POST_PUBLISHED : AUDIT_ACTIONS.POST_UNPUBLISHED;
 
     await this.prisma.$transaction(async (tx) => {
       for (const t of targets) {
-        const data: any = { is_published: dto.is_published, updated_at: now };
+        const data: Prisma.postsUpdateInput = { is_published: dto.is_published, updated_at: now };
         if (dto.is_published && !t.published_at) data.published_at = now;
         await tx.posts.update({ where: { id: t.id }, data });
-        await tx.audit_logs.create({
-          data: {
-            user_id: userId,
-            action,
-            resource_type: 'post',
-            resource_id: t.id,
-            changes: { method: 'POST', path: '/api/v1/posts/bulk/publish', is_published: dto.is_published, bulk: true },
-          },
-        });
       }
     });
+
+    for (const t of targets) {
+      await this.audit.write({
+        actorId: userId,
+        action,
+        resourceType: 'post',
+        resourceId: t.id,
+        changes: { method: 'POST', path: '/api/v1/posts/bulk/publish', is_published: dto.is_published, bulk: true },
+      });
+    }
 
     return {
       message: `${targets.length} post(s) ${dto.is_published ? 'published' : 'unpublished'}`,
@@ -624,17 +638,18 @@ export class PostsService {
           });
         }
         await tx.posts.update({ where: { id }, data: { deleted_at: deletedAt } });
-        await tx.audit_logs.create({
-          data: {
-            user_id: userId,
-            action: 'POST_DELETED',
-            resource_type: 'post',
-            resource_id: id,
-            changes: { method: 'POST', path: '/api/v1/posts/bulk/delete', bulk: true },
-          },
-        });
       }
     });
+
+    for (const id of targetIds) {
+      await this.audit.write({
+        actorId: userId,
+        action: AUDIT_ACTIONS.POST_DELETED,
+        resourceType: 'post',
+        resourceId: id,
+        changes: { method: 'POST', path: '/api/v1/posts/bulk/delete', bulk: true },
+      });
+    }
 
     return {
       message: `${targetIds.length} post(s) deleted`,
@@ -664,17 +679,13 @@ export class PostsService {
       await tx.posts.update({ where: { id }, data: { deleted_at: deletedAt } });
     });
 
-    try {
-      await this.prisma.audit_logs.create({
-        data: {
-          user_id: userId,
-          action: 'POST_DELETED',
-          resource_type: 'post',
-          resource_id: id,
-          changes: { method: 'DELETE', path: `/api/v1/posts/${id}` },
-        },
-      });
-    } catch {}
+    await this.audit.write({
+      actorId: userId,
+      action: AUDIT_ACTIONS.POST_DELETED,
+      resourceType: 'post',
+      resourceId: id,
+      changes: { method: 'DELETE', path: `/api/v1/posts/${id}` },
+    });
 
     return { message: 'Post deleted', data: null };
   }

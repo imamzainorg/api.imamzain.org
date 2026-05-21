@@ -1,4 +1,5 @@
 import { Injectable, NotFoundException } from "@nestjs/common";
+import { Prisma } from "@prisma/client";
 import {
   IsBoolean,
   IsOptional,
@@ -7,6 +8,8 @@ import {
   MinLength,
 } from "class-validator";
 import { PrismaService } from "../prisma/prisma.service";
+import { AuditService } from "../common/audit/audit.service";
+import { AUDIT_ACTIONS } from "../common/audit/audit.actions";
 
 export class CreateLanguageDto {
   @IsString()
@@ -43,10 +46,13 @@ export class UpdateLanguageDto {
 
 @Injectable()
 export class LanguagesService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly audit: AuditService,
+  ) {}
 
   async findAll(includeInactive = false) {
-    const where: any = { deleted_at: null };
+    const where: Prisma.languagesWhereInput = { deleted_at: null };
     if (!includeInactive) where.is_active = true;
 
     const languages = await this.prisma.languages.findMany({ where });
@@ -63,21 +69,12 @@ export class LanguagesService {
       },
     });
 
-    try {
-      await this.prisma.audit_logs.create({
-        data: {
-          user_id: actorId,
-          action: "LANGUAGE_CREATED",
-          resource_type: "language",
-          resource_id: null,
-          changes: {
-            method: "POST",
-            path: "/api/v1/languages",
-            code: language.code,
-          },
-        },
-      });
-    } catch {}
+    await this.audit.write({
+      actorId,
+      action: AUDIT_ACTIONS.LANGUAGE_CREATED,
+      resourceType: "language",
+      changes: { method: "POST", path: "/api/v1/languages", code: language.code },
+    });
 
     return { message: "Language created", data: language };
   }
@@ -88,22 +85,24 @@ export class LanguagesService {
     });
     if (!existing) throw new NotFoundException("Language not found");
 
+    // Explicit field allowlist — DTO additions can't silently leak into
+    // the row.
+    const updateData: Prisma.languagesUpdateInput = {};
+    if (dto.name !== undefined) updateData.name = dto.name;
+    if (dto.native_name !== undefined) updateData.native_name = dto.native_name;
+    if (dto.is_active !== undefined) updateData.is_active = dto.is_active;
+
     const updated = await this.prisma.languages.update({
       where: { code },
-      data: dto,
+      data: updateData,
     });
 
-    try {
-      await this.prisma.audit_logs.create({
-        data: {
-          user_id: actorId,
-          action: "LANGUAGE_UPDATED",
-          resource_type: "language",
-          resource_id: null,
-          changes: { method: "PATCH", path: `/api/v1/languages/${code}`, code },
-        },
-      });
-    } catch {}
+    await this.audit.write({
+      actorId,
+      action: AUDIT_ACTIONS.LANGUAGE_UPDATED,
+      resourceType: "language",
+      changes: { method: "PATCH", path: `/api/v1/languages/${code}`, code },
+    });
 
     return { message: "Language updated", data: updated };
   }
@@ -119,21 +118,12 @@ export class LanguagesService {
       data: { deleted_at: new Date() },
     });
 
-    try {
-      await this.prisma.audit_logs.create({
-        data: {
-          user_id: actorId,
-          action: "LANGUAGE_DELETED",
-          resource_type: "language",
-          resource_id: null,
-          changes: {
-            method: "DELETE",
-            path: `/api/v1/languages/${code}`,
-            code,
-          },
-        },
-      });
-    } catch {}
+    await this.audit.write({
+      actorId,
+      action: AUDIT_ACTIONS.LANGUAGE_DELETED,
+      resourceType: "language",
+      changes: { method: "DELETE", path: `/api/v1/languages/${code}`, code },
+    });
 
     return { message: "Language deleted", data: null };
   }

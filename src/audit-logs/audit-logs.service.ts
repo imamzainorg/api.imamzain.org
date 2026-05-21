@@ -1,5 +1,7 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
+import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
+import { buildPaginationMeta } from '../common/utils/pagination.util';
 
 @Injectable()
 export class AuditLogsService {
@@ -28,15 +30,16 @@ export class AuditLogsService {
   ) {
     const skip = (page - 1) * limit;
 
-    const where: any = {};
+    const where: Prisma.audit_logsWhereInput = {};
     if (filters.userId) where.user_id = filters.userId;
     if (filters.action) where.action = filters.action;
     if (filters.resourceType) where.resource_type = filters.resourceType;
     if (filters.resourceId) where.resource_id = filters.resourceId;
     if (filters.from || filters.to) {
-      where.created_at = {};
-      if (filters.from) where.created_at.gte = new Date(filters.from);
-      if (filters.to) where.created_at.lte = new Date(filters.to);
+      const createdAt: Prisma.DateTimeFilter = {};
+      if (filters.from) createdAt.gte = new Date(filters.from);
+      if (filters.to) createdAt.lte = new Date(filters.to);
+      where.created_at = createdAt;
     }
 
     const [items, total] = await Promise.all([
@@ -52,7 +55,7 @@ export class AuditLogsService {
 
     return {
       message: 'Audit logs fetched',
-      data: { items, pagination: { page, limit, total, pages: Math.ceil(total / limit) } },
+      data: { items, pagination: buildPaginationMeta(page, limit, total) },
     };
   }
 }

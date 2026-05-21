@@ -1166,7 +1166,130 @@ These are either runtime-compatible or invisible to the CMS:
 
 ---
 
-## 13. Open follow-ups (still not in this push)
+## 13. Round 9 (this push) — engineering cleanup, no API surface change
+
+This push is an internal de-slop and refactor: the audit-log writer was
+centralised into a single `AuditService`, ~70 inlined call sites + 38
+empty `try { ... } catch {}` blocks were removed, and a layer of typing
+was put on top of Prisma `where` / `data` payloads. **No route URL, no
+request DTO, no response envelope, no status code, no audit-log
+`action` string, and no audit `changes` field changed.** Read the
+sections below only if the listed item is something your client
+currently exercises.
+
+### 13.1 Rate limits added — minor but observable
+
+- `PATCH /api/v1/auth/me/password` is now rate-limited per IP:
+  **5 requests / 15 minutes**. Was previously only under the global
+  throttler (1000 / 15 min). The "change my own password" UI in the CMS
+  should already surface 429s using the existing
+  `TooManyRequestsErrorDto` body shape (`success: false`, `error: "ThrottlerException: Too Many Requests"`).
+- `POST /api/v1/users/:id/reset-password` (admin-driven reset) is now
+  rate-limited per IP: **10 / 15 min**. Same `429` shape.
+
+If your client does a "change-password test" or rapid resets in QA,
+expect 429s after ~5 calls. There is no functional change otherwise.
+
+### 13.2 Sanitiser tightened on `data:` image URLs
+
+`POST/PATCH` endpoints that accept HTML body (posts, newsletter
+campaigns) keep the existing Tiptap allowlist, with one stricter rule:
+`<img src="data:...">` is now accepted **only** for these MIME types:
+
+```text
+image/png   image/jpeg   image/gif   image/webp   image/svg+xml
+```
+
+Anything else (including `data:text/html`, `data:application/...`)
+drops the entire `<img>` element. Real editor output uses image MIMEs,
+so the CMS rich-text editor and existing post bodies are unaffected.
+The only practical effect: a malicious admin can't smuggle inline HTML
+through a `data:text/html` payload anymore.
+
+### 13.3 Audit-log writer is now centralised — internal only
+
+`audit_logs.action` values and the `changes` JSON shape are unchanged —
+your audit-dashboard queries against `action`, `resource_type`,
+`changes.method`, `changes.path`, etc. continue to work.
+
+One subtle policy change worth flagging only for the audit dashboard
+team: on three code paths — `POST /posts/bulk/publish`, `POST
+/posts/bulk/delete`, and the once-per-minute scheduled-publish cron —
+audit rows are now written **after** the transaction commits rather
+than inside it. Previously, a DB failure on audit-write would also
+roll back the post-state change; now the state change commits and the
+audit-write failure is logged but does not roll back. This brings
+those three paths in line with every single-row mutation, which always
+worked this way (the old `try { ... } catch {}` swallow you'd see in
+the legacy code). In normal operation you won't see any difference —
+`audit_logs` rows land the same way.
+
+### 13.4 Newsletter unsubscribe-token signing — ops action required
+
+`NewsletterService` now refuses to boot if **neither**
+`NEWSLETTER_UNSUBSCRIBE_SECRET` **nor** `JWT_SECRET` is set. Previously
+it silently fell back to an empty signing key, which made unsubscribe
+tokens trivially forgeable.
+
+Action for the ops team: every existing environment already has
+`JWT_SECRET` set (it is and always was required), so production is
+unaffected. New deployments and local dev `.env` files must include at
+least `JWT_SECRET`. Setting a distinct `NEWSLETTER_UNSUBSCRIBE_SECRET`
+remains optional — only useful if you want to rotate the unsubscribe
+key without invalidating JWTs.
+
+### 13.5 Bug fixes for the website team
+
+- `GET /api/v1/posts/by-slug/:slug` — same response shape, but now
+  served in a single DB query instead of two. Expect lower latency on
+  the public post detail page; no client change needed.
+- `POST /api/v1/posts/:id/view` — fixed a TOCTOU race where a post
+  soft-deleted between the read and the update could still get its
+  view counter incremented. Same response, same `404` semantics, just
+  honest about concurrency now.
+
+### 13.6 Env vars now validated at boot
+
+`config/env.validation.ts` now type-checks the following vars when they
+are set (all optional; missing values still boot in dev):
+
+- `BCRYPT_ROUNDS` — must be integer 4–15 if set
+- `R2_UPLOAD_URL_TTL_SECONDS` — must be integer 60–86400 if set
+- `SENTRY_DSN`, `LOG_LEVEL`, `NEWSLETTER_UNSUBSCRIBE_URL_BASE`,
+  `EMAIL_FROM`, `EMAIL_TO`, `PUBLIC_SITE_URL`, `PUBLIC_SITE_NAME`,
+  `SMTP_HOST/PORT/USER/PASS/SECURE`, `TWILIO_ACCOUNT_SID/AUTH_TOKEN/
+  WHATSAPP_FROM/TEMPLATE_SID` — string/int validation when set
+
+A bad value (e.g. `BCRYPT_ROUNDS=99` or `SMTP_PORT=foo`) will now fail
+the boot with a clear `Invalid environment configuration:` error
+instead of silently behaving wrong at request time.
+
+### 13.7 Internal-only changes worth knowing about
+
+These don't change any external surface but they're worth knowing if
+you read the service code:
+
+- `audit_logs.create(...)` calls are gone from every service in favour
+  of `AuditService.write(...)`. The action strings and `changes`
+  payload shape are unchanged.
+- `where: any`, `data: any`, `as any` removed from the service layer.
+  Replaced with `Prisma.*WhereInput` / `Prisma.*UpdateInput` /
+  `Prisma.PrismaClientKnownRequestError`.
+- Pagination math (`page`, `limit`, `skip`, `pages`) consolidated into
+  `common/utils/pagination.util.ts`. The output `pagination` envelope
+  shape is unchanged.
+- bcrypt cost factor resolution moved into
+  `common/utils/bcrypt.util.ts` (was duplicated three times).
+- `AuthService.login`/`refresh`/`getMe` share a single
+  `findUserWithPermissions` helper (was duplicated three times).
+- `JwtStrategy` reads `JWT_SECRET` via `ConfigService` instead of at
+  module-load time. Same secret, same JWTs.
+- `AllExceptionsFilter` uses `Nest Logger` instead of `console.error`
+  for unhandled errors. Sentry capture path is unchanged.
+
+---
+
+## 14. Open follow-ups (still not in this push)
 
 - Self-service password reset flow (would need an `email` column on
   `users` plus the `password_reset_tokens` table described in the
