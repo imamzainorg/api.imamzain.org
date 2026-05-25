@@ -1,4 +1,4 @@
-import { registerDecorator, ValidationOptions } from 'class-validator';
+import { registerDecorator, ValidationArguments, ValidationOptions } from 'class-validator';
 import { MAX_BODY_BYTES, utf8ByteLength } from '../utils/html-sanitize.util';
 
 /**
@@ -20,12 +20,12 @@ export function MaxBytes(max: number = MAX_BODY_BYTES, options?: ValidationOptio
       options,
       constraints: [max],
       validator: {
-        validate(value: unknown, args) {
+        validate(value: unknown, args: ValidationArguments) {
           if (typeof value !== 'string') return false;
           const limit = args.constraints[0] as number;
           return utf8ByteLength(value) <= limit;
         },
-        defaultMessage(args) {
+        defaultMessage(args: ValidationArguments) {
           const limit = args.constraints[0] as number;
           return `${args.property} must be at most ${limit} bytes (UTF-8)`;
         },

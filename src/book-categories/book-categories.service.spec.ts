@@ -75,7 +75,7 @@ describe("BookCategoriesService", () => {
           orderBy: [{ created_at: "desc" }, { id: "asc" }],
         }),
       );
-      expect(result.data.items[0].translation.lang).toBe("ar");
+      expect(result.data.items[0]!.translation!.lang).toBe("ar");
     });
 
     it("falls back to first translation when requested lang is missing", async () => {
@@ -89,7 +89,7 @@ describe("BookCategoriesService", () => {
 
       const result = await service.findAll("fr", 1, 10);
 
-      expect(result.data.items[0].translation.lang).toBe("ar");
+      expect(result.data.items[0]!.translation!.lang).toBe("ar");
     });
 
     it("loads all translations and orders deterministically", async () => {
@@ -136,7 +136,7 @@ describe("BookCategoriesService", () => {
         }),
       );
       expect(result.data.id).toBe("cat-1");
-      expect(result.data.translation.lang).toBe("en");
+      expect(result.data.translation!.lang).toBe("en");
     });
 
     it("falls back to first translation when requested lang is missing", async () => {
@@ -148,7 +148,7 @@ describe("BookCategoriesService", () => {
 
       const result = await service.findOne("cat-1", "fr");
 
-      expect(result.data.translation.lang).toBe("ar");
+      expect(result.data.translation!.lang).toBe("ar");
     });
 
     it("throws NotFoundException when not found", async () => {

@@ -65,7 +65,7 @@ describe("GalleryService", () => {
 
       const result = await service.findAll({}, "ar");
 
-      expect(result.data.items[0].translation.lang).toBe("ar");
+      expect(result.data.items[0]!.translation!.lang).toBe("ar");
     });
 
     it("filters by category_id when provided", async () => {

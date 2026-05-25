@@ -75,7 +75,7 @@ describe("BooksService", () => {
 
       const result = await service.findAll({ page: 1, limit: 10 }, "ar");
 
-      expect(result.data.items[0].translation.lang).toBe("ar");
+      expect(result.data.items[0]!.translation!.lang).toBe("ar");
       expect(result.data.pagination.total).toBe(1);
     });
 
@@ -85,7 +85,7 @@ describe("BooksService", () => {
 
       const result = await service.findAll({}, "fr");
 
-      expect(result.data.items[0].translation.is_default).toBe(true);
+      expect(result.data.items[0]!.translation!.is_default).toBe(true);
     });
   });
 
@@ -95,7 +95,7 @@ describe("BooksService", () => {
 
       const result = await service.findOne("book-1", "en");
 
-      expect(result.data.translation.lang).toBe("en");
+      expect(result.data.translation!.lang).toBe("en");
     });
 
     it("throws NotFoundException when book not found", async () => {

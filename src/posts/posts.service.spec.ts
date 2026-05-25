@@ -116,7 +116,7 @@ describe("PostsService", () => {
 
       const result = await service.findAll({}, "ar", false);
 
-      expect(result.data.items[0].translation.lang).toBe("ar");
+      expect(result.data.items[0]!.translation!.lang).toBe("ar");
     });
 
     it("falls back to default translation when lang not matched", async () => {
@@ -125,7 +125,7 @@ describe("PostsService", () => {
 
       const result = await service.findAll({}, "fr", false);
 
-      expect(result.data.items[0].translation.is_default).toBe(true);
+      expect(result.data.items[0]!.translation!.is_default).toBe(true);
     });
 
     it("returns paginated result", async () => {
@@ -150,7 +150,7 @@ describe("PostsService", () => {
       const result = await service.findOne("post-1", "ar");
 
       expect(result.data.id).toBe("post-1");
-      expect(result.data.translation.lang).toBe("ar");
+      expect(result.data.translation!.lang).toBe("ar");
     });
 
     it("throws NotFoundException when post not found", async () => {
