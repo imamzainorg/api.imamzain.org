@@ -15,7 +15,7 @@ the API emits.
 
 ## Permissions catalogue
 
-53 permissions in total, grouped by resource. The seed
+57 permissions in total, grouped by resource. The seed
 (`prisma/seed.ts`) is the authoritative source.
 
 ### Content
@@ -121,7 +121,7 @@ upserts only.
 | --- | --- | --- |
 | `super-admin` | Full system access including roles, users, and languages. Reserved for the technical owner. | 57 (all) |
 | `admin` | All content + users + forms + newsletter + media. Cannot modify roles or languages. | 51 |
-| `editor` | All content types, media, and daily hadiths. No access to forms, users, roles, or system settings. | 33 |
+| `editor` | All content types, media, and daily hadiths. No access to forms, users, roles, or system settings. | 34 |
 | `moderator` | Reviews and responds to contact submissions, proxy visit requests, and the newsletter. Read-only on posts and contest. | 9 |
 
 Translations for each role title / description exist in `ar`, `en`,

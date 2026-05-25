@@ -113,7 +113,7 @@ Every list endpoint accepts `?page=<n>&limit=<n>` and returns:
 The API uses short-lived JWT access tokens plus long-lived refresh
 tokens with rotation + reuse detection. The flow:
 
-```
+```text
 ┌─────────────┐  POST /auth/login            ┌────────────┐
 │   Client    │ ─────────────────────────▶  │    API     │
 │             │                             │            │
@@ -203,7 +203,7 @@ Multi-language responses are driven by an `Accept-Language` header.
 Only the **primary** language tag is used; quality factors are
 ignored. The middleware lower-cases it and strips region:
 
-```
+```text
 Accept-Language: ar-IQ,en;q=0.8         →  lang = "ar"
 Accept-Language: en-US                   →  lang = "en"
 Accept-Language: fr                      →  lang = "fr"   (then falls back if no translation)
@@ -252,7 +252,7 @@ Every soft-deletable resource (posts, books, papers, gallery images,
 all four category types, users, newsletter subscribers) follows the
 same lifecycle:
 
-```
+```text
 ┌───────┐  DELETE /<resource>/:id          ┌─────────┐
 │ Live  │ ──────────────────────────────▶  │ Trashed │
 └───────┘                                  └─────────┘
@@ -270,7 +270,7 @@ For resources with unique columns scoped to live rows (post / category
 translation slugs, `books.isbn`), the API suffixes the value on delete
 to free it up:
 
-```
+```text
 slug:  "hayat-al-imam-zain"  →  "hayat-al-imam-zain__del_1715472000"
 isbn:  "978-3-16-148410-0"   →  "978-3-16-148410-0__del_1715472000"
 ```
@@ -408,7 +408,7 @@ outside it is silently stripped.
 
 ### Allowed tags
 
-```
+```text
 p, br, hr,
 h1, h2, h3, h4, h5, h6,
 ul, ol, li,
@@ -497,7 +497,7 @@ calling twice is a no-op.
 Inside outbound campaign emails, the body's `{{unsubscribe_url}}`
 placeholder is replaced per-recipient with:
 
-```
+```text
 ${NEWSLETTER_UNSUBSCRIBE_URL_BASE}?email=<email>&token=<token>
 ```
 
@@ -513,7 +513,7 @@ the API sends has a working unsubscribe.
 
 For CMS workflows where an admin handles a complaint or a bounce:
 
-```
+```text
 POST /newsletter/subscribers/:id/unsubscribe      (admin, no token)
 POST /newsletter/subscribers/:id/resubscribe      (admin, no token)
 ```
@@ -538,8 +538,6 @@ per-endpoint limits:
 | `POST /newsletter/unsubscribe` | 5 / 15 min / IP | Symmetric with subscribe |
 | `POST /forms/contact` | 300 / hour / IP | Generous; flooding goes to admin inbox |
 | `POST /forms/proxy-visit` | 300 / hour / IP | Same |
-| `POST /contest/start` | 10 / hour / IP | Per-IP brute-force ceiling |
-| `POST /contest/submit` | 30 / hour / IP | Allows retries |
 | `POST /posts/:id/view` | 30 / min / IP | View-counter abuse |
 | `POST /books/:id/view` | 30 / min / IP | Same |
 | `GET /health` | 60 / min / IP | Generous; uptime probes only |
@@ -547,6 +545,15 @@ per-endpoint limits:
 Hitting any limit returns **429 Too Many Requests** with the standard
 error envelope. The response body's `error` field tells the user to
 slow down; the front-end should not retry automatically.
+
+> **Note on contest endpoints.** `POST /forms/qutuf-sajjadiya-contest/start`
+> and `POST /forms/qutuf-sajjadiya-contest/submit` have **no per-endpoint
+> throttle** — only the global ceiling applies. This was intentional: in a
+> live contest, 200+ students share a school/uni NAT and would all hit one
+> bucket. Abuse is gated at the database level instead: a partial unique
+> index on `qutuf_sajjadiya_contest_attempts.phone` and `.email` prevents
+> repeat attempts from the same identity, and each `attempt_id` can only
+> be submitted once.
 
 ---
 
@@ -557,7 +564,7 @@ places: `sitemap.xml` and `rss/posts.xml`. Both use the same pattern.
 
 ### Post URL
 
-```
+```text
 ${PUBLIC_SITE_URL}/{lang}/posts/{slug}
 ```
 
@@ -572,7 +579,7 @@ sitemap controller too (`src/feeds/feeds.service.ts`).
 
 Reference the sitemap in `robots.txt`:
 
-```
+```text
 Sitemap: https://api.imamzain.org/api/v1/sitemap.xml
 ```
 
@@ -590,7 +597,7 @@ Add a `<link rel="alternate">` to the public site's `<head>`:
 
 ## Cron schedules
 
-The API runs three background jobs on cron schedules. Front-end
+The API runs five background jobs on cron schedules. Front-end
 behaviour should account for the latency.
 
 | Job | Schedule | What it does |
@@ -598,6 +605,8 @@ behaviour should account for the latency.
 | Scheduled post publishing | every minute | Flips `is_published=true` on posts whose `published_at <= now()` and were left as drafts. Audit-logs with `{ scheduled: true, by: 'cron' }`. |
 | Newsletter campaign sender | every minute | Processes 50 pending recipients per campaign per tick. Crash-safe — resumes from `sent_at IS NULL AND failed_at IS NULL`. |
 | Newsletter campaign promoter | every minute | Promotes campaigns with `status=scheduled` whose `scheduled_at <= now()` into `sending`. |
+| YouTube channel mirror sync | every 6 hours (plus once 30 s after boot) | Pulls the configured channel's videos + playlists into the local DB so the homepage / `/youtube/*` endpoints never hit the YouTube Data API on the request path. Silently skipped when `YOUTUBE_API_KEY` / `YOUTUBE_CHANNEL_ID` are unset. |
+| Orphan upload cleanup | every hour | Deletes `pending_media_uploads` rows older than the pre-signed URL TTL that were never confirmed via `POST /media/confirm`. Also purges the abandoned R2 object so the bucket doesn't accumulate dead keys. |
 
 So:
 
@@ -629,7 +638,7 @@ costs predictable as traffic grows.
 | `GET /search` | `public, max-age=30, s-maxage=60` | Popular queries get amortised; new content surfaces within 1 minute. |
 | `GET /forms/qutuf-sajjadiya-contest/questions` | `public, max-age=300, s-maxage=3600` | Questions change rarely. |
 | `GET /sitemap.xml`, `/rss/posts.xml` | `public, max-age=900, s-maxage=900` | Already set independently. |
-| `GET /homepage` | `public, max-age=60, s-maxage=300` | The single most-hit public route. |
+| `GET /homepage` | `public, max-age=900, s-maxage=3600` | The single most-hit public route — 15 min browser cache, 1 h CDN cache. |
 
 All cached endpoints set `Vary: Accept-Language` so Arabic and English
 versions are cached separately at the edge.

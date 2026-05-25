@@ -763,7 +763,7 @@ TTL summary:
 | `/settings/public` | 15m | 60m |
 | `/languages` | 60m | 24h |
 | `/forms/qutuf-sajjadiya-contest/questions` | 5m | 60m |
-| `/homepage` (new) | 60s | 5m |
+| `/homepage` (new) | 15m | 60m |
 | `/sitemap.xml`, `/rss/posts.xml` | 15m | 15m (unchanged) |
 
 The CMS, the public site, and the integration handbook all describe

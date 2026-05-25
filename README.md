@@ -105,29 +105,37 @@ See [.env.example](.env.example) for the complete list with inline descriptions.
 | `DATABASE_URL` | Yes | Supabase pooled connection string |
 | `DIRECT_URL` | Yes | Supabase direct connection (no pgBouncer) |
 | `JWT_SECRET` | Yes | Secret used to sign JWTs |
-| `JWT_EXPIRES_IN` | Yes | Token lifetime, e.g. `24h` |
-| `BCRYPT_ROUNDS` | Yes | bcrypt cost factor (12 recommended) |
-| `SMTP_HOST` | Yes | SMTP hostname |
-| `SMTP_PORT` | Yes | SMTP port (465 for Hostinger) |
-| `SMTP_USER` | Yes | SMTP username / sender address |
-| `SMTP_PASS` | Yes | SMTP password |
-| `R2_ACCOUNT_ID` | Yes | Cloudflare account ID |
-| `R2_ACCESS_KEY_ID` | Yes | R2 API access key |
-| `R2_SECRET_ACCESS_KEY` | Yes | R2 API secret key |
-| `R2_BUCKET` | Yes | R2 bucket name |
-| `R2_PUBLIC_BASE_URL` | Yes | Public CDN base URL for served files |
+| `NODE_ENV` | Optional | `development` (default), `production`, or `test` |
+| `PORT` | Optional | HTTP port. Defaults to `3000` |
+| `JWT_EXPIRES_IN` | Optional | Access-token lifetime. Defaults to `24h` |
+| `BCRYPT_ROUNDS` | Optional | bcrypt cost factor (4–15). Hashing helper clamps at runtime; 12 recommended |
+| `LOG_LEVEL` | Optional | Pino level (`info`, `debug`, `warn`, …). Defaults to `info` in prod, `debug` otherwise |
+| `R2_ACCOUNT_ID` | Prod | Cloudflare account ID. **Required in production** |
+| `R2_ACCESS_KEY_ID` | Prod | R2 API access key. **Required in production** |
+| `R2_SECRET_ACCESS_KEY` | Prod | R2 API secret key. **Required in production** |
+| `R2_BUCKET` | Prod | R2 bucket name. **Required in production** |
+| `R2_PUBLIC_BASE_URL` | Prod | Public CDN base URL for served files. **Required in production** |
+| `R2_UPLOAD_URL_TTL_SECONDS` | Optional | Pre-signed upload URL lifetime (60–86400). Defaults to service default when unset |
 | `ALLOWED_ORIGINS` | Prod | Comma-separated CORS allowed origins. **Required in production** — the app refuses to boot without it rather than fall back to a permissive default |
 | `EXPOSE_DOCS` | Optional | `true` to expose `/docs` and `/openapi.json`. Defaults to off in production |
+| `SENTRY_DSN` | Optional | Sentry DSN for error tracking |
+| `SMTP_HOST` | Optional | SMTP hostname. If any of the SMTP_* group is missing, outbound email is silently disabled |
+| `SMTP_PORT` | Optional | SMTP port (465 for Hostinger) |
+| `SMTP_USER` | Optional | SMTP username / sender address |
+| `SMTP_PASS` | Optional | SMTP password |
+| `SMTP_SECURE` | Optional | `true` to force TLS (use with port 465). Otherwise STARTTLS is auto-negotiated |
+| `EMAIL_FROM` | Optional | `From:` header for outbound mail. Falls back to `SMTP_USER` |
+| `EMAIL_TO` | Optional | Recipient for admin notification emails (e.g. new form submissions) |
 | `NEWSLETTER_UNSUBSCRIBE_SECRET` | Optional | HMAC secret for unsubscribe tokens; falls back to `JWT_SECRET` |
 | `NEWSLETTER_UNSUBSCRIBE_URL_BASE` | Optional | Front-end unsubscribe page used to build `{{unsubscribe_url}}` substitution. Defaults to `https://imamzain.org/newsletter/unsubscribe` |
 | `PUBLIC_SITE_URL` | Optional | Base URL emitted in `sitemap.xml` and `rss/posts.xml` entries. Defaults to `https://imamzain.org` |
 | `PUBLIC_SITE_NAME` | Optional | Title used in the RSS feed `<channel>`. Defaults to `Imam Zain Foundation` |
 | `YOUTUBE_API_KEY` | Optional | YouTube Data API v3 key. When set together with `YOUTUBE_CHANNEL_ID`, a 6-hour cron mirrors the channel's videos + playlists into the local DB. Sync is silently skipped if either is missing |
 | `YOUTUBE_CHANNEL_ID` | Optional | The `UCxxxx…` channel ID the YouTube sync targets |
-| `SENTRY_DSN` | Optional | Sentry DSN for error tracking |
-| `TWILIO_ACCOUNT_SID` | Optional | Twilio account SID |
+| `TWILIO_ACCOUNT_SID` | Optional | Twilio account SID. WhatsApp notifications silently no-op when missing |
 | `TWILIO_AUTH_TOKEN` | Optional | Twilio auth token |
 | `TWILIO_WHATSAPP_FROM` | Optional | Twilio WhatsApp sender number |
+| `TWILIO_TEMPLATE_SID` | Optional | Approved Twilio template SID used for outbound WhatsApp messages |
 
 > **Boot behaviour:** the app validates required env vars on startup. Missing
 > `JWT_SECRET`, `DATABASE_URL`, `DIRECT_URL`, or — in production —
@@ -278,8 +286,8 @@ Both routes are gated by the existing `<resource>:delete` permission.
 | POST | `/forms/contact` | 300 / hr per IP | Contact form submission |
 | POST | `/forms/proxy-visit` | 300 / hr per IP | Proxy visit tracking |
 | GET | `/forms/qutuf-sajjadiya-contest/questions` | global only | Contest question list |
-| POST | `/forms/qutuf-sajjadiya-contest/start` | 10 / hr per IP | Start contest attempt, returns `attempt_id` |
-| POST | `/forms/qutuf-sajjadiya-contest/submit` | 30 / hr per IP | Submit answers, returns score |
+| POST | `/forms/qutuf-sajjadiya-contest/start` | global only | Start contest attempt, returns `attempt_id`. Abuse is gated by a DB-level unique index on `phone` and `email`. |
+| POST | `/forms/qutuf-sajjadiya-contest/submit` | global only | Submit answers, returns score. Each `attempt_id` can only be submitted once. |
 | POST | `/newsletter/subscribe` | 5 / 15 min per IP | Newsletter opt-in; returns an `unsubscribe_token` |
 | POST | `/newsletter/unsubscribe` | 5 / 15 min per IP | Newsletter opt-out; requires the token issued at subscribe time |
 | POST | `/posts/:id/view` | 30 / min per IP | Increment the view counter on a published post |
