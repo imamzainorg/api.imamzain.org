@@ -53,6 +53,12 @@ async function bootstrap() {
   app.enableShutdownHooks();
   app.setGlobalPrefix("api/v1");
 
+  // Trust the first proxy hop (Render's LB) so req.ip resolves to the real client
+  // via X-Forwarded-For, instead of every request looking like it came from the
+  // proxy. Without this, per-IP throttling and audit_logs.ip_address are useless.
+  // If a CDN (e.g. Cloudflare) is added in front of Render, bump to 2.
+  app.getHttpAdapter().getInstance().set("trust proxy", 1);
+
   app.use(
     helmet({
       contentSecurityPolicy: {

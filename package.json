@@ -8,6 +8,7 @@
     "start": "node dist/src/main.js",
     "dev": "ts-node-dev --respawn --transpile-only src/main.ts",
     "prisma:pull": "prisma db pull",
+    "prisma:deploy": "prisma migrate deploy",
     "prisma:generate": "prisma generate",
     "prisma:studio": "prisma studio",
     "prisma:seed": "ts-node -P tsconfig.base.json prisma/seed.ts",
