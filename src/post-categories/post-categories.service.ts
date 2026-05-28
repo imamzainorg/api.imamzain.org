@@ -72,7 +72,8 @@ export class PostCategoriesService {
       changes: { method: 'POST', path: '/api/v1/post-categories' },
     });
 
-    return { message: 'Category created', data: category };
+    const { data } = await this.findOne(category.id, null);
+    return { message: 'Category created', data };
   }
 
   async update(id: string, dto: UpdatePostCategoryDto, actorId: string) {
@@ -97,14 +98,15 @@ export class PostCategoriesService {
       changes: { method: 'PATCH', path: `/api/v1/post-categories/${id}` },
     });
 
-    return { message: 'Category updated', data: null };
+    const { data } = await this.findOne(id, null);
+    return { message: 'Category updated', data };
   }
 
   /** List soft-deleted post categories. */
   async findTrash(page: number, limit: number) {
     const skip = (page - 1) * limit;
     const where: Prisma.post_categoriesWhereInput = { deleted_at: { not: null } };
-    const [items, total] = await Promise.all([
+    const [rows, total] = await Promise.all([
       this.prisma.post_categories.findMany({
         where,
         include: { post_category_translations: true },
@@ -114,6 +116,17 @@ export class PostCategoriesService {
       }),
       this.prisma.post_categories.count({ where }),
     ]);
+    const items = rows.map((row) => {
+      const post_category_translations = row.post_category_translations.map((t) => ({
+        ...t,
+        slug: stripSoftDeleteSuffix(t.slug),
+      }));
+      return {
+        ...row,
+        post_category_translations,
+        translation: resolveTranslation(post_category_translations, null),
+      };
+    });
     return {
       message: 'Trash fetched',
       data: { items, pagination: buildPaginationMeta(page, limit, total) },

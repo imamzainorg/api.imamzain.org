@@ -42,7 +42,7 @@ describe("PostsService", () => {
   let audit: any;
 
   const mockTx = {
-    posts: { create: jest.fn(), update: jest.fn() },
+    posts: { create: jest.fn(), update: jest.fn(), updateMany: jest.fn().mockResolvedValue({ count: 1 }) },
     post_translations: {
       createMany: jest.fn(),
       upsert: jest.fn(),
@@ -52,10 +52,14 @@ describe("PostsService", () => {
       count: jest.fn().mockResolvedValue(1),
     },
     post_attachments: { createMany: jest.fn(), deleteMany: jest.fn() },
+    $executeRaw: jest.fn().mockResolvedValue(1),
   };
 
   beforeEach(async () => {
-    audit = { write: jest.fn().mockResolvedValue(true) };
+    audit = {
+      write: jest.fn().mockResolvedValue(true),
+      writeMany: jest.fn().mockResolvedValue(true),
+    };
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         PostsService,
@@ -69,9 +73,15 @@ describe("PostsService", () => {
               update: jest.fn().mockResolvedValue({}),
               updateMany: jest.fn().mockResolvedValue({ count: 1 }),
             },
-            post_translations: { findFirst: jest.fn() },
+            post_translations: {
+              findFirst: jest.fn(),
+              findMany: jest.fn().mockResolvedValue([]),
+            },
             post_categories: { findFirst: jest.fn() },
-            media: { findUnique: jest.fn() },
+            media: {
+              findUnique: jest.fn(),
+              findMany: jest.fn().mockResolvedValue([]),
+            },
             audit_logs: { create: jest.fn().mockResolvedValue({}) },
             $transaction: jest.fn(),
           },
@@ -212,12 +222,16 @@ describe("PostsService", () => {
   });
 
   describe("create", () => {
-    it("creates post with translations inside a transaction", async () => {
+    it("creates post with translations and returns hydrated detail", async () => {
       prisma.post_categories.findFirst.mockResolvedValue({ id: "cat-1" });
       const created = { id: "post-new" };
       mockTx.posts.create.mockResolvedValue(created);
       mockTx.post_translations.createMany.mockResolvedValue({});
       prisma.$transaction.mockImplementation((cb: any) => cb(mockTx));
+      // After the transaction commits the service refetches the post with full
+      // includes so the response carries translations + attachments — same shape
+      // a GET /posts/:id would return.
+      prisma.posts.findFirst.mockResolvedValue({ ...basePost, id: "post-new" });
 
       const result = await service.create(
         {
@@ -233,11 +247,14 @@ describe("PostsService", () => {
           ],
         },
         "user-1",
+        null,
       );
 
       expect(mockTx.posts.create).toHaveBeenCalled();
       expect(mockTx.post_translations.createMany).toHaveBeenCalled();
       expect(result.data.id).toBe("post-new");
+      expect(result.data.post_translations).toBeDefined();
+      expect(result.data.translation).toBeDefined();
     });
 
     it("throws NotFoundException when category not found", async () => {
@@ -258,6 +275,7 @@ describe("PostsService", () => {
             ],
           },
           "user-1",
+          null,
         ),
       ).rejects.toThrow(NotFoundException);
     });
@@ -287,6 +305,7 @@ describe("PostsService", () => {
             ],
           },
           "user-1",
+          null,
         ),
       ).rejects.toThrow(BadRequestException);
     });
@@ -316,6 +335,7 @@ describe("PostsService", () => {
             ],
           },
           "user-1",
+          null,
         ),
       ).rejects.toThrow(BadRequestException);
     });
@@ -340,6 +360,7 @@ describe("PostsService", () => {
             ],
           },
           "user-1",
+          null,
         ),
       ).rejects.toThrow(NotFoundException);
     });
@@ -357,6 +378,7 @@ describe("PostsService", () => {
         "post-1",
         { is_published: true },
         "user-1",
+        null,
       );
 
       expect(prisma.posts.update).toHaveBeenCalledWith(
@@ -377,7 +399,7 @@ describe("PostsService", () => {
         published_at: existingDate,
       });
 
-      await service.togglePublish("post-1", { is_published: true }, "user-1");
+      await service.togglePublish("post-1", { is_published: true }, "user-1", null);
 
       const call = prisma.posts.update.mock.calls[0][0];
       expect(call.data.published_at).toBeUndefined();
@@ -390,6 +412,7 @@ describe("PostsService", () => {
         "post-1",
         { is_published: false },
         "user-1",
+        null,
       );
 
       expect(result.message).toBe("Post unpublished");
@@ -399,7 +422,7 @@ describe("PostsService", () => {
       prisma.posts.findFirst.mockResolvedValue(null);
 
       await expect(
-        service.togglePublish("ghost", { is_published: true }, "user-1"),
+        service.togglePublish("ghost", { is_published: true }, "user-1", null),
       ).rejects.toThrow(NotFoundException);
     });
   });
@@ -407,7 +430,6 @@ describe("PostsService", () => {
   describe("softDelete", () => {
     it("sets deleted_at on the post and frees up translation slugs", async () => {
       prisma.posts.findFirst.mockResolvedValue(basePost);
-      mockTx.post_translations.findMany.mockResolvedValue(basePost.post_translations);
       prisma.$transaction.mockImplementation((cb: any) => cb(mockTx));
 
       const result = await service.softDelete("post-1", "user-1");
@@ -417,10 +439,9 @@ describe("PostsService", () => {
           data: expect.objectContaining({ deleted_at: expect.any(Date) }),
         }),
       );
-      // Each existing translation should have its slug suffixed.
-      expect(mockTx.post_translations.update).toHaveBeenCalledTimes(
-        basePost.post_translations.length,
-      );
+      // Slug suffixing is now a single raw UPDATE per softDelete call,
+      // replacing the per-translation findMany + update loop.
+      expect(mockTx.$executeRaw).toHaveBeenCalledTimes(1);
       expect(result.message).toBe("Post deleted");
     });
 
@@ -439,12 +460,12 @@ describe("PostsService", () => {
 
       await service.runScheduledPublish();
 
-      expect(prisma.posts.update).not.toHaveBeenCalled();
+      expect(prisma.posts.updateMany).not.toHaveBeenCalled();
+      expect(audit.writeMany).not.toHaveBeenCalled();
     });
 
-    it("flips is_published and writes a scheduled audit entry per due post", async () => {
+    it("flips is_published in one updateMany and batches the audit log", async () => {
       prisma.posts.findMany.mockResolvedValue([{ id: "post-1" }, { id: "post-2" }]);
-      prisma.posts.update.mockResolvedValue({});
 
       await service.runScheduledPublish();
 
@@ -457,20 +478,16 @@ describe("PostsService", () => {
           }),
         }),
       );
-      expect(prisma.posts.update).toHaveBeenCalledTimes(2);
-      expect(audit.write).toHaveBeenCalledTimes(2);
-    });
-
-    it("continues when one update fails", async () => {
-      prisma.posts.findMany.mockResolvedValue([{ id: "post-1" }, { id: "post-2" }]);
-      prisma.posts.update
-        .mockRejectedValueOnce(new Error("DB error"))
-        .mockResolvedValueOnce({});
-
-      await service.runScheduledPublish();
-
-      expect(prisma.posts.update).toHaveBeenCalledTimes(2);
-      expect(audit.write).toHaveBeenCalledTimes(1);
+      // One bulk update, one batched audit write — not N of each.
+      expect(prisma.posts.updateMany).toHaveBeenCalledTimes(1);
+      expect(prisma.posts.updateMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: { in: ["post-1", "post-2"] } },
+          data: expect.objectContaining({ is_published: true }),
+        }),
+      );
+      expect(audit.writeMany).toHaveBeenCalledTimes(1);
+      expect(audit.writeMany.mock.calls[0][0]).toHaveLength(2);
     });
   });
 });

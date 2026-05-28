@@ -93,17 +93,6 @@ export class UserDetailResponseDto {
   data: UserDetailDataDto;
 }
 
-class UserCreatedDataDto {
-  @ApiProperty({ example: 'uuid-...' })
-  id: string;
-
-  @ApiProperty({ example: 'newuser' })
-  username: string;
-
-  @ApiProperty({ example: '2024-01-01T00:00:00.000Z' })
-  created_at: string;
-}
-
 export class UserCreatedResponseDto {
   @ApiProperty({ example: true })
   success: boolean;
@@ -114,8 +103,8 @@ export class UserCreatedResponseDto {
   @ApiProperty({ example: 'User created' })
   message: string;
 
-  @ApiProperty({ type: UserCreatedDataDto })
-  data: UserCreatedDataDto;
+  @ApiProperty({ type: UserDetailDataDto, description: 'Newly-created user with empty role and permission arrays.' })
+  data: UserDetailDataDto;
 }
 
 export class UserMessageResponseDto {

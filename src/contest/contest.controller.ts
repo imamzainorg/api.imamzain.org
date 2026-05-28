@@ -66,7 +66,7 @@ export class ContestController {
     description:
       'Creates a new attempt row and returns an `attempt_id`. The `contact` field must match `contactType` (E.164-ish phone or RFC-style email). The same value can only be used once across the `phone` and `email` columns combined. Abuse prevention is enforced at the database level (one attempt per phone/email).',
   })
-  @ApiCreatedResponse({ type: StartContestResponseDto, description: 'Attempt created — use the returned `attempt_id` when submitting answers' })
+  @ApiCreatedResponse({ type: StartContestResponseDto, description: 'Attempt created — use the returned `attempt_id` when submitting answers. Also returns an `attempt_token` (HMAC of attempt_id); pass it back at /submit time to prove ownership of the attempt. Optional during the rollout window, required once the frontend adopts it.' })
   @ApiBadRequestResponse({ type: ValidationErrorDto, description: 'Validation failed, or contact value did not match the declared contactType' })
   @ApiConflictResponse({ type: ConflictErrorDto, description: 'This identity has already submitted a contest attempt' })
   start(@Body() dto: StartContestDto, @Req() req: Request) {

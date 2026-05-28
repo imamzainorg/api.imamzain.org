@@ -7,6 +7,7 @@ import {
 } from '@nestjs/common';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { newsletter_campaign_status, Prisma } from '@prisma/client';
+import pLimit from 'p-limit';
 import { EmailService } from '../email/email.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuditService } from '../common/audit/audit.service';
@@ -27,6 +28,14 @@ import {
  * the team moves to a transactional ESP (Resend / Brevo / Mailgun).
  */
 const BATCH_SIZE_PER_TICK = 50;
+
+/**
+ * Maximum number of SMTP sends to have in flight at once. Hostinger SMTP
+ * advertises 100/hour per connection, but the actual rate-limit is on
+ * sustained throughput — short bursts at ~5 in parallel finish well inside
+ * the limit while shrinking batch wall-time from ~minutes to ~seconds.
+ */
+const SMTP_CONCURRENCY = 5;
 
 /**
  * Default unsubscribe-page URL used to build the {{unsubscribe_url}}
@@ -55,6 +64,7 @@ const DEFAULT_FOOTER_TEMPLATE = `
 @Injectable()
 export class CampaignsService {
   private readonly logger = new Logger(CampaignsService.name);
+  private isRunning = false;
 
   constructor(
     private readonly prisma: PrismaService,
@@ -243,29 +253,32 @@ export class CampaignsService {
   // ── Internal: recipient setup + send tick ─────────────────────────────
 
   /**
-   * Insert one recipient row per currently-active subscriber. `skipDuplicates`
-   * keeps the call idempotent — if send() is called twice (or the cron picks
-   * up a partially-populated campaign), the second pass is a no-op.
+   * Insert one recipient row per currently-active subscriber. Uses a single
+   * `INSERT ... SELECT` so the subscriber list never has to round-trip
+   * through the node process — important at scale (50k+ subscribers).
+   * Idempotent via ON CONFLICT DO NOTHING.
    */
   private async populateRecipients(campaignId: string): Promise<number> {
-    const subscribers = await this.prisma.newsletter_subscribers.findMany({
-      where: { is_active: true, deleted_at: null },
-      select: { id: true },
-    });
+    const inserted = await this.prisma.$executeRaw`
+      INSERT INTO newsletter_campaign_recipients (campaign_id, subscriber_id)
+      SELECT ${campaignId}::uuid, id
+      FROM newsletter_subscribers
+      WHERE is_active = TRUE AND deleted_at IS NULL
+      ON CONFLICT (campaign_id, subscriber_id) DO NOTHING
+    `;
 
-    if (subscribers.length > 0) {
-      await this.prisma.newsletter_campaign_recipients.createMany({
-        data: subscribers.map((s) => ({ campaign_id: campaignId, subscriber_id: s.id })),
-        skipDuplicates: true,
-      });
-    }
+    // Re-count from the recipients table — `inserted` only reflects rows added
+    // in this call, but a re-send via the cron should see the existing total.
+    const recipientCount = await this.prisma.newsletter_campaign_recipients.count({
+      where: { campaign_id: campaignId },
+    });
 
     await this.prisma.newsletter_campaigns.update({
       where: { id: campaignId },
-      data: { recipient_count: subscribers.length },
+      data: { recipient_count: recipientCount },
     });
 
-    return subscribers.length;
+    return recipientCount;
   }
 
   /**
@@ -297,36 +310,45 @@ export class CampaignsService {
    */
   @Cron(CronExpression.EVERY_MINUTE)
   async runSendingTick() {
-    // Step 1: promote any due scheduled campaigns.
-    const now = new Date();
-    const promoted = await this.prisma.newsletter_campaigns.findMany({
-      where: { status: 'scheduled', scheduled_at: { lte: now } },
-      select: { id: true },
-    });
-    for (const { id } of promoted) {
-      try {
-        await this.prisma.newsletter_campaigns.updateMany({
-          where: { id, status: 'scheduled' },
-          data: { status: 'sending', updated_at: now },
-        });
-        await this.populateRecipients(id);
-      } catch (err) {
-        this.logger.warn(`Failed to promote campaign ${id}: ${err}`);
-      }
+    if (this.isRunning) {
+      this.logger.log('runSendingTick skipped — previous run still in progress');
+      return;
     }
-
-    // Step 2: process one batch per sending campaign.
-    const inFlight = await this.prisma.newsletter_campaigns.findMany({
-      where: { status: 'sending' },
-      select: { id: true, subject: true, body_html: true },
-    });
-
-    for (const campaign of inFlight) {
-      try {
-        await this.processCampaignBatch(campaign);
-      } catch (err) {
-        this.logger.warn(`Batch failed for campaign ${campaign.id}: ${err}`);
+    this.isRunning = true;
+    try {
+      // Step 1: promote any due scheduled campaigns.
+      const now = new Date();
+      const promoted = await this.prisma.newsletter_campaigns.findMany({
+        where: { status: 'scheduled', scheduled_at: { lte: now } },
+        select: { id: true },
+      });
+      for (const { id } of promoted) {
+        try {
+          await this.prisma.newsletter_campaigns.updateMany({
+            where: { id, status: 'scheduled' },
+            data: { status: 'sending', updated_at: now },
+          });
+          await this.populateRecipients(id);
+        } catch (err) {
+          this.logger.warn(`Failed to promote campaign ${id}: ${err}`);
+        }
       }
+
+      // Step 2: process one batch per sending campaign.
+      const inFlight = await this.prisma.newsletter_campaigns.findMany({
+        where: { status: 'sending' },
+        select: { id: true, subject: true, body_html: true },
+      });
+
+      for (const campaign of inFlight) {
+        try {
+          await this.processCampaignBatch(campaign);
+        } catch (err) {
+          this.logger.warn(`Batch failed for campaign ${campaign.id}: ${err}`);
+        }
+      }
+    } finally {
+      this.isRunning = false;
     }
   }
 
@@ -352,52 +374,102 @@ export class CampaignsService {
       this.logger.log(
         `Campaign ${campaign.id} complete: ${updated.delivered_count} delivered, ${updated.failed_count} failed`,
       );
+      await this.audit.write({
+        actorId: null,
+        action: AUDIT_ACTIONS.NEWSLETTER_CAMPAIGN_COMPLETED,
+        resourceType: 'newsletter_campaign',
+        resourceId: campaign.id,
+        changes: {
+          delivered_count: updated.delivered_count,
+          failed_count: updated.failed_count,
+          recipient_count: updated.recipient_count,
+        },
+      });
       return;
     }
 
-    let delivered = 0;
-    let failed = 0;
+    // Categorise unsubscribed-since-populate recipients up front — they get
+    // a single bulk update marking them failed, no SMTP send needed.
+    const inactiveSubscriberIds: string[] = [];
+    const liveTargets: typeof pending = [];
     for (const r of pending) {
-      const subscriber = r.newsletter_subscribers;
-      const token = this.newsletter.signUnsubscribeToken(subscriber.id);
-      const html = this.renderBody(
-        campaign.body_html,
-        subscriber.email,
-        unsubscribeUrl(subscriber.email, token),
-      );
-
-      const ok = await this.email.send(subscriber.email, campaign.subject, html);
-
-      if (ok) {
-        delivered++;
-        await this.prisma.newsletter_campaign_recipients.update({
-          where: {
-            campaign_id_subscriber_id: { campaign_id: campaign.id, subscriber_id: subscriber.id },
-          },
-          data: { sent_at: new Date() },
-        });
+      if (!r.newsletter_subscribers.is_active) {
+        inactiveSubscriberIds.push(r.subscriber_id);
       } else {
-        failed++;
-        await this.prisma.newsletter_campaign_recipients.update({
-          where: {
-            campaign_id_subscriber_id: { campaign_id: campaign.id, subscriber_id: subscriber.id },
-          },
-          data: {
-            failed_at: new Date(),
-            error_message: 'EmailService.send returned false',
-          },
-        });
+        liveTargets.push(r);
       }
     }
 
-    if (delivered > 0 || failed > 0) {
-      await this.prisma.newsletter_campaigns.update({
-        where: { id: campaign.id },
-        data: {
-          delivered_count: { increment: delivered },
-          failed_count: { increment: failed },
-        },
-      });
-    }
+    const deliveredIds: string[] = [];
+    const failedIds: string[] = [];
+
+    // Fan out SMTP sends with a small concurrency cap. The previous
+    // sequential loop made an entire tick wait on `BATCH_SIZE × ~1s`
+    // per email — at 50 emails that ran near the 60s cron interval.
+    const limit = pLimit(SMTP_CONCURRENCY);
+    await Promise.all(
+      liveTargets.map((r) =>
+        limit(async () => {
+          const subscriber = r.newsletter_subscribers;
+          const token = this.newsletter.signUnsubscribeToken(subscriber.id);
+          const html = this.renderBody(
+            campaign.body_html,
+            subscriber.email,
+            unsubscribeUrl(subscriber.email, token),
+          );
+
+          const ok = await this.email.send(subscriber.email, campaign.subject, html);
+          if (ok) {
+            deliveredIds.push(subscriber.id);
+          } else {
+            failedIds.push(subscriber.id);
+          }
+        }),
+      ),
+    );
+
+    const now = new Date();
+    const failedCount = failedIds.length + inactiveSubscriberIds.length;
+    const deliveredCount = deliveredIds.length;
+
+    // Two updateMany calls + one campaign-counters update — replaces 50
+    // sequential per-recipient UPDATEs.
+    await this.prisma.$transaction([
+      ...(deliveredIds.length > 0
+        ? [
+            this.prisma.newsletter_campaign_recipients.updateMany({
+              where: { campaign_id: campaign.id, subscriber_id: { in: deliveredIds } },
+              data: { sent_at: now },
+            }),
+          ]
+        : []),
+      ...(failedIds.length > 0
+        ? [
+            this.prisma.newsletter_campaign_recipients.updateMany({
+              where: { campaign_id: campaign.id, subscriber_id: { in: failedIds } },
+              data: { failed_at: now, error_message: 'EmailService.send returned false' },
+            }),
+          ]
+        : []),
+      ...(inactiveSubscriberIds.length > 0
+        ? [
+            this.prisma.newsletter_campaign_recipients.updateMany({
+              where: { campaign_id: campaign.id, subscriber_id: { in: inactiveSubscriberIds } },
+              data: { failed_at: now, error_message: 'Subscriber unsubscribed before send' },
+            }),
+          ]
+        : []),
+      ...(deliveredCount > 0 || failedCount > 0
+        ? [
+            this.prisma.newsletter_campaigns.update({
+              where: { id: campaign.id },
+              data: {
+                delivered_count: { increment: deliveredCount },
+                failed_count: { increment: failedCount },
+              },
+            }),
+          ]
+        : []),
+    ]);
   }
 }

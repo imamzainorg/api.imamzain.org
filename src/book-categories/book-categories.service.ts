@@ -72,7 +72,8 @@ export class BookCategoriesService {
       changes: { method: 'POST', path: '/api/v1/book-categories' },
     });
 
-    return { message: 'Category created', data: category };
+    const { data } = await this.findOne(category.id, null);
+    return { message: 'Category created', data };
   }
 
   async update(id: string, dto: UpdateBookCategoryDto, actorId: string) {
@@ -97,14 +98,15 @@ export class BookCategoriesService {
       changes: { method: 'PATCH', path: `/api/v1/book-categories/${id}` },
     });
 
-    return { message: 'Category updated', data: null };
+    const { data } = await this.findOne(id, null);
+    return { message: 'Category updated', data };
   }
 
   /** List soft-deleted book categories. */
   async findTrash(page: number, limit: number) {
     const skip = (page - 1) * limit;
     const where: Prisma.book_categoriesWhereInput = { deleted_at: { not: null } };
-    const [items, total] = await Promise.all([
+    const [rows, total] = await Promise.all([
       this.prisma.book_categories.findMany({
         where,
         include: { book_category_translations: true },
@@ -114,6 +116,17 @@ export class BookCategoriesService {
       }),
       this.prisma.book_categories.count({ where }),
     ]);
+    const items = rows.map((row) => {
+      const book_category_translations = row.book_category_translations.map((t) => ({
+        ...t,
+        slug: stripSoftDeleteSuffix(t.slug),
+      }));
+      return {
+        ...row,
+        book_category_translations,
+        translation: resolveTranslation(book_category_translations, null),
+      };
+    });
     return {
       message: 'Trash fetched',
       data: { items, pagination: buildPaginationMeta(page, limit, total) },

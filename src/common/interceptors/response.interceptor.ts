@@ -7,11 +7,16 @@ export class ResponseInterceptor implements NestInterceptor {
   intercept(_context: ExecutionContext, next: CallHandler): Observable<any> {
     return next.handle().pipe(
       map((data) => {
-        const body = typeof data === 'object' && data !== null ? data : { data };
-        // success/timestamp are spread LAST so a service that happens to
-        // return its own success/timestamp keys can't override the wrapper
-        // contract callers depend on.
-        return { ...body, success: true, timestamp: new Date().toISOString() };
+        // Mutate in place when the handler already returned a plain object —
+        // the spread used to allocate a fresh top-level object on every
+        // response. Services return their own plain objects and don't reuse
+        // them, so mutation is safe here.
+        if (data !== null && typeof data === 'object' && !Array.isArray(data)) {
+          (data as any).success = true;
+          (data as any).timestamp = new Date().toISOString();
+          return data;
+        }
+        return { data, success: true, timestamp: new Date().toISOString() };
       }),
     );
   }

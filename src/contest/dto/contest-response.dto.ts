@@ -71,6 +71,13 @@ export class QuestionListResponseDto {
 class StartContestDataDto {
   @ApiProperty({ example: 'uuid-...' })
   attempt_id: string;
+
+  @ApiProperty({
+    example: '9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08',
+    description:
+      "HMAC token bound to attempt_id. Send back in the POST /submit body as `attempt_token`. Optional today, will become required once the frontend rolls out token support.",
+  })
+  attempt_token: string;
 }
 
 export class StartContestResponseDto {

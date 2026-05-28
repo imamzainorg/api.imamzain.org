@@ -103,8 +103,40 @@ Every list endpoint accepts `?page=<n>&limit=<n>` and returns:
 ```
 
 - `page` is 1-indexed.
-- `limit` defaults to 20 and is capped at 100.
+- `limit` defaults to 20 and is **clamped server-side to [1, 100]**.
+  `?limit=999999` does not return the whole table — the server treats
+  the request as `limit=100`. This is enforced both by the DTO and by
+  the pagination utility itself (defence-in-depth).
 - `pages` is `Math.ceil(total / limit)`, included for convenience.
+
+### List vs. detail payloads — heavy fields are list-only
+
+The four content list endpoints — `GET /posts`, `GET /books`,
+`GET /academic-papers`, `GET /gallery` (and the corresponding
+`/trash` views) — return **slimmer translation objects** to keep list
+responses small. The fields dropped from each translation entry in
+`items[]`:
+
+| Endpoint | Dropped translation field(s) |
+| --- | --- |
+| `GET /posts*` | `body` |
+| `GET /books*` | `description` |
+| `GET /academic-papers*` | `abstract` |
+| `GET /gallery*` | `description` |
+
+Detail endpoints (`GET /<resource>/:id`, `GET /posts/by-slug/:slug`)
+return the **full** translation, including the dropped fields. Call
+the detail endpoint when a list view needs to expand a row in place
+(e.g. inline preview on hover, edit-without-navigating drawer).
+
+For post-list translations specifically, `reading_time_minutes` is
+always `0` — the value is derived from `body`, which isn't fetched.
+Read the real value from the detail endpoint.
+
+The `media` (cover image) include on every list payload also carries
+only the public-facing fields: `id`, `url`, `filename`, `alt_text`,
+`mime_type`, `width`, `height`. Internal fields (`created_at`,
+`uploaded_by`, `file_size`) live on the detail endpoint only.
 
 ---
 
@@ -362,15 +394,34 @@ The pre-signed URL is bound to the **requesting user**. Only that user
 can call `/media/confirm` for the resulting key — defends against an
 admin handing the upload URL to a less-trusted helper.
 
-### Server-side variant generation
+### Server-side variant generation (background)
 
 On `/media/confirm`, the API runs `sharp` to produce WebP variants at
 **320, 768, 1280, and 1920 px** widths (skipping any that would
 upscale). EXIF orientation is applied and stripped, so sideways phone
 photos come out the right way up. `sharp` is capped at 50 megapixels of
 input so a malicious 30000×30000 PNG fails fast instead of OOM-ing the
-dyno. The response includes `variants[]`. If generation failed
-mid-upload, call `POST /media/:id/regenerate-variants`.
+dyno.
+
+**Variant generation runs in the background**, off the request path.
+`/media/confirm` returns immediately with `variants: []` so the
+editor isn't blocked by a 2–5 s `sharp` decode. The generated rows
+appear in subsequent reads of the media row:
+
+```text
+1. POST /media/confirm        →   { ..., variants: [] }      // 200 OK, immediate
+2. (background, ~1–3 s)            sharp encodes 4 widths,
+                                   media_variants rows insert
+3. GET  /media/:id            →   { ..., variants: [ ... 4 rows ... ] }
+```
+
+CMS recommendation: poll `GET /media/:id` every ~500 ms until
+`variants.length === 4` if the upload UI displays the variants.
+Otherwise (the public site is the consumer), no polling needed — the
+original `url` is fully usable while variants are still being written.
+
+If generation failed and `variants[]` stays empty past 5–10 s, call
+`POST /media/:id/regenerate-variants`.
 
 ### Public site usage
 
@@ -597,16 +648,18 @@ Add a `<link rel="alternate">` to the public site's `<head>`:
 
 ## Cron schedules
 
-The API runs five background jobs on cron schedules. Front-end
+The API runs seven background jobs on cron schedules. Front-end
 behaviour should account for the latency.
 
 | Job | Schedule | What it does |
 | --- | --- | --- |
-| Scheduled post publishing | every minute | Flips `is_published=true` on posts whose `published_at <= now()` and were left as drafts. Audit-logs with `{ scheduled: true, by: 'cron' }`. |
-| Newsletter campaign sender | every minute | Processes 50 pending recipients per campaign per tick. Crash-safe — resumes from `sent_at IS NULL AND failed_at IS NULL`. |
+| Scheduled post publishing | every minute | Flips `is_published=true` on posts whose `published_at <= now()` and were left as drafts. One `updateMany` per tick; audit-logs each transition with `{ scheduled: true, by: 'cron' }`. |
+| Newsletter campaign sender | every minute | Processes 50 pending recipients per campaign per tick. Sends in parallel with a concurrency cap of 5 SMTP connections; the wall-clock per tick dropped from ~50 s to a few seconds. Crash-safe — resumes from `sent_at IS NULL AND failed_at IS NULL`. |
 | Newsletter campaign promoter | every minute | Promotes campaigns with `status=scheduled` whose `scheduled_at <= now()` into `sending`. |
 | YouTube channel mirror sync | every 6 hours (plus once 30 s after boot) | Pulls the configured channel's videos + playlists into the local DB so the homepage / `/youtube/*` endpoints never hit the YouTube Data API on the request path. Silently skipped when `YOUTUBE_API_KEY` / `YOUTUBE_CHANNEL_ID` are unset. |
 | Orphan upload cleanup | every hour | Deletes `pending_media_uploads` rows older than the pre-signed URL TTL that were never confirmed via `POST /media/confirm`. Also purges the abandoned R2 object so the bucket doesn't accumulate dead keys. |
+| Refresh-token cleanup | daily at 03:15 | Drops `refresh_tokens` rows past `expires_at` and revoked rows older than 30 days (past the reuse-detection grace window). |
+| Audit-log retention | daily at 03:30 | Drops `audit_logs` rows older than **365 days**. Window is configurable via `AUDIT_LOG_RETENTION_DAYS` in `src/common/audit/audit.service.ts`. The CMS audit-log viewer should not assume rows are available forever. |
 
 So:
 
@@ -659,7 +712,7 @@ The optimisations the CMS can make are around request shape:
 1. **Use the new `?status=draft|scheduled|published` filter on `GET /posts/admin`.** Server-side filtering is cheaper than fetching all and filtering in JS, and the response is 60–80% smaller.
 2. **Use `GET /media?search=<term>&mime_type=image/jpeg`.** The media picker should ALWAYS pass a search or mime filter once the library grows past ~50 items. Trigram indexes are in place; the query stays fast indefinitely.
 3. **Debounce search input by ≥ 300ms before calling `GET /search`** or the post / media `?search=`. Trigram indexes keep individual queries fast (~5–10 ms each), but un-debounced search fires one DB query per keystroke per concurrent user. 300ms is the standard floor.
-4. **Don't poll `GET /dashboard/stats` faster than every 30 seconds.** The endpoint does 17 parallel COUNTs; cheap individually, but pointless to repeat sub-30s since none of the counts change that fast.
+4. **Don't poll `GET /dashboard/stats` faster than every 30 seconds.** The response is cached server-side for 30 s (recent perf pass); polling more frequently doesn't change what comes back, just burns network. The server returns the same JSON until the cache expires.
 5. **Read the JWT's `permissions[]` array locally to drive button-visibility.** Do not re-call `GET /auth/me` per route render. The JWT is good for 24h; decode it once on login.
 6. **For the campaign composer, fetch the recipient count once via `GET /newsletter/subscribers?is_active=true&limit=1` and read `pagination.total`.** Don't repeat this on every keystroke.
 
@@ -683,7 +736,7 @@ the bulk of the traffic.
 
 - **Cloudflare Analytics → Cache Status** — target ≥ 90% cache hit rate on `/api/v1/posts*`, `/api/v1/books*`, `/api/v1/gallery*`, `/api/v1/homepage`. If hit rate is low, check that Cloudflare isn't stripping `Vary: Accept-Language` or that the front-end isn't appending cache-busting query params.
 - **Supabase Query Performance** — flag any query > 100ms p95 on `posts`, `book_translations`, `media`. The trigram + B-tree indexes added in round 6 should keep these well below the threshold.
-- **`/dashboard/stats` p95** — should stay < 100 ms. If it climbs, time to add a 30 s in-memory cache to the service.
+- **`/dashboard/stats` p95** — should stay < 50 ms (response is now cached in-process for 30 s and the 4 post counts collapsed into a single `FILTER`-based query). If it climbs, profile the underlying counts.
 
 ### What's deliberately NOT cached
 
@@ -708,6 +761,30 @@ complete list. The ones the front-end may need to know about:
 | `PUBLIC_SITE_NAME` | `Imam Zain Foundation` | The RSS feed's `<channel><title>`. |
 | `NEWSLETTER_UNSUBSCRIBE_URL_BASE` | `https://imamzain.org/newsletter/unsubscribe` | The page the front-end serves to handle unsubscribe links. Must accept `?email=&token=` and POST them to the API. |
 | `ALLOWED_ORIGINS` | (required in prod) | The API's CORS allowlist. The front-end's origin must be on this list — otherwise browsers will block the calls. |
+| `REDIS_URL` | unset (in-process) | Set in **multi-instance** deployments only. Enables a shared throttler counter across processes and pub/sub-driven JWT cache invalidation. Unset = in-process fallbacks (correct for single-instance prod and dev). |
+
+### Multi-instance correctness
+
+Two pieces of state matter only when the API runs as >1 process behind
+a load balancer:
+
+1. **Throttler counters.** In-memory by default — N instances means N
+   independent buckets and the 1000/15min global limit effectively
+   becomes 1000 × N. With `REDIS_URL` set, counters live in Redis
+   (`@nest-lab/throttler-storage-redis`); one shared bucket per IP
+   across the fleet.
+2. **JWT user cache.** The validate path keeps a 30 s in-process cache
+   per user so authenticated requests skip a `users.findUnique`. When
+   a password change / admin reset / soft-delete invalidates the
+   cache, instance A publishes the user id on the `jwt-cache:invalidate`
+   Redis channel; every other instance drops its local copy within
+   milliseconds. Without Redis, the invalidation is local only and
+   peer instances serve the stale row for up to 30 s.
+
+If `REDIS_URL` is set but Redis is briefly unreachable, the API still
+boots and serves requests — ioredis retries with backoff, throttler
+degrades to in-memory counters until reconnection, pub/sub starts
+working again on reconnect. No request path blocks on Redis being up.
 
 ---
 

@@ -1,4 +1,5 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
+import { youtube_playlists, youtube_videos } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 
 @Injectable()
@@ -82,7 +83,7 @@ export class YoutubeService {
   }
 }
 
-function serialiseVideo(v: any) {
+function serialiseVideo(v: youtube_videos) {
   return {
     video_id: v.video_id,
     title: v.title,
@@ -98,7 +99,7 @@ function serialiseVideo(v: any) {
   };
 }
 
-function serialisePlaylist(p: any) {
+function serialisePlaylist(p: youtube_playlists) {
   return {
     playlist_id: p.playlist_id,
     title: p.title,

@@ -89,8 +89,8 @@ export class RolesController {
   @ApiCreatedResponse({ type: RoleCreatedResponseDto, description: 'Role created with all provided translations; returns the new role record' })
   @ApiBadRequestResponse({ type: ValidationErrorDto, description: 'Validation failed' })
   @ApiConflictResponse({ type: ConflictErrorDto, description: 'A role with that name already exists' })
-  create(@Body() dto: CreateRoleDto, @CurrentUser() user: CurrentUserPayload) {
-    return this.rolesService.create(dto, user.id);
+  create(@Body() dto: CreateRoleDto, @CurrentUser() user: CurrentUserPayload, @Lang() lang: string | null) {
+    return this.rolesService.create(dto, user.id, lang);
   }
 
   @Patch(':id')
@@ -105,8 +105,9 @@ export class RolesController {
     @Param('id') id: string,
     @Body() dto: UpdateRoleDto,
     @CurrentUser() user: CurrentUserPayload,
+    @Lang() lang: string | null,
   ) {
-    return this.rolesService.update(id, dto, user.id);
+    return this.rolesService.update(id, dto, user.id, lang);
   }
 
   @Delete(':id')
@@ -124,15 +125,16 @@ export class RolesController {
   @RequirePermission('roles:update')
   @ApiOperation({ summary: 'Assign a permission to a role', description: 'Requires permission: `roles:update`' })
   @ApiParam({ name: 'id', format: 'uuid', description: 'Role ID' })
-  @ApiCreatedResponse({ type: RoleMessageResponseDto, description: 'Permission added to the role; users holding this role gain the new access on their next request' })
+  @ApiCreatedResponse({ type: RoleDetailResponseDto, description: 'Permission added to the role; returns the role with its updated permission list. Users holding this role gain the new access on their next request.' })
   @ApiBadRequestResponse({ type: ValidationErrorDto, description: 'Validation failed (missing or non-UUID permission_id)' })
   @ApiNotFoundResponse({ type: NotFoundErrorDto, description: 'No role or permission with that ID exists' })
   assignPermission(
     @Param('id') id: string,
     @Body() dto: AssignPermissionDto,
     @CurrentUser() user: CurrentUserPayload,
+    @Lang() lang: string | null,
   ) {
-    return this.rolesService.assignPermission(id, dto, user.id);
+    return this.rolesService.assignPermission(id, dto, user.id, lang);
   }
 
   @Delete(':id/permissions/:permissionId')
@@ -140,13 +142,14 @@ export class RolesController {
   @ApiOperation({ summary: 'Remove a permission from a role', description: 'Requires permission: `roles:update`' })
   @ApiParam({ name: 'id', format: 'uuid', description: 'Role ID' })
   @ApiParam({ name: 'permissionId', format: 'uuid', description: 'Permission ID' })
-  @ApiOkResponse({ type: RoleMessageResponseDto, description: 'Permission removed from the role; affected users lose this access on their next request' })
+  @ApiOkResponse({ type: RoleDetailResponseDto, description: 'Permission removed from the role; returns the role with its updated permission list. Affected users lose this access on their next request.' })
   @ApiNotFoundResponse({ type: NotFoundErrorDto, description: 'No role or permission with that ID exists' })
   removePermission(
     @Param('id') id: string,
     @Param('permissionId') permissionId: string,
     @CurrentUser() user: CurrentUserPayload,
+    @Lang() lang: string | null,
   ) {
-    return this.rolesService.removePermission(id, permissionId, user.id);
+    return this.rolesService.removePermission(id, permissionId, user.id, lang);
   }
 }

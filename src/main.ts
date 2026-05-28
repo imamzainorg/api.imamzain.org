@@ -23,6 +23,7 @@ import helmet from "helmet";
 import { AppModule } from "./app.module";
 import { AllExceptionsFilter } from "./common/filters/all-exceptions.filter";
 import { ResponseInterceptor } from "./common/interceptors/response.interceptor";
+import { smartCompression } from "./common/middleware/compression.middleware";
 
 function resolveCorsOrigin(): string[] | boolean {
   const allowedOriginsEnv = process.env.ALLOWED_ORIGINS;
@@ -76,7 +77,7 @@ async function bootstrap() {
     }),
   );
 
-  app.use(require("compression")());
+  app.use(smartCompression());
 
   app.enableCors({
     origin: resolveCorsOrigin(),

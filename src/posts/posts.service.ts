@@ -18,9 +18,69 @@ const POST_DETAIL_INCLUDE = {
   post_attachments: { include: { media: true }, orderBy: { display_order: 'asc' } },
 } satisfies Prisma.postsInclude;
 
+// List queries drop the full `body` from translations (typically 5-50 KB of
+// HTML each, multiplied by N translations × page size) and collapse the
+// category's full translation array to a single resolved row. Detail still
+// returns everything.
+const POST_LIST_TRANSLATION_SELECT = {
+  post_id: true,
+  lang: true,
+  title: true,
+  summary: true,
+  slug: true,
+  is_default: true,
+  meta_title: true,
+  meta_description: true,
+  og_image_id: true,
+} satisfies Prisma.post_translationsSelect;
+
+const POST_LIST_SELECT = {
+  id: true,
+  category_id: true,
+  cover_image_id: true,
+  is_published: true,
+  is_featured: true,
+  published_at: true,
+  views: true,
+  created_at: true,
+  updated_at: true,
+  deleted_at: true,
+  post_translations: { select: POST_LIST_TRANSLATION_SELECT },
+  post_categories: {
+    select: {
+      id: true,
+      created_at: true,
+      post_category_translations: {
+        select: { category_id: true, lang: true, title: true, slug: true, description: true },
+      },
+    },
+  },
+  media: {
+    select: {
+      id: true,
+      url: true,
+      filename: true,
+      alt_text: true,
+      mime_type: true,
+      width: true,
+      height: true,
+    },
+  },
+  post_attachments: {
+    take: 1,
+    select: { post_id: true, media_id: true, display_order: true, media: { select: { id: true, url: true, mime_type: true, filename: true } } },
+    orderBy: { display_order: 'asc' },
+  },
+} satisfies Prisma.postsSelect;
+
 /** Decorate a translation row with the derived `reading_time_minutes`. */
 function withReadingTime<T extends { body?: string | null }>(t: T): T & { reading_time_minutes: number } {
   return { ...t, reading_time_minutes: readingTimeMinutes(t.body ?? null) };
+}
+
+/** List translations carry no body — reading time is unknown without it, so report 0. */
+function withZeroReadingTime<T extends Record<string, unknown>>(t: T): T & { reading_time_minutes: number } {
+  return { ...t, reading_time_minutes: 0 };
 }
 
 @Injectable()
@@ -82,16 +142,7 @@ export class PostsService {
     const [items, total] = await Promise.all([
       this.prisma.posts.findMany({
         where,
-        include: {
-          post_translations: true,
-          post_categories: { include: { post_category_translations: true } },
-          media: true,
-          post_attachments: {
-            take: 1,
-            include: { media: true },
-            orderBy: { display_order: 'asc' },
-          },
-        },
+        select: POST_LIST_SELECT,
         orderBy,
         skip,
         take: limit,
@@ -100,7 +151,7 @@ export class PostsService {
     ]);
 
     const mapped = items.map((post) => {
-      const decorated = post.post_translations.map(withReadingTime);
+      const decorated = post.post_translations.map(withZeroReadingTime);
       return {
         ...post,
         post_translations: decorated,
@@ -157,7 +208,7 @@ export class PostsService {
     };
   }
 
-  async create(dto: CreatePostDto, userId: string) {
+  async create(dto: CreatePostDto, userId: string, lang: string | null) {
     const category = await this.prisma.post_categories.findFirst({
       where: { id: dto.category_id, deleted_at: null },
     });
@@ -174,8 +225,11 @@ export class PostsService {
       .map((t) => t.og_image_id)
       .filter((v): v is string => typeof v === 'string');
     if (ogImageIds.length > 0) {
-      const found = await this.prisma.media.count({ where: { id: { in: ogImageIds } } });
-      if (found !== new Set(ogImageIds).size) {
+      const found = await this.prisma.media.findMany({
+        where: { id: { in: ogImageIds } },
+        select: { id: true },
+      });
+      if (found.length !== new Set(ogImageIds).size) {
         throw new NotFoundException('One or more og_image_id values do not match any media record');
       }
     }
@@ -185,18 +239,12 @@ export class PostsService {
       throw new BadRequestException('Exactly one translation must have is_default: true');
     }
 
-    const post = await this.prisma.$transaction(async (tx) => {
-      // Pre-check slug availability inside the transaction so duplicate slugs
-      // surface as 409 with a useful message instead of a Prisma P2002 500.
-      for (const t of dto.translations) {
-        const conflict = await tx.post_translations.findFirst({
-          where: { lang: t.lang, slug: t.slug },
-        });
-        if (conflict) {
-          throw new ConflictException(`Slug "${t.slug}" is already in use for language ${t.lang}`);
-        }
-      }
+    // Batched pre-check: one findMany covers every (lang, slug) up front so
+    // duplicate slugs surface as a useful 409 instead of N sequential queries
+    // followed by a P2002 from createMany.
+    await this.assertSlugsAvailable(this.prisma, dto.translations.map((t) => ({ lang: t.lang, slug: t.slug })));
 
+    const post = await this.prisma.$transaction(async (tx) => {
       const created = await tx.posts.create({
         data: {
           category_id: dto.category_id,
@@ -236,7 +284,7 @@ export class PostsService {
       return created;
     });
 
-    await this.audit.write({
+    this.audit.write({
       actorId: userId,
       action: AUDIT_ACTIONS.POST_CREATED,
       resourceType: 'post',
@@ -244,10 +292,11 @@ export class PostsService {
       changes: { method: 'POST', path: '/api/v1/posts' },
     });
 
-    return { message: 'Post created', data: post };
+    const { data } = await this.findOne(post.id, lang, true);
+    return { message: 'Post created', data };
   }
 
-  async update(id: string, dto: UpdatePostDto, userId: string) {
+  async update(id: string, dto: UpdatePostDto, userId: string, lang: string | null) {
     const post = await this.prisma.posts.findFirst({ where: { id, deleted_at: null } });
     if (!post) throw new NotFoundException('Post not found');
 
@@ -268,11 +317,20 @@ export class PostsService {
         .map((t) => t.og_image_id)
         .filter((v): v is string => typeof v === 'string');
       if (ogImageIds.length > 0) {
-        const found = await this.prisma.media.count({ where: { id: { in: ogImageIds } } });
-        if (found !== new Set(ogImageIds).size) {
+        const found = await this.prisma.media.findMany({
+          where: { id: { in: ogImageIds } },
+          select: { id: true },
+        });
+        if (found.length !== new Set(ogImageIds).size) {
           throw new NotFoundException('One or more og_image_id values do not match any media record');
         }
       }
+
+      await this.assertSlugsAvailable(
+        this.prisma,
+        dto.translations.map((t) => ({ lang: t.lang, slug: t.slug })),
+        id,
+      );
     }
 
     await this.prisma.$transaction(async (tx) => {
@@ -293,18 +351,6 @@ export class PostsService {
 
       if (dto.translations) {
         for (const t of dto.translations) {
-          // Slug collision check (skip same row).
-          const conflict = await tx.post_translations.findFirst({
-            where: {
-              lang: t.lang,
-              slug: t.slug,
-              NOT: { post_id: id },
-            },
-          });
-          if (conflict) {
-            throw new ConflictException(`Slug "${t.slug}" is already in use for language ${t.lang}`);
-          }
-
           const cleanBody = sanitizeEditorHtml(t.body);
           const translationData = {
             title: t.title,
@@ -348,7 +394,7 @@ export class PostsService {
       }
     });
 
-    await this.audit.write({
+    this.audit.write({
       actorId: userId,
       action: AUDIT_ACTIONS.POST_UPDATED,
       resourceType: 'post',
@@ -356,10 +402,37 @@ export class PostsService {
       changes: { method: 'PATCH', path: `/api/v1/posts/${id}` },
     });
 
-    return { message: 'Post updated', data: null };
+    const { data } = await this.findOne(id, lang, true);
+    return { message: 'Post updated', data };
   }
 
-  async togglePublish(id: string, dto: TogglePublishDto, userId: string) {
+  /**
+   * Single batched (lang, slug) availability check. One findMany replaces the
+   * per-translation findFirst loops that used to run inside the transaction.
+   * Pass `excludePostId` to skip rows that already belong to the post being
+   * updated (otherwise an unchanged slug would self-conflict).
+   */
+  private async assertSlugsAvailable(
+    db: PrismaService | Prisma.TransactionClient,
+    pairs: Array<{ lang: string; slug: string }>,
+    excludePostId?: string,
+  ): Promise<void> {
+    if (pairs.length === 0) return;
+    const where: Prisma.post_translationsWhereInput = {
+      OR: pairs.map((p) => ({ lang: p.lang, slug: p.slug })),
+    };
+    if (excludePostId) where.NOT = { post_id: excludePostId };
+    const conflicts = await db.post_translations.findMany({
+      where,
+      select: { lang: true, slug: true },
+    });
+    if (conflicts.length > 0) {
+      const first = conflicts[0];
+      throw new ConflictException(`Slug "${first.slug}" is already in use for language ${first.lang}`);
+    }
+  }
+
+  async togglePublish(id: string, dto: TogglePublishDto, userId: string, lang: string | null) {
     const post = await this.prisma.posts.findFirst({ where: { id, deleted_at: null } });
     if (!post) throw new NotFoundException('Post not found');
 
@@ -371,7 +444,7 @@ export class PostsService {
     await this.prisma.posts.update({ where: { id }, data: updateData });
 
     const action = dto.is_published ? AUDIT_ACTIONS.POST_PUBLISHED : AUDIT_ACTIONS.POST_UNPUBLISHED;
-    await this.audit.write({
+    this.audit.write({
       actorId: userId,
       action,
       resourceType: 'post',
@@ -379,7 +452,8 @@ export class PostsService {
       changes: { method: 'PATCH', path: `/api/v1/posts/${id}/publish`, is_published: dto.is_published },
     });
 
-    return { message: `Post ${dto.is_published ? 'published' : 'unpublished'}`, data: null };
+    const { data } = await this.findOne(id, lang, true);
+    return { message: `Post ${dto.is_published ? 'published' : 'unpublished'}`, data };
   }
 
   /**
@@ -388,7 +462,9 @@ export class PostsService {
    * Editors set a future `published_at` and leave `is_published=false`; this
    * cron flips them to `is_published=true` once the timestamp is reached.
    * Runs every minute — cheap query (indexed on deleted_at + is_published)
-   * with a tight WHERE clause.
+   * with a tight WHERE clause. The flip is now a single updateMany + a
+   * single batched audit-log insert; the previous implementation looped one
+   * UPDATE + one audit row per due post.
    *
    * Audit-logs each transition as POST_PUBLISHED with a `scheduled: true`
    * marker so editor-driven publishes can be distinguished from automatic
@@ -410,25 +486,21 @@ export class PostsService {
 
     this.logger.log(`Auto-publishing ${due.length} scheduled post(s)`);
 
-    for (const { id } of due) {
-      try {
-        await this.prisma.posts.update({
-          where: { id },
-          data: { is_published: true, updated_at: now },
-        });
-      } catch (err) {
-        this.logger.warn(`Scheduled publish failed for post ${id}: ${err}`);
-        continue;
-      }
+    const ids = due.map((d) => d.id);
+    await this.prisma.posts.updateMany({
+      where: { id: { in: ids } },
+      data: { is_published: true, updated_at: now },
+    });
 
-      await this.audit.write({
+    this.audit.writeMany(
+      ids.map((id) => ({
         actorId: null,
         action: AUDIT_ACTIONS.POST_PUBLISHED,
         resourceType: 'post',
         resourceId: id,
         changes: { scheduled: true, by: 'cron' },
-      });
-    }
+      })),
+    );
   }
 
   /**
@@ -457,9 +529,9 @@ export class PostsService {
     const [items, total] = await Promise.all([
       this.prisma.posts.findMany({
         where,
-        include: {
-          post_translations: true,
-          post_categories: { include: { post_category_translations: true } },
+        select: {
+          ...POST_LIST_SELECT,
+          deleted_at: true,
         },
         orderBy: [{ deleted_at: 'desc' }, { id: 'asc' }],
         skip,
@@ -468,15 +540,18 @@ export class PostsService {
       this.prisma.posts.count({ where }),
     ]);
 
-    const mapped = items.map((post) => ({
-      ...post,
-      // Show the original slug in the response so the CMS doesn't have to
-      // strip the suffix itself when listing trash.
-      post_translations: post.post_translations.map((t) => ({
+    const mapped = items.map((post) => {
+      const post_translations = post.post_translations.map((t) => ({
         ...t,
         slug: stripSoftDeleteSuffix(t.slug),
-      })),
-    }));
+        reading_time_minutes: 0,
+      }));
+      return {
+        ...post,
+        post_translations,
+        translation: resolveTranslation(post_translations, null),
+      };
+    });
 
     return {
       message: 'Trash fetched',
@@ -503,19 +578,24 @@ export class PostsService {
     }));
 
     await this.prisma.$transaction(async (tx) => {
-      // Conflict-check each (lang, original_slug) against live rows before
-      // any update — a single conflict aborts the whole restore.
-      for (const { lang, original } of restoredSlugs) {
-        const conflict = await tx.post_translations.findFirst({
-          where: { lang, slug: original, NOT: { post_id: id } },
-        });
-        if (conflict) {
-          throw new ConflictException(
-            `Cannot restore: slug "${original}" (${lang}) is now used by another post`,
-          );
-        }
+      // Single batched conflict-check across every (lang, original_slug).
+      const conflicts = await tx.post_translations.findMany({
+        where: {
+          OR: restoredSlugs.map(({ lang, original }) => ({ lang, slug: original })),
+          NOT: { post_id: id },
+        },
+        select: { lang: true, slug: true },
+      });
+      if (conflicts.length > 0) {
+        const first = conflicts[0];
+        throw new ConflictException(
+          `Cannot restore: slug "${first.slug}" (${first.lang}) is now used by another post`,
+        );
       }
 
+      // Per-row updates: each translation's slug needs the suffix stripped to
+      // its own value. Prisma has no `update column = func(column)` shorthand;
+      // a raw query would work but loses the type safety the upserts give us.
       for (const { lang, original } of restoredSlugs) {
         await tx.post_translations.update({
           where: { post_id_lang: { post_id: id, lang } },
@@ -529,7 +609,7 @@ export class PostsService {
       });
     });
 
-    await this.audit.write({
+    this.audit.write({
       actorId: userId,
       action: AUDIT_ACTIONS.POST_RESTORED,
       resourceType: 'post',
@@ -541,14 +621,12 @@ export class PostsService {
   }
 
   /**
-   * Bulk publish / unpublish. Iterates the requested ids, applies the same
-   * `togglePublish` semantics per row (auto-fill `published_at` on first
-   * publish), and audit-logs each transition. Posts that are missing,
-   * soft-deleted, or already in the target state are returned in
-   * `skipped` so the CMS can show "8 published, 2 already published".
+   * Bulk publish / unpublish. Posts that are missing, soft-deleted, or already
+   * in the target state are returned in `skipped`. The mutation now runs as at
+   * most two `updateMany` calls: one for rows whose `published_at` is already
+   * set, one for rows that need it stamped now. Audit rows are batched.
    *
-   * The whole batch runs inside a single transaction — partial failure
-   * rolls back every row. ID cap is enforced by the DTO (200).
+   * The ID cap is enforced by the DTO (200).
    */
   async bulkSetPublish(dto: BulkPublishDto, userId: string) {
     const uniqueIds = Array.from(new Set(dto.ids));
@@ -559,7 +637,8 @@ export class PostsService {
     const existingById = new Map(existing.map((p) => [p.id, p]));
 
     const skipped: string[] = [];
-    const targets: Array<{ id: string; published_at: Date | null }> = [];
+    const idsNeedingStamp: string[] = [];
+    const idsAlreadyStamped: string[] = [];
 
     for (const id of uniqueIds) {
       const row = existingById.get(id);
@@ -567,10 +646,15 @@ export class PostsService {
         skipped.push(id);
         continue;
       }
-      targets.push({ id, published_at: row.published_at });
+      if (dto.is_published && !row.published_at) {
+        idsNeedingStamp.push(id);
+      } else {
+        idsAlreadyStamped.push(id);
+      }
     }
 
-    if (targets.length === 0) {
+    const targetCount = idsNeedingStamp.length + idsAlreadyStamped.length;
+    if (targetCount === 0) {
       return { message: 'No posts updated', data: { affected: 0, skipped } };
     }
 
@@ -578,37 +662,42 @@ export class PostsService {
     const action = dto.is_published ? AUDIT_ACTIONS.POST_PUBLISHED : AUDIT_ACTIONS.POST_UNPUBLISHED;
 
     await this.prisma.$transaction(async (tx) => {
-      for (const t of targets) {
-        const data: Prisma.postsUpdateInput = { is_published: dto.is_published, updated_at: now };
-        if (dto.is_published && !t.published_at) data.published_at = now;
-        await tx.posts.update({ where: { id: t.id }, data });
+      if (idsAlreadyStamped.length > 0) {
+        await tx.posts.updateMany({
+          where: { id: { in: idsAlreadyStamped } },
+          data: { is_published: dto.is_published, updated_at: now },
+        });
+      }
+      if (idsNeedingStamp.length > 0) {
+        await tx.posts.updateMany({
+          where: { id: { in: idsNeedingStamp } },
+          data: { is_published: dto.is_published, updated_at: now, published_at: now },
+        });
       }
     });
 
-    for (const t of targets) {
-      await this.audit.write({
+    const allTargets = [...idsAlreadyStamped, ...idsNeedingStamp];
+    this.audit.writeMany(
+      allTargets.map((resourceId) => ({
         actorId: userId,
         action,
         resourceType: 'post',
-        resourceId: t.id,
+        resourceId,
         changes: { method: 'POST', path: '/api/v1/posts/bulk/publish', is_published: dto.is_published, bulk: true },
-      });
-    }
+      })),
+    );
 
     return {
-      message: `${targets.length} post(s) ${dto.is_published ? 'published' : 'unpublished'}`,
-      data: { affected: targets.length, skipped },
+      message: `${targetCount} post(s) ${dto.is_published ? 'published' : 'unpublished'}`,
+      data: { affected: targetCount, skipped },
     };
   }
 
   /**
-   * Bulk soft-delete. Same per-row semantics as `softDelete` (suffix every
-   * translation slug to free the unique constraint, audit-log each row).
-   * Already-deleted or missing ids are returned in `skipped`.
-   *
-   * Slug suffixing has to be a per-row update because each translation row
-   * holds its own slug; we loop within a single transaction so the cost
-   * scales linearly with the batch size but the whole batch is atomic.
+   * Bulk soft-delete. Slug suffixing is done as a single raw UPDATE per
+   * translation table (one query, regardless of batch size); the deletion
+   * flag flip is a single updateMany on `posts`. Already-deleted or missing
+   * ids are returned in `skipped`.
    */
   async bulkDelete(dto: BulkIdsDto, userId: string) {
     const uniqueIds = Array.from(new Set(dto.ids));
@@ -629,27 +718,28 @@ export class PostsService {
     const suffix = softDeleteSuffix(deletedAt);
 
     await this.prisma.$transaction(async (tx) => {
-      for (const id of targetIds) {
-        const translations = await tx.post_translations.findMany({ where: { post_id: id } });
-        for (const t of translations) {
-          await tx.post_translations.update({
-            where: { post_id_lang: { post_id: id, lang: t.lang } },
-            data: { slug: `${t.slug}${suffix}` },
-          });
-        }
-        await tx.posts.update({ where: { id }, data: { deleted_at: deletedAt } });
-      }
+      // Single raw UPDATE suffixes every translation slug across the batch in
+      // one DB round-trip instead of N findMany + M updates.
+      await tx.$executeRaw`
+        UPDATE post_translations
+        SET slug = slug || ${suffix}
+        WHERE post_id = ANY(${targetIds}::uuid[])
+      `;
+      await tx.posts.updateMany({
+        where: { id: { in: targetIds } },
+        data: { deleted_at: deletedAt },
+      });
     });
 
-    for (const id of targetIds) {
-      await this.audit.write({
+    this.audit.writeMany(
+      targetIds.map((resourceId) => ({
         actorId: userId,
         action: AUDIT_ACTIONS.POST_DELETED,
         resourceType: 'post',
-        resourceId: id,
+        resourceId,
         changes: { method: 'POST', path: '/api/v1/posts/bulk/delete', bulk: true },
-      });
-    }
+      })),
+    );
 
     return {
       message: `${targetIds.length} post(s) deleted`,
@@ -669,17 +759,15 @@ export class PostsService {
     const suffix = softDeleteSuffix(deletedAt);
 
     await this.prisma.$transaction(async (tx) => {
-      const translations = await tx.post_translations.findMany({ where: { post_id: id } });
-      for (const t of translations) {
-        await tx.post_translations.update({
-          where: { post_id_lang: { post_id: id, lang: t.lang } },
-          data: { slug: `${t.slug}${suffix}` },
-        });
-      }
+      await tx.$executeRaw`
+        UPDATE post_translations
+        SET slug = slug || ${suffix}
+        WHERE post_id = ${id}::uuid
+      `;
       await tx.posts.update({ where: { id }, data: { deleted_at: deletedAt } });
     });
 
-    await this.audit.write({
+    this.audit.write({
       actorId: userId,
       action: AUDIT_ACTIONS.POST_DELETED,
       resourceType: 'post',

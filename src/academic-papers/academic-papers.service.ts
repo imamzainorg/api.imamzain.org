@@ -7,6 +7,39 @@ import { resolveTranslation } from '../common/utils/translation.util';
 import { buildPaginationMeta, resolvePagination } from '../common/utils/pagination.util';
 import { AcademicPaperQueryDto, CreateAcademicPaperDto, UpdateAcademicPaperDto } from './dto/academic-paper.dto';
 
+// List queries drop the abstract (heavy free-text) from translations.
+const PAPER_LIST_SELECT = {
+  id: true,
+  category_id: true,
+  published_year: true,
+  pdf_url: true,
+  uploaded_by: true,
+  created_at: true,
+  updated_at: true,
+  deleted_at: true,
+  academic_paper_translations: {
+    select: {
+      paper_id: true,
+      lang: true,
+      title: true,
+      authors: true,
+      keywords: true,
+      publication_venue: true,
+      page_count: true,
+      is_default: true,
+    },
+  },
+  academic_paper_categories: {
+    select: {
+      id: true,
+      created_at: true,
+      academic_paper_category_translations: {
+        select: { category_id: true, lang: true, title: true, slug: true, description: true },
+      },
+    },
+  },
+} satisfies Prisma.academic_papersSelect;
+
 @Injectable()
 export class AcademicPapersService {
   private readonly logger = new Logger(AcademicPapersService.name);
@@ -36,10 +69,7 @@ export class AcademicPapersService {
     const [items, total] = await Promise.all([
       this.prisma.academic_papers.findMany({
         where,
-        include: {
-          academic_paper_translations: true,
-          academic_paper_categories: { include: { academic_paper_category_translations: true } },
-        },
+        select: PAPER_LIST_SELECT,
         orderBy: [{ created_at: 'desc' }, { id: 'asc' }],
         skip,
         take: limit,
@@ -63,7 +93,7 @@ export class AcademicPapersService {
     return { message: 'Paper fetched', data: { ...paper, translation: resolveTranslation(paper.academic_paper_translations, lang) } };
   }
 
-  async create(dto: CreateAcademicPaperDto, userId: string) {
+  async create(dto: CreateAcademicPaperDto, userId: string, lang: string | null) {
     const category = await this.prisma.academic_paper_categories.findFirst({ where: { id: dto.category_id, deleted_at: null } });
     if (!category) throw new NotFoundException('Category not found');
 
@@ -103,10 +133,11 @@ export class AcademicPapersService {
       changes: { method: 'POST', path: '/api/v1/academic-papers' },
     });
 
-    return { message: 'Paper created', data: paper };
+    const { data } = await this.findOne(paper.id, lang);
+    return { message: 'Paper created', data };
   }
 
-  async update(id: string, dto: UpdateAcademicPaperDto, userId: string) {
+  async update(id: string, dto: UpdateAcademicPaperDto, userId: string, lang: string | null) {
     const paper = await this.prisma.academic_papers.findFirst({ where: { id, deleted_at: null } });
     if (!paper) throw new NotFoundException('Paper not found');
 
@@ -162,7 +193,8 @@ export class AcademicPapersService {
       changes: { method: 'PATCH', path: `/api/v1/academic-papers/${id}` },
     });
 
-    return { message: 'Paper updated', data: null };
+    const { data } = await this.findOne(id, lang);
+    return { message: 'Paper updated', data };
   }
 
   /** List soft-deleted academic papers (admin trash view). */
@@ -173,10 +205,7 @@ export class AcademicPapersService {
     const [items, total] = await Promise.all([
       this.prisma.academic_papers.findMany({
         where,
-        include: {
-          academic_paper_translations: true,
-          academic_paper_categories: { include: { academic_paper_category_translations: true } },
-        },
+        select: PAPER_LIST_SELECT,
         orderBy: [{ deleted_at: 'desc' }, { id: 'asc' }],
         skip,
         take: limit,
@@ -184,9 +213,14 @@ export class AcademicPapersService {
       this.prisma.academic_papers.count({ where }),
     ]);
 
+    const mapped = items.map((p) => ({
+      ...p,
+      translation: resolveTranslation(p.academic_paper_translations, null),
+    }));
+
     return {
       message: 'Trash fetched',
-      data: { items, pagination: buildPaginationMeta(page, limit, total) },
+      data: { items: mapped, pagination: buildPaginationMeta(page, limit, total) },
     };
   }
 

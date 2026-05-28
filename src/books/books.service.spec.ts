@@ -108,13 +108,15 @@ describe("BooksService", () => {
   });
 
   describe("create", () => {
-    it("creates book with translations in a transaction", async () => {
+    it("creates book and returns hydrated detail", async () => {
       prisma.book_categories.findFirst.mockResolvedValue({ id: "cat-1" });
       prisma.media.findUnique.mockResolvedValue({ id: "media-1" });
-      prisma.books.findFirst.mockResolvedValue(null);
       mockTx.books.create.mockResolvedValue(baseBook);
       mockTx.book_translations.createMany.mockResolvedValue({});
       prisma.$transaction.mockImplementation((cb: any) => cb(mockTx));
+      // After the tx commits, create refetches the book with includes — same
+      // shape findOne returns. Mock findFirst to back that hydrate call.
+      prisma.books.findFirst.mockResolvedValue(baseBook);
 
       const result = await service.create(
         {
@@ -123,9 +125,12 @@ describe("BooksService", () => {
           translations: [{ lang: "ar", title: "كتاب", is_default: true }],
         },
         "user-1",
+        null,
       );
 
       expect(result.data.id).toBe("book-1");
+      expect(result.data.book_translations).toBeDefined();
+      expect(result.data.translation).toBeDefined();
     });
 
     it("throws NotFoundException when category not found", async () => {
@@ -139,6 +144,7 @@ describe("BooksService", () => {
             translations: [{ lang: "ar", title: "t", is_default: true }],
           },
           "u1",
+          null,
         ),
       ).rejects.toThrow(NotFoundException);
     });
@@ -155,6 +161,7 @@ describe("BooksService", () => {
             translations: [{ lang: "ar", title: "t", is_default: true }],
           },
           "u1",
+          null,
         ),
       ).rejects.toThrow(NotFoundException);
     });
@@ -173,6 +180,7 @@ describe("BooksService", () => {
             translations: [{ lang: "ar", title: "t", is_default: true }],
           },
           "u1",
+          null,
         ),
       ).rejects.toThrow(ConflictException);
     });
@@ -190,29 +198,30 @@ describe("BooksService", () => {
             translations: [{ lang: "ar", title: "t", is_default: false }],
           },
           "u1",
+          null,
         ),
       ).rejects.toThrow(BadRequestException);
     });
   });
 
   describe("update", () => {
-    it("updates book inside a transaction", async () => {
-      prisma.books.findFirst
-        .mockResolvedValueOnce(baseBook)
-        .mockResolvedValue(null);
+    it("updates book and returns hydrated detail", async () => {
+      // Default mock covers both the initial existence check and findOne's hydrate.
+      prisma.books.findFirst.mockResolvedValue(baseBook);
       mockTx.books.update.mockResolvedValue({});
       mockTx.book_translations.upsert.mockResolvedValue({});
       prisma.$transaction.mockImplementation((cb: any) => cb(mockTx));
 
-      const result = await service.update("book-1", { pages: 300 }, "user-1");
+      const result = await service.update("book-1", { pages: 300 }, "user-1", null);
 
       expect(result.message).toBe("Book updated");
+      expect(result.data.id).toBe("book-1");
     });
 
     it("throws NotFoundException when book not found", async () => {
       prisma.books.findFirst.mockResolvedValue(null);
 
-      await expect(service.update("ghost", {}, "u1")).rejects.toThrow(
+      await expect(service.update("ghost", {}, "u1", null)).rejects.toThrow(
         NotFoundException,
       );
     });
@@ -222,7 +231,7 @@ describe("BooksService", () => {
       prisma.books.findUnique.mockResolvedValueOnce({ id: "book-2", isbn: "978-0-00-000000-0" });
 
       await expect(
-        service.update("book-1", { isbn: "978-0-00-000000-0" }, "u1"),
+        service.update("book-1", { isbn: "978-0-00-000000-0" }, "u1", null),
       ).rejects.toThrow(ConflictException);
     });
   });

@@ -37,7 +37,10 @@ describe('UsersService', () => {
             },
             user_roles: {
               upsert: jest.fn(),
+              create: jest.fn(),
+              findUnique: jest.fn(),
               delete: jest.fn(),
+              deleteMany: jest.fn(),
             },
             roles: { findUnique: jest.fn() },
             audit_logs: { create: jest.fn().mockResolvedValue({}) },
@@ -96,6 +99,8 @@ describe('UsersService', () => {
       expect(result.data.id).toBe('user-1');
       expect(result.data.permissions).toContain('users:read');
       expect(result.data).not.toHaveProperty('password_hash');
+      expect(result.data).not.toHaveProperty('token_version');
+      expect(result.data).not.toHaveProperty('deleted_at');
     });
 
     it('throws NotFoundException when user not found', async () => {
@@ -106,8 +111,9 @@ describe('UsersService', () => {
   });
 
   describe('create', () => {
-    it('creates user and returns without password_hash', async () => {
-      prisma.users.findFirst.mockResolvedValue(null);
+    it('creates user and returns hydrated detail without password_hash', async () => {
+      // First findFirst is the username-conflict check (null); second is findOne's hydrate fetch.
+      prisma.users.findFirst.mockResolvedValueOnce(null).mockResolvedValue(baseUser);
       (bcrypt.hash as jest.Mock).mockResolvedValue('$2a$12$newhash');
       prisma.users.create.mockResolvedValue({ ...baseUser, password_hash: '$2a$12$newhash' });
 
@@ -115,6 +121,8 @@ describe('UsersService', () => {
 
       expect(result.data).not.toHaveProperty('password_hash');
       expect(result.message).toBe('User created');
+      // Create now returns the same shape findOne does: aggregated permissions + user_roles[].
+      expect(Array.isArray(result.data.permissions)).toBe(true);
     });
 
     it('throws ConflictException when username already taken', async () => {
@@ -127,13 +135,18 @@ describe('UsersService', () => {
   });
 
   describe('update', () => {
-    it('updates user successfully', async () => {
-      prisma.users.findFirst.mockResolvedValueOnce(baseUser).mockResolvedValue(null);
+    it('updates user successfully and returns hydrated detail', async () => {
+      // 1: initial existence check (baseUser). 2: username conflict check (null). 3: findOne hydrate.
+      prisma.users.findFirst
+        .mockResolvedValueOnce(baseUser)
+        .mockResolvedValueOnce(null)
+        .mockResolvedValue(baseUser);
       prisma.users.update.mockResolvedValue({ ...baseUser, username: 'alice2', password_hash: 'hash' });
 
       const result = await service.update('user-1', { username: 'alice2' }, 'actor-1');
 
       expect(result.data).not.toHaveProperty('password_hash');
+      expect(Array.isArray(result.data.permissions)).toBe(true);
     });
 
     it('throws NotFoundException when user not found', async () => {
@@ -153,12 +166,18 @@ describe('UsersService', () => {
     });
 
     it('does not check username conflict when username is unchanged', async () => {
-      prisma.users.findFirst.mockResolvedValueOnce(baseUser);
+      // 1: initial existence (baseUser). No conflict check (username unchanged). 2: hydrate fetch.
+      prisma.users.findFirst.mockResolvedValue(baseUser);
       prisma.users.update.mockResolvedValue({ ...baseUser, password_hash: 'hash' });
 
       await service.update('user-1', { username: 'alice' }, 'actor-1');
 
-      expect(prisma.users.findFirst).toHaveBeenCalledTimes(1);
+      // 2 calls expected: initial + hydrate. The username-conflict findFirst is skipped.
+      expect(prisma.users.findFirst).toHaveBeenCalledTimes(2);
+      const conflictCheck = prisma.users.findFirst.mock.calls.find(
+        (c: any[]) => c[0]?.where?.username !== undefined,
+      );
+      expect(conflictCheck).toBeUndefined();
     });
   });
 
@@ -183,15 +202,28 @@ describe('UsersService', () => {
   });
 
   describe('assignRole', () => {
-    it('upserts user_roles record', async () => {
+    it('creates user_roles record and returns hydrated user detail when not already assigned', async () => {
+      // Default mock covers the initial existence check and the hydrate fetch.
       prisma.users.findFirst.mockResolvedValue(baseUser);
       prisma.roles.findUnique.mockResolvedValue({ id: 'role-1', name: 'Admin' });
-      prisma.user_roles.upsert.mockResolvedValue({});
+      prisma.user_roles.findUnique.mockResolvedValue(null);
+      prisma.user_roles.create.mockResolvedValue({});
 
       const result = await service.assignRole('user-1', { role_id: 'role-1' }, 'actor-1');
 
-      expect(prisma.user_roles.upsert).toHaveBeenCalled();
+      expect(prisma.user_roles.create).toHaveBeenCalled();
       expect(result.message).toBe('Role assigned');
+      expect(result.data.permissions).toBeDefined();
+    });
+
+    it('skips the create and audit row when the role is already assigned', async () => {
+      prisma.users.findFirst.mockResolvedValue(baseUser);
+      prisma.roles.findUnique.mockResolvedValue({ id: 'role-1', name: 'Admin' });
+      prisma.user_roles.findUnique.mockResolvedValue({ user_id: 'user-1' });
+
+      await service.assignRole('user-1', { role_id: 'role-1' }, 'actor-1');
+
+      expect(prisma.user_roles.create).not.toHaveBeenCalled();
     });
 
     it('throws NotFoundException when user not found', async () => {
@@ -214,20 +246,30 @@ describe('UsersService', () => {
   });
 
   describe('removeRole', () => {
-    it('deletes user_roles record', async () => {
+    it('deletes user_roles record and returns hydrated user detail', async () => {
       prisma.users.findFirst.mockResolvedValue(baseUser);
-      prisma.user_roles.delete.mockResolvedValue({});
+      prisma.user_roles.deleteMany.mockResolvedValue({ count: 1 });
 
       const result = await service.removeRole('user-1', 'role-1', 'actor-1');
 
-      expect(prisma.user_roles.delete).toHaveBeenCalled();
+      expect(prisma.user_roles.deleteMany).toHaveBeenCalled();
       expect(result.message).toBe('Role removed');
+      expect(result.data.permissions).toBeDefined();
     });
 
     it('throws NotFoundException when user not found', async () => {
       prisma.users.findFirst.mockResolvedValue(null);
 
       await expect(service.removeRole('ghost', 'role-1', 'actor-1')).rejects.toThrow(NotFoundException);
+    });
+
+    it('throws NotFoundException with specific message when role is not assigned', async () => {
+      prisma.users.findFirst.mockResolvedValue(baseUser);
+      prisma.user_roles.deleteMany.mockResolvedValue({ count: 0 });
+
+      await expect(service.removeRole('user-1', 'role-1', 'actor-1')).rejects.toThrow(
+        'Role is not assigned to this user',
+      );
     });
   });
 });

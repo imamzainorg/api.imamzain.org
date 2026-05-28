@@ -238,5 +238,57 @@ describe("ContestService", () => {
         }),
       ).rejects.toThrow(ConflictException);
     });
+
+    it("accepts a valid attempt_token", async () => {
+      prisma.qutuf_sajjadiya_contest_attempts.findFirst.mockResolvedValue(null);
+      prisma.$queryRaw.mockResolvedValueOnce([{ id: ATTEMPT_ID }]);
+      const started = await service.start(
+        { name: "Ahmad", contact: "+9647801234567", contactType: "phone" },
+        "127.0.0.1",
+        "TestAgent",
+      );
+
+      setUpHappyPath();
+      const result = await service.submit({
+        attempt_id: ATTEMPT_ID,
+        attempt_token: started.data.attempt_token,
+        answers: [
+          { question_id: "1", answer: "C" },
+          { question_id: "2", answer: "C" },
+        ],
+      });
+
+      expect(result.data.final_score).toBe(2);
+    });
+
+    it("rejects an invalid attempt_token with 401", async () => {
+      prisma.$queryRaw.mockResolvedValueOnce(mockQuestions);
+      const { UnauthorizedException } = await import("@nestjs/common");
+
+      await expect(
+        service.submit({
+          attempt_id: ATTEMPT_ID,
+          attempt_token: "definitely-not-the-right-hmac",
+          answers: [
+            { question_id: "1", answer: "C" },
+            { question_id: "2", answer: "C" },
+          ],
+        }),
+      ).rejects.toThrow(UnauthorizedException);
+    });
+
+    it("still accepts submissions without an attempt_token (backwards compatibility)", async () => {
+      setUpHappyPath();
+
+      const result = await service.submit({
+        attempt_id: ATTEMPT_ID,
+        answers: [
+          { question_id: "1", answer: "C" },
+          { question_id: "2", answer: "C" },
+        ],
+      });
+
+      expect(result.data.final_score).toBe(2);
+    });
   });
 });

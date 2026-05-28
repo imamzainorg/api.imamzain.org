@@ -8,8 +8,19 @@ class RoleTranslationItemDto {
   @ApiProperty({ example: 'مدير' })
   title: string;
 
-  @ApiPropertyOptional({ example: 'دور المدير' })
-  description?: string;
+  @ApiPropertyOptional({ example: 'دور المدير', nullable: true })
+  description: string | null;
+}
+
+class PermissionTranslationItemDto {
+  @ApiProperty({ example: 'ar' })
+  lang: string;
+
+  @ApiProperty({ example: 'إنشاء منشور' })
+  title: string;
+
+  @ApiPropertyOptional({ example: 'يسمح بإنشاء منشورات جديدة', nullable: true })
+  description: string | null;
 }
 
 class PermissionDto {
@@ -18,6 +29,16 @@ class PermissionDto {
 
   @ApiProperty({ example: 'posts:create' })
   name: string;
+
+  @ApiProperty({ type: [PermissionTranslationItemDto], description: 'All stored translations for this permission' })
+  permission_translations: PermissionTranslationItemDto[];
+
+  @ApiPropertyOptional({
+    type: PermissionTranslationItemDto,
+    nullable: true,
+    description: 'Resolved translation for the requested Accept-Language header, with fallback to the first available translation. Null when the permission has no translations.',
+  })
+  translation: PermissionTranslationItemDto | null;
 }
 
 class RoleDto {
@@ -27,10 +48,17 @@ class RoleDto {
   @ApiProperty({ example: 'admin' })
   name: string;
 
-  @ApiProperty({ type: [RoleTranslationItemDto] })
+  @ApiProperty({ type: [RoleTranslationItemDto], description: 'All stored translations for this role' })
   role_translations: RoleTranslationItemDto[];
 
-  @ApiProperty({ type: [PermissionDto] })
+  @ApiPropertyOptional({
+    type: RoleTranslationItemDto,
+    nullable: true,
+    description: 'Resolved translation for the requested Accept-Language header, with fallback to the first available translation. Null when the role has no translations.',
+  })
+  translation: RoleTranslationItemDto | null;
+
+  @ApiProperty({ type: [PermissionDto], description: 'Flat list of all permissions granted to this role (the role_permissions join table is unwrapped server-side).' })
   permissions: PermissionDto[];
 }
 
@@ -70,17 +98,6 @@ export class RoleDetailResponseDto {
   data: RoleDto;
 }
 
-class RoleCreatedDataDto {
-  @ApiProperty({ example: 'uuid-...' })
-  id: string;
-
-  @ApiProperty({ example: 'editor' })
-  name: string;
-
-  @ApiProperty({ example: '2024-01-01T00:00:00.000Z' })
-  created_at: string;
-}
-
 export class RoleCreatedResponseDto {
   @ApiProperty({ example: true })
   success: boolean;
@@ -91,8 +108,8 @@ export class RoleCreatedResponseDto {
   @ApiProperty({ example: 'Role created' })
   message: string;
 
-  @ApiProperty({ type: RoleCreatedDataDto })
-  data: RoleCreatedDataDto;
+  @ApiProperty({ type: RoleDto, description: 'Newly-created role with its translations and (initially empty) permissions array.' })
+  data: RoleDto;
 }
 
 export class RoleMessageResponseDto {
@@ -102,7 +119,7 @@ export class RoleMessageResponseDto {
   @ApiProperty({ example: '2024-01-01T00:00:00.000Z' })
   timestamp: string;
 
-  @ApiProperty({ example: 'Role updated' })
+  @ApiProperty({ example: 'Role deleted' })
   message: string;
 
   @ApiProperty({ type: Object, nullable: true, example: null })

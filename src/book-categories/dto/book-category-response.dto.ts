@@ -5,11 +5,14 @@ class BookCategoryTranslationItemDto {
   @ApiProperty({ example: 'ar' })
   lang: string;
 
-  @ApiProperty({ example: 'الفقه' })
-  name: string;
+  @ApiProperty({ example: 'الأدعية والزيارات' })
+  title: string;
 
-  @ApiProperty({ example: true })
-  is_default: boolean;
+  @ApiProperty({ example: 'al-adiya' })
+  slug: string;
+
+  @ApiPropertyOptional({ example: 'كتب الأدعية والزيارات المأثورة', nullable: true })
+  description: string | null;
 }
 
 class BookCategoryDto {

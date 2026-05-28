@@ -1,5 +1,16 @@
 import { Injectable, Logger } from '@nestjs/common';
+import { contact_submissions, proxy_visit_requests } from '@prisma/client';
 import * as nodemailer from 'nodemailer';
+
+type ContactNotification = Pick<
+  contact_submissions,
+  'id' | 'name' | 'email' | 'country' | 'message' | 'submitted_at'
+>;
+
+type ProxyVisitNotification = Pick<
+  proxy_visit_requests,
+  'name' | 'phone' | 'country' | 'status' | 'submitted_at'
+>;
 
 function escapeHtml(value: unknown): string {
   if (value === null || value === undefined) return '';
@@ -73,7 +84,7 @@ export class EmailService {
     }
   }
 
-  notifyContactSubmission(record: any): Promise<boolean> {
+  notifyContactSubmission(record: ContactNotification): Promise<boolean> {
     // Every interpolated field is HTML-escaped: the form fields are
     // attacker-controlled and would otherwise allow stored XSS / phishing
     // injection in the admin's mail client.
@@ -95,7 +106,7 @@ export class EmailService {
     );
   }
 
-  notifyProxyVisit(record: any): Promise<boolean> {
+  notifyProxyVisit(record: ProxyVisitNotification): Promise<boolean> {
     const html = `
       <h2>New Proxy Visit Request</h2>
       <table border="1" cellpadding="6" cellspacing="0">

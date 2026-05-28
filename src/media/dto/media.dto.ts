@@ -83,30 +83,6 @@ export class UpdateMediaDto {
   @IsOptional()
   @IsString()
   alt_text?: string;
-
-  @ApiPropertyOptional({ example: "image/png", pattern: "^image/" })
-  @IsOptional()
-  @IsString()
-  @Matches(/^image\//)
-  mime_type?: string;
-
-  @ApiPropertyOptional({ example: 512000, minimum: 1 })
-  @IsOptional()
-  @IsInt()
-  @Min(1)
-  file_size?: number;
-
-  @ApiPropertyOptional({ example: 2560, minimum: 1 })
-  @IsOptional()
-  @IsInt()
-  @Min(1)
-  width?: number;
-
-  @ApiPropertyOptional({ example: 1440, minimum: 1 })
-  @IsOptional()
-  @IsInt()
-  @Min(1)
-  height?: number;
 }
 
 export class MediaQueryDto {

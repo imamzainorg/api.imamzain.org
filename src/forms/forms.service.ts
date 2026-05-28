@@ -40,9 +40,26 @@ export class FormsService {
 
     this.emailService
       .notifyProxyVisit(record)
-      .catch((err) => this.logger.warn(`Proxy-visit email failed: ${err}`));
+      .then(async (ok) => {
+        if (!ok) await this.flagProxyVisitNotificationFailed(record.id);
+      })
+      .catch(async (err) => {
+        this.logger.warn(`Proxy-visit email failed: ${err}`);
+        await this.flagProxyVisitNotificationFailed(record.id);
+      });
 
     return { message: 'Proxy visit request submitted', data: record };
+  }
+
+  private async flagProxyVisitNotificationFailed(id: string) {
+    try {
+      await this.prisma.proxy_visit_requests.update({
+        where: { id },
+        data: { notification_failed_at: new Date() },
+      });
+    } catch (err) {
+      this.logger.warn(`Failed to flag proxy-visit ${id} notification_failed_at: ${err}`);
+    }
   }
 
   async updateProxyVisit(id: string, dto: UpdateProxyVisitDto, adminId: string) {
@@ -137,9 +154,26 @@ export class FormsService {
 
     this.emailService
       .notifyContactSubmission(record)
-      .catch((err) => this.logger.warn(`Contact email failed: ${err}`));
+      .then(async (ok) => {
+        if (!ok) await this.flagContactNotificationFailed(record.id);
+      })
+      .catch(async (err) => {
+        this.logger.warn(`Contact email failed: ${err}`);
+        await this.flagContactNotificationFailed(record.id);
+      });
 
     return { message: 'Contact submission received', data: record };
+  }
+
+  private async flagContactNotificationFailed(id: string) {
+    try {
+      await this.prisma.contact_submissions.update({
+        where: { id },
+        data: { notification_failed_at: new Date() },
+      });
+    } catch (err) {
+      this.logger.warn(`Failed to flag contact ${id} notification_failed_at: ${err}`);
+    }
   }
 
   async updateContact(id: string, dto: UpdateContactDto, adminId: string) {

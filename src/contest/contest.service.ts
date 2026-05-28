@@ -4,8 +4,11 @@ import {
   Injectable,
   Logger,
   NotFoundException,
+  OnApplicationBootstrap,
+  UnauthorizedException,
 } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
+import * as crypto from "crypto";
 import { PrismaService } from "../prisma/prisma.service";
 import { buildPaginationMeta } from "../common/utils/pagination.util";
 import { StartContestDto, SubmitContestDto } from "./dto/contest.dto";
@@ -13,11 +16,92 @@ import { StartContestDto, SubmitContestDto } from "./dto/contest.dto";
 const PHONE_RE = /^\+?[\d\s-]{7,20}$/;
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
+function resolveAttemptSecret(): string {
+  const secret = process.env.CONTEST_ATTEMPT_SECRET ?? process.env.JWT_SECRET;
+  if (!secret) {
+    // Empty string here would produce HMAC tokens an attacker can forge.
+    // Refuse to boot so the misconfig is caught immediately.
+    throw new Error("CONTEST_ATTEMPT_SECRET (or JWT_SECRET) is required");
+  }
+  return secret;
+}
+
+export interface CachedQuestion {
+  id: string;
+  question: string;
+  option_a: string;
+  option_b: string;
+  option_c: string;
+  option_d: string;
+}
+
 @Injectable()
-export class ContestService {
+export class ContestService implements OnApplicationBootstrap {
   private readonly logger = new Logger(ContestService.name);
+  private readonly attemptSecret = resolveAttemptSecret();
+
+  /**
+   * Pre-warm both question caches at boot so the first /questions or /submit
+   * call doesn't read the full questions table from cold storage.
+   */
+  async onApplicationBootstrap(): Promise<void> {
+    try {
+      await this.getQuestions();
+      await this.getCorrectAnswers();
+    } catch (err) {
+      this.logger.warn(`Contest cache pre-warm failed: ${err}`);
+    }
+  }
+
+  // Question rows are immutable from this API (no admin endpoint mutates
+  // qutuf_sajjadiya_contest_questions). Cache the public columns at first
+  // touch and the correct-answer map for scoring. Memory cost is tiny
+  // (~50 rows) and every /submit avoids a full-table read.
+  private questionsCache: CachedQuestion[] | null = null;
+  private correctAnswersCache: Map<string, string> | null = null;
 
   constructor(private readonly prisma: PrismaService) {}
+
+  private async getQuestions(): Promise<CachedQuestion[]> {
+    if (this.questionsCache) return this.questionsCache;
+    const rows = await this.prisma.$queryRaw<CachedQuestion[]>`
+      SELECT id, question, option_a, option_b, option_c, option_d
+      FROM qutuf_sajjadiya_contest_questions
+      ORDER BY id ASC
+    `;
+    this.questionsCache = rows;
+    return rows;
+  }
+
+  private async getCorrectAnswers(): Promise<Map<string, string>> {
+    if (this.correctAnswersCache) return this.correctAnswersCache;
+    const rows = await this.prisma.$queryRaw<Array<{ id: string; correct_answer: string }>>`
+      SELECT id, correct_answer FROM qutuf_sajjadiya_contest_questions
+    `;
+    this.correctAnswersCache = new Map(rows.map((r) => [String(r.id), r.correct_answer]));
+    return this.correctAnswersCache;
+  }
+
+  /**
+   * HMAC of the attempt_id, returned at /start and verified at /submit.
+   * Keeps a stolen or guessed attempt_id from being submittable without
+   * also possessing the corresponding token. The secret is server-side
+   * only; the token itself is safe to hand back to the client.
+   */
+  private signAttemptToken(attemptId: string): string {
+    return crypto
+      .createHmac("sha256", this.attemptSecret)
+      .update(attemptId)
+      .digest("hex");
+  }
+
+  private verifyAttemptToken(attemptId: string, token: string): boolean {
+    const expected = this.signAttemptToken(attemptId);
+    const a = Buffer.from(expected, "utf8");
+    const b = Buffer.from(token, "utf8");
+    if (a.length !== b.length) return false;
+    return crypto.timingSafeEqual(a, b);
+  }
 
   async findAllAttempts(page: number, limit: number, submitted?: boolean) {
     const skip = (page - 1) * limit;
@@ -57,11 +141,7 @@ export class ContestService {
   }
 
   async listQuestions() {
-    const questions: any[] = await this.prisma.$queryRaw`
-      SELECT id, question, option_a, option_b, option_c, option_d
-      FROM qutuf_sajjadiya_contest_questions
-      ORDER BY id ASC
-    `;
+    const questions = await this.getQuestions();
     return { message: "Questions fetched", data: questions };
   }
 
@@ -105,22 +185,37 @@ export class ContestService {
       RETURNING id
     `;
 
-    return { message: "Contest started", data: { attempt_id: rows[0].id } };
+    const attemptId = rows[0].id;
+    return {
+      message: "Contest started",
+      data: {
+        attempt_id: attemptId,
+        attempt_token: this.signAttemptToken(attemptId),
+      },
+    };
   }
 
   async submit(dto: SubmitContestDto) {
-    const questions: { id: string; correct_answer: string }[] = await this.prisma.$queryRaw`
-      SELECT id, correct_answer
-      FROM qutuf_sajjadiya_contest_questions
-    `;
-
-    if (dto.answers.length !== questions.length) {
-      throw new ConflictException("All questions must be answered");
+    // Verify the attempt_token if present. Currently optional so frontends
+    // that haven't adopted token-binding keep working; once they have, flip
+    // this to required (`if (!dto.attempt_token) throw new UnauthorizedException`).
+    if (dto.attempt_token !== undefined) {
+      if (!this.verifyAttemptToken(dto.attempt_id, dto.attempt_token)) {
+        throw new UnauthorizedException("Invalid attempt token");
+      }
+    } else {
+      // Surface adoption progress so we know when it's safe to make
+      // attempt_token required.
+      this.logger.warn(
+        `Contest submit without attempt_token (attempt_id=${dto.attempt_id}); frontend should adopt token-binding`,
+      );
     }
 
-    const questionMap = new Map(
-      questions.map((q) => [String(q.id), q.correct_answer]),
-    );
+    const questionMap = await this.getCorrectAnswers();
+
+    if (dto.answers.length !== questionMap.size) {
+      throw new ConflictException("All questions must be answered");
+    }
 
     // Score by unique question_id only, so duplicate entries pointing at the
     // same question can't inflate the score (the previous bug let an attacker
@@ -201,7 +296,7 @@ export class ContestService {
     }
 
     this.logger.debug(
-      `Contest submission: attempt=${dto.attempt_id} answered=${insertValues.length}/${questions.length}`,
+      `Contest submission: attempt=${dto.attempt_id} answered=${insertValues.length}/${questionMap.size}`,
     );
 
     return {
@@ -209,7 +304,7 @@ export class ContestService {
       message: "Contest submitted",
       data: {
         final_score: finalScore,
-        total_questions: questions.length,
+        total_questions: questionMap.size,
       },
     };
   }

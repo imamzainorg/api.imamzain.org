@@ -1,12 +1,15 @@
 import { MiddlewareConsumer, Module, NestModule } from "@nestjs/common";
 import { APP_GUARD } from "@nestjs/core";
-import { ConfigModule } from "@nestjs/config";
+import { ConfigModule, ConfigService } from "@nestjs/config";
 import { ScheduleModule } from "@nestjs/schedule";
 import { ThrottlerGuard, ThrottlerModule } from "@nestjs/throttler";
+import { ThrottlerStorageRedisService } from "@nest-lab/throttler-storage-redis";
+import { Redis } from "ioredis";
 import { LoggerModule } from "nestjs-pino";
 import { validateEnv } from "./config/env.validation";
 import { PrismaModule } from "./prisma/prisma.module";
 import { AuditModule } from "./common/audit/audit.module";
+import { RedisModule } from "./common/redis/redis.module";
 import { AuthModule } from "./auth/auth.module";
 import { StorageModule } from "./storage/storage.module";
 import { EmailModule } from "./email/email.module";
@@ -71,7 +74,24 @@ import { SentryModule } from "@sentry/nestjs/setup";
         },
       },
     }),
-    ThrottlerModule.forRoot([{ ttl: 900_000, limit: 1_000 }]),
+    // Throttler counters live in Redis when REDIS_URL is set so a multi-
+    // instance deployment shares one counter per IP instead of N copies.
+    // Without REDIS_URL the throttler keeps its in-memory map (current
+    // behaviour) — fine for single-instance prod and dev.
+    ThrottlerModule.forRootAsync({
+      inject: [ConfigService],
+      useFactory: (config: ConfigService) => {
+        const url = config.get<string>('REDIS_URL');
+        const base = { throttlers: [{ ttl: 900_000, limit: 1_000 }] };
+        if (!url) return base;
+        // ThrottlerStorageRedisService accepts an ioredis client. Reuse one
+        // dedicated client so we don't double-connect with the RedisModule
+        // command client — keeps the connection budget predictable.
+        const client = new Redis(url, { lazyConnect: false, maxRetriesPerRequest: 3 });
+        return { ...base, storage: new ThrottlerStorageRedisService(client) };
+      },
+    }),
+    RedisModule,
     PrismaModule,
     AuditModule,
     AuthModule,

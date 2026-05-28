@@ -1,10 +1,11 @@
 import { ConflictException, Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { Prisma } from '@prisma/client';
 import * as bcrypt from 'bcryptjs';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuditService } from '../common/audit/audit.service';
 import { AUDIT_ACTIONS } from '../common/audit/audit.actions';
 import { resolveBcryptRounds } from '../common/utils/bcrypt.util';
-import { toPublicUser } from '../common/utils/user-mapper.util';
+import { invalidateJwtUserCache } from '../auth/strategies/jwt.strategy';
 import { buildPaginationMeta } from '../common/utils/pagination.util';
 import { AdminResetPasswordDto, AssignRoleDto, CreateUserDto, UpdateUserDto } from './dto/user.dto';
 
@@ -69,13 +70,15 @@ export class UsersService {
       }
     }
 
-    const { password_hash: _pw, user_roles, ...rest } = user;
     return {
       message: 'User fetched',
       data: {
-        ...rest,
-        user_roles,
-        is_active: rest.deleted_at === null,
+        id: user.id,
+        username: user.username,
+        created_at: user.created_at,
+        updated_at: user.updated_at,
+        is_active: user.deleted_at === null,
+        user_roles: user.user_roles,
         permissions: Array.from(permissionSet),
       },
     };
@@ -101,7 +104,8 @@ export class UsersService {
       changes: { method: 'POST', path: '/api/v1/users' },
     });
 
-    return { message: 'User created', data: toPublicUser(user) };
+    const { data } = await this.findOne(user.id);
+    return { message: 'User created', data };
   }
 
   async update(id: string, dto: UpdateUserDto, actorId: string) {
@@ -115,10 +119,10 @@ export class UsersService {
       if (taken) throw new ConflictException('Username is already taken');
     }
 
-    const updated = await this.prisma.users.update({
-      where: { id },
-      data: { ...dto, updated_at: new Date() },
-    });
+    const updateData: Prisma.usersUpdateInput = { updated_at: new Date() };
+    if (dto.username !== undefined) updateData.username = dto.username;
+
+    await this.prisma.users.update({ where: { id }, data: updateData });
 
     await this.audit.write({
       actorId,
@@ -128,7 +132,8 @@ export class UsersService {
       changes: { method: 'PATCH', path: `/api/v1/users/${id}` },
     });
 
-    return { message: 'User updated', data: toPublicUser(updated) };
+    const { data } = await this.findOne(id);
+    return { message: 'User updated', data };
   }
 
   /**
@@ -164,6 +169,8 @@ export class UsersService {
       }),
     ]);
 
+    invalidateJwtUserCache(userId);
+
     await this.audit.write({
       actorId,
       action: AUDIT_ACTIONS.USER_PASSWORD_RESET_BY_ADMIN,
@@ -180,6 +187,8 @@ export class UsersService {
     if (!user) throw new NotFoundException('User not found');
 
     await this.prisma.users.update({ where: { id }, data: { deleted_at: new Date() } });
+
+    invalidateJwtUserCache(id);
 
     await this.audit.write({
       actorId,
@@ -200,30 +209,39 @@ export class UsersService {
     if (!user) throw new NotFoundException('User not found');
     if (!role) throw new NotFoundException('Role not found');
 
-    await this.prisma.user_roles.upsert({
+    const existing = await this.prisma.user_roles.findUnique({
       where: { user_id_role_id: { user_id: userId, role_id: dto.role_id } },
-      create: { user_id: userId, role_id: dto.role_id },
-      update: {},
+      select: { user_id: true },
     });
 
-    await this.audit.write({
-      actorId,
-      action: AUDIT_ACTIONS.ROLE_ASSIGNED_TO_USER,
-      resourceType: 'user',
-      resourceId: userId,
-      changes: { method: 'POST', path: `/api/v1/users/${userId}/roles`, role_id: dto.role_id },
-    });
+    if (!existing) {
+      await this.prisma.user_roles.create({
+        data: { user_id: userId, role_id: dto.role_id },
+      });
 
-    return { message: 'Role assigned', data: null };
+      await this.audit.write({
+        actorId,
+        action: AUDIT_ACTIONS.ROLE_ASSIGNED_TO_USER,
+        resourceType: 'user',
+        resourceId: userId,
+        changes: { method: 'POST', path: `/api/v1/users/${userId}/roles`, role_id: dto.role_id },
+      });
+    }
+
+    const { data } = await this.findOne(userId);
+    return { message: 'Role assigned', data };
   }
 
   async removeRole(userId: string, roleId: string, actorId: string) {
     const user = await this.prisma.users.findFirst({ where: { id: userId, deleted_at: null } });
     if (!user) throw new NotFoundException('User not found');
 
-    await this.prisma.user_roles.delete({
-      where: { user_id_role_id: { user_id: userId, role_id: roleId } },
+    const result = await this.prisma.user_roles.deleteMany({
+      where: { user_id: userId, role_id: roleId },
     });
+    if (result.count === 0) {
+      throw new NotFoundException('Role is not assigned to this user');
+    }
 
     await this.audit.write({
       actorId,
@@ -233,6 +251,7 @@ export class UsersService {
       changes: { method: 'DELETE', path: `/api/v1/users/${userId}/roles/${roleId}`, roleId },
     });
 
-    return { message: 'Role removed', data: null };
+    const { data } = await this.findOne(userId);
+    return { message: 'Role removed', data };
   }
 }

@@ -82,7 +82,7 @@ class MediaDto {
   @ApiProperty({
     type: [MediaVariantDto],
     description:
-      'Pre-generated WebP variants at standard widths (320, 768, 1280, 1920). Up-scaled widths beyond the source resolution are skipped, so smaller originals return fewer variants. Empty array if generation failed and has not been retried via POST /media/:id/regenerate-variants.',
+      'Pre-generated WebP variants at standard widths (320, 768, 1280, 1920). Up-scaled widths beyond the source resolution are skipped, so smaller originals return fewer variants.\n\n**Note on `POST /media/confirm`:** the confirm response returns `variants: []` because generation runs in the background. Poll `GET /media/:id` (typically 1–3 s later) until the array populates. If it stays empty past ~10 s, call `POST /media/:id/regenerate-variants`.',
   })
   variants: MediaVariantDto[];
 }
@@ -123,6 +123,15 @@ export class MediaDetailResponseDto {
   data: MediaDto;
 }
 
+/**
+ * Response from `POST /media/confirm`. The media row is created and the
+ * response carries an **empty `variants[]` array** — sharp variant
+ * generation runs in the background and the variants populate via
+ * `GET /media/:id` ~1–3 seconds later. If the CMS needs to render the
+ * variants immediately, poll the detail endpoint until
+ * `variants.length === 4`; if it stays empty past ~10 s, call
+ * `POST /media/:id/regenerate-variants`.
+ */
 export class MediaCreatedResponseDto {
   @ApiProperty({ example: true })
   success: boolean;

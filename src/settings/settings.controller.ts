@@ -46,7 +46,7 @@ export class SettingsController {
   @ApiOperation({
     summary: 'List public site settings (no auth)',
     description:
-      'Returns the subset of settings flagged `is_public=true`. Use this from the front-end at build / runtime; admin-only settings stay invisible. Values are decoded per their stored `type` (string / number / boolean / json). Response is CDN-cacheable (`public, max-age=900, s-maxage=3600`) — site settings change rarely, so a 1-hour CDN TTL is safe; the front-end can also pull these at build time.',
+      'Returns the subset of settings flagged `is_public=true`. Use this from the front-end at build / runtime; admin-only settings stay invisible. Values are decoded per their stored `type` (string / number / boolean / json). Response is CDN-cacheable (`public, max-age=900, s-maxage=3600`) — site settings change rarely, so a 1-hour CDN TTL is safe; the front-end can also pull these at build time.\n\n**Server-side cache:** results are also cached in-process for 60 s and pre-warmed at boot, so cold-cache cost is paid once per deploy, not on the first request.',
   })
   @ApiOkResponse({ type: SettingListResponseDto, description: 'Public settings list' })
   findPublic() {

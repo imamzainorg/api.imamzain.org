@@ -125,7 +125,7 @@ describe("EmailService", () => {
         name: "Ali",
         phone: "+9647801234567",
         country: "IQ",
-        status: "PENDING",
+        status: "PENDING" as const,
         submitted_at: new Date(),
       };
 

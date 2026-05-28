@@ -175,6 +175,28 @@ describe('MediaService', () => {
       ).rejects.toThrow(ForbiddenException);
     });
 
+    it('rejects with 410 when the pending upload has expired', async () => {
+      const past = new Date(Date.now() - 60_000);
+      prisma.pending_media_uploads.findFirst.mockResolvedValue({
+        key: 'media/photo.jpg',
+        requested_by: 'user-1',
+        expires_at: past,
+      });
+
+      const { GoneException } = await import('@nestjs/common');
+      await expect(
+        service.confirmUpload(
+          {
+            key: 'media/photo.jpg',
+            filename: 'photo.jpg',
+            mime_type: 'image/jpeg',
+            file_size: 10240,
+          },
+          'user-1',
+        ),
+      ).rejects.toThrow(GoneException);
+    });
+
     it('rejects oversized files with 413 and deletes the R2 object', async () => {
       prisma.pending_media_uploads.findFirst.mockResolvedValue({
         key: 'media/originals/abc/big.jpg',

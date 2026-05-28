@@ -282,9 +282,9 @@ export class YoutubeSyncService {
 
       // Replace the playlist→video join rows for this playlist. We delete
       // first because YouTube can reorder / drop videos from a playlist
-      // between syncs, and we want the local state to mirror that.
-      await this.prisma.youtube_playlist_items.deleteMany({ where: { playlist_id: upserted.id } });
-
+      // between syncs, and we want the local state to mirror that. Wrapped
+      // in a transaction so a crash between the delete and the recreate
+      // doesn't leave the playlist visibly empty until the next sync.
       const items = itemsByPlaylist.get(pl.id) ?? [];
       const joins = items
         .map((item) => {
@@ -298,12 +298,17 @@ export class YoutubeSyncService {
         })
         .filter((x): x is { playlist_id: string; video_id: string; position: number } => x !== null);
 
-      if (joins.length > 0) {
-        await this.prisma.youtube_playlist_items.createMany({
-          data: joins,
-          skipDuplicates: true,
-        });
-      }
+      await this.prisma.$transaction([
+        this.prisma.youtube_playlist_items.deleteMany({ where: { playlist_id: upserted.id } }),
+        ...(joins.length > 0
+          ? [
+              this.prisma.youtube_playlist_items.createMany({
+                data: joins,
+                skipDuplicates: true,
+              }),
+            ]
+          : []),
+      ]);
     }
 
     return playlists.length;

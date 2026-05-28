@@ -109,7 +109,7 @@ export class UsersController {
   @RequirePermission('users:update')
   @ApiOperation({ summary: 'Assign a role to a user', description: 'Requires permission: `users:update`' })
   @ApiParam({ name: 'id', format: 'uuid', description: 'User ID' })
-  @ApiCreatedResponse({ type: UserMessageResponseDto, description: 'Role assigned to the user; the new permission set takes effect on their next authenticated request' })
+  @ApiCreatedResponse({ type: UserDetailResponseDto, description: 'Role assigned to the user; returns the user with the updated role and permission lists. The new permission set takes effect on their next authenticated request.' })
   @ApiBadRequestResponse({ type: ValidationErrorDto, description: 'Validation failed (missing or non-UUID role_id)' })
   @ApiNotFoundResponse({ type: NotFoundErrorDto, description: 'No user or role with those IDs exists' })
   assignRole(
@@ -125,7 +125,7 @@ export class UsersController {
   @ApiOperation({ summary: 'Remove a role from a user', description: 'Requires permission: `users:update`' })
   @ApiParam({ name: 'id', format: 'uuid', description: 'User ID' })
   @ApiParam({ name: 'roleId', format: 'uuid', description: 'Role ID' })
-  @ApiOkResponse({ type: UserMessageResponseDto, description: 'Role removed from the user; the reduced permission set takes effect on their next authenticated request' })
+  @ApiOkResponse({ type: UserDetailResponseDto, description: 'Role removed from the user; returns the user with the updated role and permission lists. The reduced permission set takes effect on their next authenticated request.' })
   @ApiNotFoundResponse({ type: NotFoundErrorDto, description: 'No user or role with those IDs exists' })
   removeRole(
     @Param('id') id: string,

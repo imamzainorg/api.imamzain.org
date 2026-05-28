@@ -165,12 +165,18 @@ describe("AcademicPaperCategoriesService", () => {
   });
 
   describe("create", () => {
-    it("creates category with translations in a transaction", async () => {
+    it("creates category with translations and returns hydrated detail", async () => {
       mockTx.academic_paper_categories.create.mockResolvedValue(baseCategory);
       mockTx.academic_paper_category_translations.createMany.mockResolvedValue(
         {},
       );
       prisma.$transaction.mockImplementation((cb: any) => cb(mockTx));
+      prisma.academic_paper_categories.findFirst.mockResolvedValue({
+        ...baseCategory,
+        academic_paper_category_translations: [
+          { lang: "ar", title: "الفقه الإسلامي", slug: "fiqh-islami" },
+        ],
+      });
 
       const result = await service.create(
         {
@@ -186,6 +192,8 @@ describe("AcademicPaperCategoriesService", () => {
         mockTx.academic_paper_category_translations.createMany,
       ).toHaveBeenCalled();
       expect(result.data.id).toBe("cat-1");
+      expect(result.data.academic_paper_category_translations).toHaveLength(1);
+      expect(result.data.translation).toBeDefined();
     });
   });
 

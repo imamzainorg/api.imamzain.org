@@ -8,6 +8,46 @@ import { resolveTranslation } from '../common/utils/translation.util';
 import { buildPaginationMeta, resolvePagination } from '../common/utils/pagination.util';
 import { BookQueryDto, CreateBookDto, UpdateBookDto } from './dto/book.dto';
 
+// List queries drop the full description from translations (typically the
+// heaviest field) and slim the cover-image record.
+const BOOK_LIST_SELECT = {
+  id: true,
+  category_id: true,
+  cover_image_id: true,
+  isbn: true,
+  pages: true,
+  publish_year: true,
+  part_number: true,
+  parts: true,
+  views: true,
+  created_at: true,
+  updated_at: true,
+  deleted_at: true,
+  book_translations: {
+    select: {
+      book_id: true,
+      lang: true,
+      title: true,
+      author: true,
+      publisher: true,
+      series: true,
+      is_default: true,
+    },
+  },
+  media: {
+    select: { id: true, url: true, filename: true, alt_text: true, mime_type: true, width: true, height: true },
+  },
+  book_categories: {
+    select: {
+      id: true,
+      created_at: true,
+      book_category_translations: {
+        select: { category_id: true, lang: true, title: true, slug: true, description: true },
+      },
+    },
+  },
+} satisfies Prisma.booksSelect;
+
 @Injectable()
 export class BooksService {
   private readonly logger = new Logger(BooksService.name);
@@ -32,11 +72,7 @@ export class BooksService {
     const [items, total] = await Promise.all([
       this.prisma.books.findMany({
         where,
-        include: {
-          book_translations: true,
-          media: true,
-          book_categories: { include: { book_category_translations: true } },
-        },
+        select: BOOK_LIST_SELECT,
         orderBy: [{ created_at: 'desc' }, { id: 'asc' }],
         skip,
         take: limit,
@@ -71,7 +107,7 @@ export class BooksService {
     return { message: 'View tracked', data: null };
   }
 
-  async create(dto: CreateBookDto, userId: string) {
+  async create(dto: CreateBookDto, userId: string, lang: string | null) {
     const category = await this.prisma.book_categories.findFirst({ where: { id: dto.category_id, deleted_at: null } });
     if (!category) throw new NotFoundException('Category not found');
 
@@ -124,10 +160,11 @@ export class BooksService {
       changes: { method: 'POST', path: '/api/v1/books' },
     });
 
-    return { message: 'Book created', data: book };
+    const { data } = await this.findOne(book.id, lang);
+    return { message: 'Book created', data };
   }
 
-  async update(id: string, dto: UpdateBookDto, userId: string) {
+  async update(id: string, dto: UpdateBookDto, userId: string, lang: string | null) {
     const book = await this.prisma.books.findFirst({ where: { id, deleted_at: null } });
     if (!book) throw new NotFoundException('Book not found');
 
@@ -203,7 +240,8 @@ export class BooksService {
       changes: { method: 'PATCH', path: `/api/v1/books/${id}` },
     });
 
-    return { message: 'Book updated', data: null };
+    const { data } = await this.findOne(id, lang);
+    return { message: 'Book updated', data };
   }
 
   /** List soft-deleted books (admin trash view). */
@@ -214,11 +252,7 @@ export class BooksService {
     const [items, total] = await Promise.all([
       this.prisma.books.findMany({
         where,
-        include: {
-          book_translations: true,
-          media: true,
-          book_categories: { include: { book_category_translations: true } },
-        },
+        select: BOOK_LIST_SELECT,
         orderBy: [{ deleted_at: 'desc' }, { id: 'asc' }],
         skip,
         take: limit,
@@ -230,6 +264,7 @@ export class BooksService {
     const mapped = items.map((b) => ({
       ...b,
       isbn: b.isbn ? stripSoftDeleteSuffix(b.isbn) : b.isbn,
+      translation: resolveTranslation(b.book_translations, null),
     }));
 
     return {

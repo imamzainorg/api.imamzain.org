@@ -148,18 +148,19 @@ model books {
 
 /// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
 model contact_submissions {
-  id           String         @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  name         String
-  email        String         @db.Citext
-  country      String?        @db.Char(2)
-  message      String
-  status       contact_status @default(NEW)
-  submitted_at DateTime       @default(now()) @db.Timestamptz(6)
-  responded_at DateTime?      @db.Timestamptz(6)
-  responded_by String?        @db.Uuid
-  notes        String?
-  deleted_at   DateTime?      @db.Timestamptz(6)
-  users        users?         @relation(fields: [responded_by], references: [id], onUpdate: NoAction)
+  id                     String         @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name                   String
+  email                  String         @db.Citext
+  country                String?        @db.Char(2)
+  message                String
+  status                 contact_status @default(NEW)
+  submitted_at           DateTime       @default(now()) @db.Timestamptz(6)
+  responded_at           DateTime?      @db.Timestamptz(6)
+  responded_by           String?        @db.Uuid
+  notes                  String?
+  deleted_at             DateTime?      @db.Timestamptz(6)
+  notification_failed_at DateTime?      @db.Timestamptz(6)
+  users                  users?         @relation(fields: [responded_by], references: [id], onUpdate: NoAction)
 
   @@index([responded_by], map: "idx_contact_responded_by")
   @@index([status], map: "idx_contact_status")
@@ -391,17 +392,18 @@ model posts {
 
 /// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
 model proxy_visit_requests {
-  id           String             @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  name         String
-  phone        String?
-  country      String?            @db.Char(2)
-  status       proxy_visit_status @default(PENDING)
-  submitted_at DateTime           @default(now()) @db.Timestamptz(6)
-  processed_at DateTime?          @db.Timestamptz(6)
-  processed_by String?            @db.Uuid
-  notes        String?
-  deleted_at   DateTime?          @db.Timestamptz(6)
-  users        users?             @relation(fields: [processed_by], references: [id], onUpdate: NoAction)
+  id                     String             @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name                   String
+  phone                  String?
+  country                String?            @db.Char(2)
+  status                 proxy_visit_status @default(PENDING)
+  submitted_at           DateTime           @default(now()) @db.Timestamptz(6)
+  processed_at           DateTime?          @db.Timestamptz(6)
+  processed_by           String?            @db.Uuid
+  notes                  String?
+  deleted_at             DateTime?          @db.Timestamptz(6)
+  notification_failed_at DateTime?          @db.Timestamptz(6)
+  users                  users?             @relation(fields: [processed_by], references: [id], onUpdate: NoAction)
 
   @@index([processed_by], map: "idx_proxy_visit_processed_by")
   @@index([status], map: "idx_proxy_visit_status")

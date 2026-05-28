@@ -72,7 +72,8 @@ export class AcademicPaperCategoriesService {
       changes: { method: 'POST', path: '/api/v1/academic-paper-categories' },
     });
 
-    return { message: 'Category created', data: category };
+    const { data } = await this.findOne(category.id, null);
+    return { message: 'Category created', data };
   }
 
   async update(id: string, dto: UpdateAcademicPaperCategoryDto, actorId: string) {
@@ -97,14 +98,15 @@ export class AcademicPaperCategoriesService {
       changes: { method: 'PATCH', path: `/api/v1/academic-paper-categories/${id}` },
     });
 
-    return { message: 'Category updated', data: null };
+    const { data } = await this.findOne(id, null);
+    return { message: 'Category updated', data };
   }
 
   /** List soft-deleted academic paper categories. */
   async findTrash(page: number, limit: number) {
     const skip = (page - 1) * limit;
     const where: Prisma.academic_paper_categoriesWhereInput = { deleted_at: { not: null } };
-    const [items, total] = await Promise.all([
+    const [rows, total] = await Promise.all([
       this.prisma.academic_paper_categories.findMany({
         where,
         include: { academic_paper_category_translations: true },
@@ -114,6 +116,17 @@ export class AcademicPaperCategoriesService {
       }),
       this.prisma.academic_paper_categories.count({ where }),
     ]);
+    const items = rows.map((row) => {
+      const academic_paper_category_translations = row.academic_paper_category_translations.map((t) => ({
+        ...t,
+        slug: stripSoftDeleteSuffix(t.slug),
+      }));
+      return {
+        ...row,
+        academic_paper_category_translations,
+        translation: resolveTranslation(academic_paper_category_translations, null),
+      };
+    });
     return {
       message: 'Trash fetched',
       data: { items, pagination: buildPaginationMeta(page, limit, total) },

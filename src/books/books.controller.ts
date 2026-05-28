@@ -40,7 +40,7 @@ export class BooksController {
 
   @Get()
   @PublicCache(60)
-  @ApiOperation({ summary: 'List all books (public)', description: 'Supports filtering by category and full-text search. Response is CDN-cacheable (`public, max-age=60, s-maxage=300`) and varies by `Accept-Language`.' })
+  @ApiOperation({ summary: 'List all books (public)', description: 'Supports filtering by category and full-text search. Response is CDN-cacheable (`public, max-age=60, s-maxage=300`) and varies by `Accept-Language`. **List payload is slim** — each translation drops the `description` field. Call `GET /books/:id` for the full description.' })
   @ApiQuery({ name: 'page', required: false, type: Number, example: 1, description: 'Page number (default: 1)' })
   @ApiQuery({ name: 'limit', required: false, type: Number, example: 20, description: 'Items per page (default: 20, max: 100)' })
   @ApiQuery({ name: 'category_id', required: false, type: String, description: 'Filter by book category UUID' })
@@ -121,8 +121,8 @@ export class BooksController {
   @ApiConflictResponse({ type: ConflictErrorDto, description: 'A book with that ISBN already exists' })
   @ApiUnauthorizedResponse({ type: UnauthorizedErrorDto, description: 'Missing or invalid JWT' })
   @ApiForbiddenResponse({ type: ForbiddenErrorDto, description: 'Insufficient permissions' })
-  create(@Body() dto: CreateBookDto, @CurrentUser() user: CurrentUserPayload) {
-    return this.booksService.create(dto, user.id);
+  create(@Body() dto: CreateBookDto, @CurrentUser() user: CurrentUserPayload, @Lang() lang: string | null) {
+    return this.booksService.create(dto, user.id, lang);
   }
 
   @Patch(':id')
@@ -137,8 +137,8 @@ export class BooksController {
   @ApiConflictResponse({ type: ConflictErrorDto, description: 'A book with that ISBN already exists' })
   @ApiUnauthorizedResponse({ type: UnauthorizedErrorDto, description: 'Missing or invalid JWT' })
   @ApiForbiddenResponse({ type: ForbiddenErrorDto, description: 'Insufficient permissions' })
-  update(@Param('id') id: string, @Body() dto: UpdateBookDto, @CurrentUser() user: CurrentUserPayload) {
-    return this.booksService.update(id, dto, user.id);
+  update(@Param('id') id: string, @Body() dto: UpdateBookDto, @CurrentUser() user: CurrentUserPayload, @Lang() lang: string | null) {
+    return this.booksService.update(id, dto, user.id, lang);
   }
 
   @Delete(':id')

@@ -38,7 +38,7 @@ export class AcademicPapersController {
 
   @Get()
   @PublicCache(60)
-  @ApiOperation({ summary: 'List academic papers (public)', description: 'Supports filtering by category and full-text search. Response is CDN-cacheable (`public, max-age=60, s-maxage=300`) and varies by `Accept-Language`.' })
+  @ApiOperation({ summary: 'List academic papers (public)', description: 'Supports filtering by category and full-text search. Response is CDN-cacheable (`public, max-age=60, s-maxage=300`) and varies by `Accept-Language`. **List payload is slim** — each translation drops the `abstract` field. Call `GET /academic-papers/:id` for the full abstract.' })
   @ApiQuery({ name: 'page', required: false, type: Number, example: 1, description: 'Page number (default: 1)' })
   @ApiQuery({ name: 'limit', required: false, type: Number, example: 20, description: 'Items per page (default: 20, max: 100)' })
   @ApiQuery({ name: 'category_id', required: false, type: String, description: 'Filter by academic paper category UUID' })
@@ -107,8 +107,8 @@ export class AcademicPapersController {
   @ApiNotFoundResponse({ type: NotFoundErrorDto, description: 'No academic paper category with that category_id exists' })
   @ApiUnauthorizedResponse({ type: UnauthorizedErrorDto, description: 'Missing or invalid JWT' })
   @ApiForbiddenResponse({ type: ForbiddenErrorDto, description: 'Insufficient permissions' })
-  create(@Body() dto: CreateAcademicPaperDto, @CurrentUser() user: CurrentUserPayload) {
-    return this.service.create(dto, user.id);
+  create(@Body() dto: CreateAcademicPaperDto, @CurrentUser() user: CurrentUserPayload, @Lang() lang: string | null) {
+    return this.service.create(dto, user.id, lang);
   }
 
   @Patch(':id')
@@ -122,8 +122,8 @@ export class AcademicPapersController {
   @ApiNotFoundResponse({ type: NotFoundErrorDto, description: 'No academic paper with that ID exists, or the new category_id does not exist or has been soft-deleted' })
   @ApiUnauthorizedResponse({ type: UnauthorizedErrorDto, description: 'Missing or invalid JWT' })
   @ApiForbiddenResponse({ type: ForbiddenErrorDto, description: 'Insufficient permissions' })
-  update(@Param('id') id: string, @Body() dto: UpdateAcademicPaperDto, @CurrentUser() user: CurrentUserPayload) {
-    return this.service.update(id, dto, user.id);
+  update(@Param('id') id: string, @Body() dto: UpdateAcademicPaperDto, @CurrentUser() user: CurrentUserPayload, @Lang() lang: string | null) {
+    return this.service.update(id, dto, user.id, lang);
   }
 
   @Delete(':id')

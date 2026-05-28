@@ -40,7 +40,7 @@ REST API powering [imamzain.org](https://imamzain.org) — Islamic content manag
 - Role-based access control (RBAC) with per-permission granularity
 - JWT authentication with bcrypt password hashing, atomic refresh-token rotation, and reuse detection that revokes the whole token chain when an already-rotated token is replayed
 - File uploads via Cloudflare R2 pre-signed URLs, with server-side MIME enforcement and ownership-bound confirmation (the user that requested the URL is the only one who can register the resulting media row)
-- Pre-generated WebP variants (320 / 768 / 1280 / 1920 px) on upload via [`sharp`](https://sharp.pixelplumbing.com/), so the public site can serve responsive images via `<img srcset>` without paying for any per-request transform
+- Pre-generated WebP variants (320 / 768 / 1280 / 1920 px) on upload via [`sharp`](https://sharp.pixelplumbing.com/) — generated **in the background** off the request path, so the confirm response returns in single-digit milliseconds and the public site can serve responsive images via `<img srcset>` once the variants land (~1–3s later)
 - Server-side HTML sanitisation of rich-text body fields (Tiptap output) using a strict allowlist that mirrors the CMS editor's schema; defends against admin-session compromise and frontend rendering surfaces that use `dangerouslySetInnerHTML`
 - HTML-escaped admin notification emails to defuse stored XSS via form fields
 - Comprehensive audit logging on all write operations, filterable by user / action / resource type / resource id / date range
@@ -51,7 +51,7 @@ REST API powering [imamzain.org](https://imamzain.org) — Islamic content manag
 - Per-translation SEO fields on posts (`meta_title`, `meta_description`, `og_image_id`) with documented render-time fallbacks
 - Newsletter campaigns with batched sending, per-recipient delivery tracking, scheduled-send via cron, and crash-safe resume
 - Admin-driven password reset (`POST /users/:id/reset-password`) — bumps `token_version` and revokes every outstanding refresh token
-- Cross-resource search (`GET /search`) over posts, books, academic papers, and gallery captions — public-visibility-aware and language-fidelity-preserving (returns the translation that actually matched the query); backed by Postgres GIN trigram indexes so substring `ILIKE` queries stay sub-10 ms as the corpus grows
+- Cross-resource search (`GET /search`) over posts, books, academic papers, and gallery captions — public-visibility-aware and language-fidelity-preserving (returns the translation that actually matched the query); backed by Postgres GIN trigram indexes and the `pg_trgm` similarity operator so queries are both relevance-ranked and sub-10 ms regardless of corpus size
 - Public sitemap (`GET /sitemap.xml`) with `xhtml:link` hreflang alternates per translation, and an RSS 2.0 feed (`GET /rss/posts.xml`) for the latest published posts
 - Bulk operations on posts (`POST /posts/bulk/publish`, `POST /posts/bulk/delete`) capped at 200 ids per call, fully audit-logged with a `bulk: true` marker
 - Composite `GET /homepage` aggregator returning exactly the hadith / news / publications / videos / gallery payload the public site renders — single round trip, slim shape, per-day stable cache key
@@ -60,7 +60,10 @@ REST API powering [imamzain.org](https://imamzain.org) — Islamic content manag
 - Local YouTube channel mirror (`/youtube/videos`, `/youtube/playlists`) refreshed every 6 hours by a background cron — the request path never touches the YouTube Data API, keeping quota use predictable and the site resilient to YouTube outages
 - Health endpoint for uptime monitoring and load-balancer probes (storage status cached for 60s to avoid amplifying load on the object store)
 - Interactive API explorer at `/docs` (toggleable via `EXPOSE_DOCS`; off by default in production)
-- Globally enforced rate limiting via `@nestjs/throttler` with stricter caps on auth and view-counter endpoints, Helmet security headers, strict CORS allowlist in production, and response compression
+- Globally enforced rate limiting via `@nestjs/throttler` with stricter caps on auth and view-counter endpoints, Helmet security headers, strict CORS allowlist in production, and response compression that picks **brotli** when the client accepts it (falls back to gzip otherwise) — ~15% smaller payloads to any modern browser
+- **Multi-instance ready**: setting `REDIS_URL` switches throttler counters and JWT-cache invalidation onto Redis so a fleet of N dynos shares one rate-limit bucket per IP and propagates token revocations in milliseconds. Without `REDIS_URL`, both fall back to in-process state — fine for single-instance deployments
+- **Pre-warmed in-process caches** for settings, languages, and contest questions at boot so the first request after a deploy doesn't pay the cold-cache cost; settings + dashboard responses are TTL-cached (60s / 30s) to absorb the bursty fan-out the CMS home screen causes
+- **Background retention crons** prune `audit_logs` (one-year retention) and stale `refresh_tokens` (expired or revoked > 30 days) every night so both tables stay bounded
 
 ---
 
@@ -136,6 +139,7 @@ See [.env.example](.env.example) for the complete list with inline descriptions.
 | `TWILIO_AUTH_TOKEN` | Optional | Twilio auth token |
 | `TWILIO_WHATSAPP_FROM` | Optional | Twilio WhatsApp sender number |
 | `TWILIO_TEMPLATE_SID` | Optional | Approved Twilio template SID used for outbound WhatsApp messages |
+| `REDIS_URL` | Optional | `redis://…` or `rediss://…`. Set in multi-instance deployments — enables a shared throttler counter across processes and pub/sub-driven JWT cache invalidation. Unset = in-process fallbacks; correct for single-instance prod and dev |
 
 > **Boot behaviour:** the app validates required env vars on startup. Missing
 > `JWT_SECRET`, `DATABASE_URL`, `DIRECT_URL`, or — in production —
@@ -191,12 +195,16 @@ Migrations are idempotent (`CREATE TABLE IF NOT EXISTS`, `DO`-block guarded
 
 ```bash
 src/
-├── main.ts                       # Bootstrap — Helmet, CORS, Swagger, Pino
-├── app.module.ts                 # Root module
+├── main.ts                       # Bootstrap — Helmet, CORS, Swagger, Pino, brotli/gzip compression
+├── app.module.ts                 # Root module — throttler picks Redis or in-memory storage based on REDIS_URL
 ├── common/                       # Shared decorators, guards, filters, interceptors
-├── config/                       # Environment validation (class-validator)
+│   ├── audit/                    # Fire-and-forget audit writer + retention cron (365-day window)
+│   ├── middleware/               # compression.middleware.ts (brotli + gzip)
+│   ├── redis/                    # Optional Redis client + pub/sub helper (provided unconditionally; clients are null without REDIS_URL)
+│   └── utils/                    # TtlCache for settings/dashboard/languages, pagination helpers, html sanitiser
+├── config/                       # Environment validation (class-validator); includes REDIS_URL
 ├── prisma/                       # Global PrismaService wrapper
-├── auth/                         # JWT strategy, login, guards
+├── auth/                         # JWT strategy + 30s in-process user cache with cross-instance invalidation via Redis pub/sub
 ├── users/                        # User CRUD & profile management
 ├── roles/                        # Role & permission management (RBAC)
 ├── languages/                    # Language records for i18n
@@ -251,13 +259,13 @@ For cross-cutting concepts the OpenAPI spec doesn't cover, the
 
 | Resource | Base path | Notes |
 | --- | --- | --- |
-| Dashboard | `/dashboard/stats` | Single-call aggregator for the CMS home screen; counts posts / library / users / newsletter / forms / contest |
+| Dashboard | `/dashboard/stats` | Single-call aggregator for the CMS home screen; counts posts / library / users / newsletter / forms / contest. Response is cached in-process for 30 s — don't poll faster than that |
 | Site Settings | `/settings` | Key/value store for editable site config (`site_name`, social links, default language, contact email, etc.). `GET /settings/public` is anonymous; everything else is admin-only |
 | Users | `/users` | Admin only. `POST /users/:id/reset-password` lets an admin force-reset a forgotten password |
 | Roles | `/roles` | Admin only |
 | Languages | `/languages` | |
-| Media | `/media` | R2 pre-signed upload URLs; responses include a `variants[]` array with WebP sizes generated at upload time. `POST /media/:id/regenerate-variants` re-runs sharp if a generation step failed |
-| Posts | `/posts` | i18n via translation tables (now with `meta_title` / `meta_description` / `og_image_id` SEO fields + derived `reading_time_minutes` per translation). `?featured=true` filters to flagged posts; `?sort=views` returns the popular sort. Admin-only `GET /posts/admin/:id` returns drafts. Posts whose `published_at` is in the past are auto-published by an EVERY_MINUTE cron |
+| Media | `/media` | R2 pre-signed upload URLs. `POST /media/confirm` returns immediately with `variants: []`; sharp runs in the background (~1–3 s) and the variants populate via `GET /media/:id`. `POST /media/:id/regenerate-variants` re-runs sharp if a generation step failed |
+| Posts | `/posts` | i18n via translation tables (`meta_title` / `meta_description` / `og_image_id` SEO fields + derived `reading_time_minutes` per translation). `?featured=true` filters to flagged posts; `?sort=views` returns the popular sort. Admin-only `GET /posts/admin/:id` returns drafts. Posts whose `published_at` is in the past are auto-published by an EVERY_MINUTE cron. **List payloads drop the `body` field** to keep responses small — call the detail endpoint when you need full text |
 | Post Categories | `/post-categories` | |
 | Books | `/books` | |
 | Book Categories | `/book-categories` | |

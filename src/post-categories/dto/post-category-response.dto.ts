@@ -5,11 +5,14 @@ class PostCategoryTranslationDto {
   @ApiProperty({ example: 'ar' })
   lang: string;
 
-  @ApiProperty({ example: 'الفقه' })
-  name: string;
+  @ApiProperty({ example: 'الأخبار والمستجدات' })
+  title: string;
 
-  @ApiProperty({ example: true })
-  is_default: boolean;
+  @ApiProperty({ example: 'al-akhbar' })
+  slug: string;
+
+  @ApiPropertyOptional({ example: 'آخر الأخبار المتعلقة بالموقع', nullable: true })
+  description: string | null;
 }
 
 class PostCategoryDto {

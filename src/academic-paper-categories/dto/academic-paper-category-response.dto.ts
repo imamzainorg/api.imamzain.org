@@ -5,11 +5,14 @@ class AcademicPaperCategoryTranslationItemDto {
   @ApiProperty({ example: 'ar' })
   lang: string;
 
-  @ApiProperty({ example: 'الفقه المقارن' })
-  name: string;
+  @ApiProperty({ example: 'الفقه والأحكام' })
+  title: string;
 
-  @ApiProperty({ example: true })
-  is_default: boolean;
+  @ApiProperty({ example: 'al-fiqh' })
+  slug: string;
+
+  @ApiPropertyOptional({ example: 'أبحاث في الفقه الإسلامي', nullable: true })
+  description: string | null;
 }
 
 class AcademicPaperCategoryDto {

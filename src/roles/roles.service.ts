@@ -1,9 +1,45 @@
 import { ConflictException, Injectable, NotFoundException } from '@nestjs/common';
+import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuditService } from '../common/audit/audit.service';
 import { AUDIT_ACTIONS } from '../common/audit/audit.actions';
 import { buildPaginationMeta } from '../common/utils/pagination.util';
+import { resolveTranslation } from '../common/utils/translation.util';
 import { AssignPermissionDto, CreateRoleDto, UpdateRoleDto } from './dto/role.dto';
+
+const ROLE_DETAIL_INCLUDE = {
+  role_translations: true,
+  role_permissions: {
+    include: {
+      permissions: {
+        include: { permission_translations: true },
+      },
+    },
+  },
+} satisfies Prisma.rolesInclude;
+
+type RoleWithRelations = Prisma.rolesGetPayload<{ include: typeof ROLE_DETAIL_INCLUDE }>;
+
+/**
+ * Shape a role row + its joins into the public response: flat `permissions[]`
+ * (the `role_permissions` join table is an implementation detail callers
+ * shouldn't have to walk), plus an Accept-Language-resolved `translation`
+ * field on both the role and each of its permissions.
+ */
+function shapeRole(role: RoleWithRelations, lang: string | null) {
+  return {
+    id: role.id,
+    name: role.name,
+    role_translations: role.role_translations,
+    translation: resolveTranslation(role.role_translations, lang),
+    permissions: role.role_permissions.map((rp) => ({
+      id: rp.permissions.id,
+      name: rp.permissions.name,
+      permission_translations: rp.permissions.permission_translations,
+      translation: resolveTranslation(rp.permissions.permission_translations, lang),
+    })),
+  };
+}
 
 @Injectable()
 export class RolesService {
@@ -12,47 +48,39 @@ export class RolesService {
     private readonly audit: AuditService,
   ) {}
 
+  private async hydrateRole(id: string, lang: string | null) {
+    const role = await this.prisma.roles.findUnique({
+      where: { id },
+      include: ROLE_DETAIL_INCLUDE,
+    });
+    if (!role) throw new NotFoundException('Role not found');
+    return shapeRole(role, lang);
+  }
+
   async findAll(lang: string | null, page: number, limit: number) {
     const skip = (page - 1) * limit;
     const [roles, total] = await Promise.all([
       this.prisma.roles.findMany({
-        include: {
-          role_translations: lang ? { where: { lang } } : true,
-          role_permissions: {
-            include: {
-              permissions: {
-                include: { permission_translations: lang ? { where: { lang } } : true },
-              },
-            },
-          },
-        },
+        include: ROLE_DETAIL_INCLUDE,
         skip,
         take: limit,
       }),
       this.prisma.roles.count(),
     ]);
-    return { message: 'Roles fetched', data: { items: roles, pagination: buildPaginationMeta(page, limit, total) } };
+    return {
+      message: 'Roles fetched',
+      data: {
+        items: roles.map((r) => shapeRole(r, lang)),
+        pagination: buildPaginationMeta(page, limit, total),
+      },
+    };
   }
 
   async findOne(id: string, lang: string | null) {
-    const role = await this.prisma.roles.findUnique({
-      where: { id },
-      include: {
-        role_translations: lang ? { where: { lang } } : true,
-        role_permissions: {
-          include: {
-            permissions: {
-              include: { permission_translations: lang ? { where: { lang } } : true },
-            },
-          },
-        },
-      },
-    });
-    if (!role) throw new NotFoundException('Role not found');
-    return { message: 'Role fetched', data: role };
+    return { message: 'Role fetched', data: await this.hydrateRole(id, lang) };
   }
 
-  async create(dto: CreateRoleDto, actorId: string) {
+  async create(dto: CreateRoleDto, actorId: string, lang: string | null) {
     const existing = await this.prisma.roles.findFirst({ where: { name: dto.name } });
     if (existing) throw new ConflictException('A role with that name already exists');
 
@@ -77,10 +105,10 @@ export class RolesService {
       changes: { method: 'POST', path: '/api/v1/roles' },
     });
 
-    return { message: 'Role created', data: role };
+    return { message: 'Role created', data: await this.hydrateRole(role.id, lang) };
   }
 
-  async update(id: string, dto: UpdateRoleDto, actorId: string) {
+  async update(id: string, dto: UpdateRoleDto, actorId: string, lang: string | null) {
     const role = await this.prisma.roles.findUnique({ where: { id } });
     if (!role) throw new NotFoundException('Role not found');
 
@@ -89,8 +117,8 @@ export class RolesService {
       if (conflict) throw new ConflictException('A role with that name already exists');
     }
 
-    const updated = await this.prisma.$transaction(async (tx) => {
-      const r = await tx.roles.update({
+    await this.prisma.$transaction(async (tx) => {
+      await tx.roles.update({
         where: { id },
         data: dto.name ? { name: dto.name } : {},
       });
@@ -104,7 +132,6 @@ export class RolesService {
           });
         }
       }
-      return r;
     });
 
     await this.audit.write({
@@ -115,7 +142,7 @@ export class RolesService {
       changes: { method: 'PATCH', path: `/api/v1/roles/${id}` },
     });
 
-    return { message: 'Role updated', data: updated };
+    return { message: 'Role updated', data: await this.hydrateRole(id, lang) };
   }
 
   async delete(id: string, actorId: string) {
@@ -147,7 +174,7 @@ export class RolesService {
     return { message: 'Role deleted', data: null };
   }
 
-  async assignPermission(roleId: string, dto: AssignPermissionDto, actorId: string) {
+  async assignPermission(roleId: string, dto: AssignPermissionDto, actorId: string, lang: string | null) {
     const role = await this.prisma.roles.findUnique({ where: { id: roleId } });
     if (!role) throw new NotFoundException('Role not found');
 
@@ -165,10 +192,10 @@ export class RolesService {
       changes: { method: 'POST', path: `/api/v1/roles/${roleId}/permissions`, permissionId: dto.permissionId },
     });
 
-    return { message: 'Permission assigned', data: null };
+    return { message: 'Permission assigned', data: await this.hydrateRole(roleId, lang) };
   }
 
-  async removePermission(roleId: string, permissionId: string, actorId: string) {
+  async removePermission(roleId: string, permissionId: string, actorId: string, lang: string | null) {
     const role = await this.prisma.roles.findUnique({ where: { id: roleId } });
     if (!role) throw new NotFoundException('Role not found');
 
@@ -187,19 +214,30 @@ export class RolesService {
       changes: { method: 'DELETE', path: `/api/v1/roles/${roleId}/permissions/${permissionId}`, permissionId },
     });
 
-    return { message: 'Permission removed', data: null };
+    return { message: 'Permission removed', data: await this.hydrateRole(roleId, lang) };
   }
 
   async findAllPermissions(lang: string | null, page: number, limit: number) {
     const skip = (page - 1) * limit;
     const [permissions, total] = await Promise.all([
       this.prisma.permissions.findMany({
-        include: { permission_translations: lang ? { where: { lang } } : true },
+        include: { permission_translations: true },
         skip,
         take: limit,
       }),
       this.prisma.permissions.count(),
     ]);
-    return { message: 'Permissions fetched', data: { items: permissions, pagination: buildPaginationMeta(page, limit, total) } };
+    return {
+      message: 'Permissions fetched',
+      data: {
+        items: permissions.map((p) => ({
+          id: p.id,
+          name: p.name,
+          permission_translations: p.permission_translations,
+          translation: resolveTranslation(p.permission_translations, lang),
+        })),
+        pagination: buildPaginationMeta(page, limit, total),
+      },
+    };
   }
 }

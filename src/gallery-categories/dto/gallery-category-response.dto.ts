@@ -5,11 +5,14 @@ class GalleryCategoryTranslationItemDto {
   @ApiProperty({ example: 'ar' })
   lang: string;
 
-  @ApiProperty({ example: 'الفعاليات' })
-  name: string;
+  @ApiProperty({ example: 'صور المراقد' })
+  title: string;
 
-  @ApiProperty({ example: true })
-  is_default: boolean;
+  @ApiProperty({ example: 'suwar-al-maraqi' })
+  slug: string;
+
+  @ApiPropertyOptional({ example: 'صور المراقد المقدسة', nullable: true })
+  description: string | null;
 }
 
 class GalleryCategoryDto {

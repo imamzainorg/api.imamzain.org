@@ -52,7 +52,7 @@ export class PostsController {
 
   @Get()
   @PublicCache(60)
-  @ApiOperation({ summary: 'List published posts (public)', description: 'Returns only published posts. Increments view count on each fetch of a single post. Response is `Cache-Control: public, max-age=60, s-maxage=300` and varies by `Accept-Language`; the CDN absorbs the bulk of public traffic.' })
+  @ApiOperation({ summary: 'List published posts (public)', description: 'Returns only published posts. Response is `Cache-Control: public, max-age=60, s-maxage=300` and varies by `Accept-Language`; the CDN absorbs the bulk of public traffic. **List payload is slim** — each translation drops the `body` field and `reading_time_minutes` is always `0`. Call `GET /posts/:id` or `GET /posts/by-slug/:slug` for the full post content.' })
   @ApiQuery({ name: 'page', required: false, type: Number, example: 1, description: 'Page number (default: 1)' })
   @ApiQuery({ name: 'limit', required: false, type: Number, example: 20, description: 'Items per page (default: 20, max: 100)' })
   @ApiQuery({ name: 'category_id', required: false, type: String, description: 'Filter by post category UUID' })
@@ -189,8 +189,8 @@ export class PostsController {
   @ApiConflictResponse({ type: ConflictErrorDto, description: 'A translation slug is already used by another post in the same language' })
   @ApiUnauthorizedResponse({ type: UnauthorizedErrorDto, description: 'Missing or invalid JWT' })
   @ApiForbiddenResponse({ type: ForbiddenErrorDto, description: 'Insufficient permissions' })
-  create(@Body() dto: CreatePostDto, @CurrentUser() user: CurrentUserPayload) {
-    return this.postsService.create(dto, user.id);
+  create(@Body() dto: CreatePostDto, @CurrentUser() user: CurrentUserPayload, @Lang() lang: string | null) {
+    return this.postsService.create(dto, user.id, lang);
   }
 
   @Patch(':id')
@@ -209,8 +209,9 @@ export class PostsController {
     @Param('id') id: string,
     @Body() dto: UpdatePostDto,
     @CurrentUser() user: CurrentUserPayload,
+    @Lang() lang: string | null,
   ) {
-    return this.postsService.update(id, dto, user.id);
+    return this.postsService.update(id, dto, user.id, lang);
   }
 
   @Patch(':id/publish')
@@ -227,8 +228,9 @@ export class PostsController {
     @Param('id') id: string,
     @Body() dto: TogglePublishDto,
     @CurrentUser() user: CurrentUserPayload,
+    @Lang() lang: string | null,
   ) {
-    return this.postsService.togglePublish(id, dto, user.id);
+    return this.postsService.togglePublish(id, dto, user.id, lang);
   }
 
   @Post('bulk/publish')

@@ -161,10 +161,14 @@ describe("BookCategoriesService", () => {
   });
 
   describe("create", () => {
-    it("creates category with translations in a transaction", async () => {
+    it("creates category with translations and returns hydrated detail", async () => {
       mockTx.book_categories.create.mockResolvedValue(baseCategory);
       mockTx.book_category_translations.createMany.mockResolvedValue({});
       prisma.$transaction.mockImplementation((cb: any) => cb(mockTx));
+      prisma.book_categories.findFirst.mockResolvedValue({
+        ...baseCategory,
+        book_category_translations: [{ lang: "ar", title: "فقه", slug: "fiqh" }],
+      });
 
       const result = await service.create(
         { translations: [{ lang: "ar", title: "فقه", slug: "fiqh" }] },
@@ -174,6 +178,8 @@ describe("BookCategoriesService", () => {
       expect(mockTx.book_categories.create).toHaveBeenCalled();
       expect(mockTx.book_category_translations.createMany).toHaveBeenCalled();
       expect(result.data.id).toBe("cat-1");
+      expect(result.data.book_category_translations).toHaveLength(1);
+      expect(result.data.translation).toBeDefined();
     });
   });
 

@@ -66,6 +66,16 @@ export class SubmitContestDto {
   @IsUUID()
   attempt_id!: string;
 
+  @ApiPropertyOptional({
+    example: "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
+    description:
+      "HMAC token returned by POST /start as `attempt_token`. Currently optional for backwards compatibility with frontends that haven't adopted token-binding yet; when present, it must match the server-side HMAC of the attempt_id or the submit is rejected with 401. Future versions will make this required.",
+  })
+  @IsOptional()
+  @IsString()
+  @MaxLength(128)
+  attempt_token?: string;
+
   @ApiProperty({
     type: [SubmitAnswerDto],
     description:

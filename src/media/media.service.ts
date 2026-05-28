@@ -1,6 +1,7 @@
-import { BadRequestException, ConflictException, ForbiddenException, Injectable, Logger, NotFoundException, PayloadTooLargeException } from '@nestjs/common';
+import { BadRequestException, ConflictException, ForbiddenException, GoneException, Injectable, Logger, NotFoundException, PayloadTooLargeException } from '@nestjs/common';
 import { Cron } from '@nestjs/schedule';
 import { Prisma } from '@prisma/client';
+import pLimit from 'p-limit';
 import { PrismaService } from '../prisma/prisma.service';
 import { R2Service } from '../storage/r2.service';
 import { AuditService } from '../common/audit/audit.service';
@@ -8,6 +9,11 @@ import { AUDIT_ACTIONS } from '../common/audit/audit.actions';
 import { buildPaginationMeta, resolvePagination } from '../common/utils/pagination.util';
 import { ConfirmUploadDto, RequestUploadUrlDto, UpdateMediaDto } from './dto/media.dto';
 import { ImageVariantService } from './image-variant.service';
+
+// Process-wide gate on sharp variant generation. Each confirmUpload fans
+// out to 4 sharp jobs; without a cap, parallel calls on large images can
+// OOM the dyno. Move to BullMQ if/when Redis lands.
+const variantLimit = pLimit(2);
 
 @Injectable()
 export class MediaService {
@@ -47,6 +53,9 @@ export class MediaService {
     }
     if (pending.requested_by !== userId) {
       throw new ForbiddenException('Upload key was issued to a different user');
+    }
+    if (pending.expires_at < new Date()) {
+      throw new GoneException('Upload URL has expired — request a new one');
     }
 
     const head = await this.r2Service.headObject(dto.key);
@@ -104,13 +113,19 @@ export class MediaService {
       return created;
     });
 
-    // Generate responsive variants synchronously so the editor can reference
-    // them in the response and start using <img srcset> immediately. Failures
+    // Generate responsive variants in the background. The original media
+    // row is returned immediately so the editor isn't blocked by a 2–5s
+    // sharp decode. Clients that need the variants poll GET /media/:id;
+    // until the variants land, the original URL is fully usable. Failures
     // are isolated inside the variant service — the media row is still
-    // created if some / all variants fail.
-    const generatedVariants = await this.variants.generateForMedia(media.id, dto.key);
+    // created if some / all variants fail. Gated by `variantLimit` so
+    // parallel confirms don't OOM the dyno.
+    setImmediate(() => {
+      variantLimit(() => this.variants.generateForMedia(media.id, dto.key))
+        .catch((err) => this.logger.warn(`Background variant generation failed for ${media.id}: ${err}`));
+    });
 
-    await this.audit.write({
+    this.audit.write({
       actorId: userId,
       action: AUDIT_ACTIONS.MEDIA_CREATED,
       resourceType: 'media',
@@ -118,11 +133,11 @@ export class MediaService {
       changes: {
         method: 'POST',
         path: '/api/v1/media/confirm',
-        variants_generated: generatedVariants.length,
+        variants_generated: 'pending',
       },
     });
 
-    return { message: 'Media created', data: { ...media, variants: generatedVariants } };
+    return { message: 'Media created', data: { ...media, variants: [] } };
   }
 
   /**

@@ -1,9 +1,16 @@
-import { BadRequestException, ConflictException, Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, Injectable, Logger, NotFoundException, OnApplicationBootstrap } from '@nestjs/common';
 import { Prisma, site_setting_type } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuditService } from '../common/audit/audit.service';
 import { AUDIT_ACTIONS } from '../common/audit/audit.actions';
+import { TtlCache } from '../common/utils/ttl-cache.util';
 import { UpsertSettingDto } from './dto/setting.dto';
+
+// Settings change rarely (admin action) and are read on most CMS page loads.
+// 60s is short enough that an admin's own change is visible after one refresh
+// cycle, long enough to absorb the bursty fan-out a fresh dashboard render
+// causes when it requests every public setting in parallel.
+const SETTINGS_CACHE_TTL_MS = 60_000;
 
 type SettingRow = Prisma.site_settingsGetPayload<{}>;
 
@@ -18,13 +25,28 @@ export interface DecodedSetting {
 }
 
 @Injectable()
-export class SettingsService {
+export class SettingsService implements OnApplicationBootstrap {
   private readonly logger = new Logger(SettingsService.name);
+  private readonly cache = new TtlCache<DecodedSetting[]>(SETTINGS_CACHE_TTL_MS);
 
   constructor(
     private readonly prisma: PrismaService,
     private readonly audit: AuditService,
   ) {}
+
+  /**
+   * Warm the cache once before the app accepts traffic. Avoids the first
+   * dashboard render eating a full settings table scan on cold start.
+   * Best-effort: failures are logged but don't block boot.
+   */
+  async onApplicationBootstrap(): Promise<void> {
+    try {
+      await this.findAll();
+      await this.findPublic();
+    } catch (err) {
+      this.logger.warn(`Settings cache pre-warm failed: ${err}`);
+    }
+  }
 
   /**
    * Decode the text-stored `value` into the type declared on the row.
@@ -84,16 +106,24 @@ export class SettingsService {
   }
 
   async findAll(): Promise<{ message: string; data: DecodedSetting[] }> {
+    const cached = this.cache.get('all');
+    if (cached) return { message: 'Settings fetched', data: cached };
     const rows = await this.prisma.site_settings.findMany({ orderBy: { key: 'asc' } });
-    return { message: 'Settings fetched', data: rows.map((r) => this.decode(r)) };
+    const decoded = rows.map((r) => this.decode(r));
+    this.cache.set('all', decoded);
+    return { message: 'Settings fetched', data: decoded };
   }
 
   async findPublic(): Promise<{ message: string; data: DecodedSetting[] }> {
+    const cached = this.cache.get('public');
+    if (cached) return { message: 'Public settings fetched', data: cached };
     const rows = await this.prisma.site_settings.findMany({
       where: { is_public: true },
       orderBy: { key: 'asc' },
     });
-    return { message: 'Public settings fetched', data: rows.map((r) => this.decode(r)) };
+    const decoded = rows.map((r) => this.decode(r));
+    this.cache.set('public', decoded);
+    return { message: 'Public settings fetched', data: decoded };
   }
 
   async findOne(key: string): Promise<{ message: string; data: DecodedSetting }> {
@@ -138,7 +168,9 @@ export class SettingsService {
       },
     });
 
-    await this.audit.write({
+    this.cache.clear();
+
+    this.audit.write({
       actorId,
       action: existing ? AUDIT_ACTIONS.SETTING_UPDATED : AUDIT_ACTIONS.SETTING_CREATED,
       resourceType: 'site_setting',
@@ -153,8 +185,9 @@ export class SettingsService {
     if (!existing) throw new NotFoundException('Setting not found');
 
     await this.prisma.site_settings.delete({ where: { key } });
+    this.cache.clear();
 
-    await this.audit.write({
+    this.audit.write({
       actorId,
       action: AUDIT_ACTIONS.SETTING_DELETED,
       resourceType: 'site_setting',

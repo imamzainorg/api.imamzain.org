@@ -56,6 +56,13 @@ class FormsStatsDto {
 
   @ApiProperty({ example: 5 })
   proxy_visit_recent: number;
+
+  @ApiProperty({
+    example: 0,
+    description:
+      'Submissions whose admin-notification email failed. Non-zero usually means stale SMTP creds — on-call should investigate.',
+  })
+  unsent_notifications: number;
 }
 
 class ContestStatsDto {
@@ -86,6 +93,16 @@ class DashboardStatsDataDto {
   contest: ContestStatsDto;
 }
 
+/**
+ * Aggregated CMS home-screen counters.
+ *
+ * **Server-side cached for 30 seconds** to absorb the bursty fan-out of
+ * every CMS user opening the dashboard at once. The CMS should not poll
+ * faster than the cache TTL — the response is byte-identical until the
+ * cache expires. The 4 post counters are collapsed into a single
+ * `FILTER`-based SQL aggregate so the underlying read pressure stays
+ * minimal regardless of cache state.
+ */
 export class DashboardStatsResponseDto {
   @ApiProperty({ example: true })
   success: boolean;

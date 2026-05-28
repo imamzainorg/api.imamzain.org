@@ -72,7 +72,8 @@ export class GalleryCategoriesService {
       changes: { method: 'POST', path: '/api/v1/gallery-categories' },
     });
 
-    return { message: 'Category created', data: category };
+    const { data } = await this.findOne(category.id, null);
+    return { message: 'Category created', data };
   }
 
   async update(id: string, dto: UpdateGalleryCategoryDto, actorId: string) {
@@ -97,14 +98,15 @@ export class GalleryCategoriesService {
       changes: { method: 'PATCH', path: `/api/v1/gallery-categories/${id}` },
     });
 
-    return { message: 'Category updated', data: null };
+    const { data } = await this.findOne(id, null);
+    return { message: 'Category updated', data };
   }
 
   /** List soft-deleted gallery categories. */
   async findTrash(page: number, limit: number) {
     const skip = (page - 1) * limit;
     const where: Prisma.gallery_categoriesWhereInput = { deleted_at: { not: null } };
-    const [items, total] = await Promise.all([
+    const [rows, total] = await Promise.all([
       this.prisma.gallery_categories.findMany({
         where,
         include: { gallery_category_translations: true },
@@ -114,6 +116,17 @@ export class GalleryCategoriesService {
       }),
       this.prisma.gallery_categories.count({ where }),
     ]);
+    const items = rows.map((row) => {
+      const gallery_category_translations = row.gallery_category_translations.map((t) => ({
+        ...t,
+        slug: stripSoftDeleteSuffix(t.slug),
+      }));
+      return {
+        ...row,
+        gallery_category_translations,
+        translation: resolveTranslation(gallery_category_translations, null),
+      };
+    });
     return {
       message: 'Trash fetched',
       data: { items, pagination: buildPaginationMeta(page, limit, total) },

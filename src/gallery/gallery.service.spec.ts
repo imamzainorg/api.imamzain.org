@@ -118,11 +118,14 @@ describe("GalleryService", () => {
   });
 
   describe("create", () => {
-    it("creates image and translations inside a transaction", async () => {
+    it("creates image and returns hydrated detail", async () => {
       prisma.media.findUnique.mockResolvedValue({ id: "media-1" });
       mockTx.gallery_images.create.mockResolvedValue(baseImage);
       mockTx.gallery_image_translations.createMany.mockResolvedValue({});
       prisma.$transaction.mockImplementation((cb: any) => cb(mockTx));
+      // After the transaction commits, create refetches with includes so the
+      // response matches what GET /gallery/:id returns.
+      prisma.gallery_images.findFirst.mockResolvedValue(baseImage);
 
       const result = await service.create(
         {
@@ -130,6 +133,7 @@ describe("GalleryService", () => {
           translations: [{ lang: "ar", title: "صورة" }],
         },
         "user-1",
+        null,
       );
 
       expect(mockTx.gallery_images.create).toHaveBeenCalledWith(
@@ -138,19 +142,22 @@ describe("GalleryService", () => {
         }),
       );
       expect(result.message).toBe("Gallery image created");
+      expect(result.data.gallery_image_translations).toBeDefined();
+      expect(result.data.translation).toBeDefined();
     });
 
     it("throws NotFoundException when media not found", async () => {
       prisma.media.findUnique.mockResolvedValue(null);
 
       await expect(
-        service.create({ media_id: "bad", translations: [] }, "user-1"),
+        service.create({ media_id: "bad", translations: [] }, "user-1", null),
       ).rejects.toThrow(NotFoundException);
     });
   });
 
   describe("update", () => {
-    it("updates image using media_id as PK", async () => {
+    it("updates image and returns hydrated detail", async () => {
+      // Default mock covers both the initial existence check and findOne's hydrate.
       prisma.gallery_images.findFirst.mockResolvedValue(baseImage);
       mockTx.gallery_images.update.mockResolvedValue({});
       prisma.$transaction.mockImplementation((cb: any) => cb(mockTx));
@@ -159,18 +166,20 @@ describe("GalleryService", () => {
         "media-1",
         { author: "New Author" },
         "user-1",
+        null,
       );
 
       expect(mockTx.gallery_images.update).toHaveBeenCalledWith(
         expect.objectContaining({ where: { media_id: "media-1" } }),
       );
       expect(result.message).toBe("Gallery image updated");
+      expect(result.data.media_id).toBe("media-1");
     });
 
     it("throws NotFoundException when not found", async () => {
       prisma.gallery_images.findFirst.mockResolvedValue(null);
 
-      await expect(service.update("ghost", {}, "user-1")).rejects.toThrow(
+      await expect(service.update("ghost", {}, "user-1", null)).rejects.toThrow(
         NotFoundException,
       );
     });

@@ -156,10 +156,15 @@ describe("PostCategoriesService", () => {
   });
 
   describe("create", () => {
-    it("creates category with translations in a transaction", async () => {
+    it("creates category with translations and returns hydrated detail", async () => {
       mockTx.post_categories.create.mockResolvedValue(baseCategory);
       mockTx.post_category_translations.createMany.mockResolvedValue({});
       prisma.$transaction.mockImplementation((cb: any) => cb(mockTx));
+      // findOne hydration after audit write.
+      prisma.post_categories.findFirst.mockResolvedValue({
+        ...baseCategory,
+        post_category_translations: [{ lang: "ar", title: "فئة", slug: "fia" }],
+      });
 
       const result = await service.create(
         { translations: [{ lang: "ar", title: "فئة", slug: "fia" }] },
@@ -169,6 +174,8 @@ describe("PostCategoriesService", () => {
       expect(mockTx.post_categories.create).toHaveBeenCalled();
       expect(mockTx.post_category_translations.createMany).toHaveBeenCalled();
       expect(result.data.id).toBe("cat-1");
+      expect(result.data.post_category_translations).toHaveLength(1);
+      expect(result.data.translation).toBeDefined();
     });
   });
 

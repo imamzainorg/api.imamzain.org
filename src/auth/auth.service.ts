@@ -1,4 +1,5 @@
 import { Injectable, Logger, UnauthorizedException } from '@nestjs/common';
+import { Cron } from '@nestjs/schedule';
 import { JwtService } from '@nestjs/jwt';
 import { Prisma } from '@prisma/client';
 import * as bcrypt from 'bcryptjs';
@@ -7,9 +8,14 @@ import { PrismaService } from '../prisma/prisma.service';
 import { AuditService } from '../common/audit/audit.service';
 import { AUDIT_ACTIONS } from '../common/audit/audit.actions';
 import { resolveBcryptRounds } from '../common/utils/bcrypt.util';
+import { invalidateJwtUserCache } from './strategies/jwt.strategy';
 import { ChangePasswordDto, LoginDto, RefreshTokenDto } from './dto/auth.dto';
 
 const REFRESH_TOKEN_TTL_DAYS = 7;
+// Keep revoked tokens around for 30 days so the reuse-detection in `refresh`
+// can still catch a stolen-and-replayed token even after rotation. Past that
+// window, the original session is long gone and the row is dead weight.
+const REVOKED_TOKEN_GRACE_DAYS = 30;
 
 type PrismaTxClient = Prisma.TransactionClient | PrismaService;
 
@@ -202,6 +208,35 @@ export class AuthService {
     return { message: 'Logged out successfully', data: null };
   }
 
+  /**
+   * Daily retention sweep for refresh_tokens. Two categories of dead rows
+   * accumulate over time:
+   *   - expired tokens (past expires_at) — guaranteed unusable
+   *   - revoked tokens beyond the grace window — past the reuse-detection
+   *     window so they're no longer needed as tombstones
+   * Runs at 03:15 server time, just before the audit-log sweep at 03:30.
+   */
+  @Cron('15 3 * * *')
+  async cleanupStaleRefreshTokens(): Promise<void> {
+    const now = new Date();
+    const revokedCutoff = new Date(now.getTime() - REVOKED_TOKEN_GRACE_DAYS * 24 * 60 * 60 * 1000);
+    try {
+      const { count } = await this.prisma.refresh_tokens.deleteMany({
+        where: {
+          OR: [
+            { expires_at: { lt: now } },
+            { revoked_at: { lt: revokedCutoff } },
+          ],
+        },
+      });
+      if (count > 0) {
+        this.logger.log(`Pruned ${count} stale refresh_tokens row(s)`);
+      }
+    } catch (err) {
+      this.logger.warn(`refresh_tokens retention sweep failed: ${err}`);
+    }
+  }
+
   async getMe(userId: string) {
     const user = await this.findUserWithPermissions(this.prisma, { id: userId, deleted_at: null });
 
@@ -250,6 +285,8 @@ export class AuthService {
         data: { revoked_at: new Date() },
       });
     });
+
+    invalidateJwtUserCache(userId);
 
     await this.audit.write({
       actorId: userId,

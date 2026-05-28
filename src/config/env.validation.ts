@@ -172,6 +172,14 @@ class EnvironmentVariables {
   @IsOptional()
   @IsString()
   YOUTUBE_CHANNEL_ID?: string;
+
+  // Optional Redis. When set, enables (a) shared throttler counters across
+  // instances and (b) pub/sub-driven JWT cache invalidation across instances.
+  // When unset, both fall back to in-process state — fine for single-instance
+  // deployments. Use a standard redis:// or rediss:// URL.
+  @IsOptional()
+  @IsString()
+  REDIS_URL?: string;
 }
 
 export function validateEnv(config: Record<string, unknown>) {

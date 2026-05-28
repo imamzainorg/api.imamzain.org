@@ -26,6 +26,7 @@ import {
   ApiTags,
   ApiUnauthorizedResponse,
 } from '@nestjs/swagger';
+import { Throttle } from '@nestjs/throttler';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { CurrentUser, CurrentUserPayload } from '../common/decorators/current-user.decorator';
 import { RequirePermission } from '../common/decorators/require-permission.decorator';
@@ -51,6 +52,7 @@ export class MediaController {
   constructor(private readonly mediaService: MediaService) {}
 
   @Post('upload-url')
+  @Throttle({ default: { limit: 60, ttl: 60_000 } })
   @RequirePermission('media:create')
   @ApiOperation({
     summary: 'Request a pre-signed R2 upload URL',
@@ -71,6 +73,7 @@ export class MediaController {
   }
 
   @Post('confirm')
+  @Throttle({ default: { limit: 60, ttl: 60_000 } })
   @HttpCode(201)
   @RequirePermission('media:create')
   @ApiOperation({
@@ -81,10 +84,14 @@ export class MediaController {
       'the actual stored Content-Type and Content-Length from R2 (client-supplied values are not trusted). ' +
       'If the stored size exceeds the per-MIME cap (currently 25 MB for images) the R2 object is deleted and ' +
       'a 413 is returned. On success the media row is created with the same `mediaId` baked into the upload key, ' +
-      'EXIF-oriented WebP variants are generated synchronously, and both originals and variants share the ' +
-      '`<mediaId>` folder segment in R2. Requires permission: `media:create`.',
+      'and both originals and variants share the `<mediaId>` folder segment in R2.\n\n' +
+      '**Variants are generated in the background.** The response returns immediately with `variants: []`; ' +
+      'EXIF-oriented WebP variants (320/768/1280/1920 px) finish populating ~1–3 seconds later. ' +
+      'Poll `GET /media/:id` until `variants.length === 4`, or fall back to the original `url` until they land. ' +
+      'If they stay empty past ~10 s, call `POST /media/:id/regenerate-variants`. ' +
+      'Requires permission: `media:create`.',
   })
-  @ApiCreatedResponse({ type: MediaCreatedResponseDto, description: 'Media record registered in the database; returns the full media object including the public CDN URL and the generated variants[]' })
+  @ApiCreatedResponse({ type: MediaCreatedResponseDto, description: 'Media record registered in the database. Returns the media object with `variants: []` — variants populate asynchronously and become visible on subsequent `GET /media/:id` calls.' })
   @ApiBadRequestResponse({ type: ValidationErrorDto, description: 'Validation failed, the key is not under the managed prefix, or the file was not uploaded to R2' })
   @ApiNotFoundResponse({ type: NotFoundErrorDto, description: 'No pending upload exists for that key — request a new upload URL first' })
   @ApiForbiddenResponse({ type: ForbiddenErrorDto, description: 'The key was issued to a different user' })

@@ -7,6 +7,34 @@ import { resolveTranslation } from '../common/utils/translation.util';
 import { buildPaginationMeta, resolvePagination } from '../common/utils/pagination.util';
 import { CreateGalleryImageDto, GalleryQueryDto, UpdateGalleryImageDto } from './dto/gallery.dto';
 
+// List queries drop the description from translations.
+const GALLERY_LIST_SELECT = {
+  media_id: true,
+  category_id: true,
+  taken_at: true,
+  author: true,
+  tags: true,
+  locations: true,
+  created_at: true,
+  updated_at: true,
+  deleted_at: true,
+  gallery_image_translations: {
+    select: { media_id: true, lang: true, title: true },
+  },
+  media: {
+    select: { id: true, url: true, filename: true, alt_text: true, mime_type: true, width: true, height: true },
+  },
+  gallery_categories: {
+    select: {
+      id: true,
+      created_at: true,
+      gallery_category_translations: {
+        select: { category_id: true, lang: true, title: true, slug: true, description: true },
+      },
+    },
+  },
+} satisfies Prisma.gallery_imagesSelect;
+
 @Injectable()
 export class GalleryService {
   private readonly logger = new Logger(GalleryService.name);
@@ -27,11 +55,7 @@ export class GalleryService {
     const [items, total] = await Promise.all([
       this.prisma.gallery_images.findMany({
         where,
-        include: {
-          gallery_image_translations: true,
-          media: true,
-          gallery_categories: { include: { gallery_category_translations: true } },
-        },
+        select: GALLERY_LIST_SELECT,
         orderBy: { created_at: 'desc' },
         skip,
         take: limit,
@@ -62,7 +86,7 @@ export class GalleryService {
     };
   }
 
-  async create(dto: CreateGalleryImageDto, userId: string) {
+  async create(dto: CreateGalleryImageDto, userId: string, lang: string | null) {
     const media = await this.prisma.media.findUnique({ where: { id: dto.media_id } });
     if (!media) throw new NotFoundException('Media not found');
 
@@ -97,10 +121,11 @@ export class GalleryService {
       changes: { method: 'POST', path: '/api/v1/gallery' },
     });
 
-    return { message: 'Gallery image created', data: image };
+    const { data } = await this.findOne(image.media_id, lang);
+    return { message: 'Gallery image created', data };
   }
 
-  async update(id: string, dto: UpdateGalleryImageDto, userId: string) {
+  async update(id: string, dto: UpdateGalleryImageDto, userId: string, lang: string | null) {
     const image = await this.prisma.gallery_images.findFirst({ where: { media_id: id, deleted_at: null } });
     if (!image) throw new NotFoundException('Gallery image not found');
 
@@ -149,7 +174,8 @@ export class GalleryService {
       changes: { method: 'PATCH', path: `/api/v1/gallery/${id}` },
     });
 
-    return { message: 'Gallery image updated', data: null };
+    const { data } = await this.findOne(id, lang);
+    return { message: 'Gallery image updated', data };
   }
 
   /** List soft-deleted gallery images (admin trash view). */
@@ -160,11 +186,7 @@ export class GalleryService {
     const [items, total] = await Promise.all([
       this.prisma.gallery_images.findMany({
         where,
-        include: {
-          gallery_image_translations: true,
-          media: true,
-          gallery_categories: { include: { gallery_category_translations: true } },
-        },
+        select: GALLERY_LIST_SELECT,
         orderBy: [{ deleted_at: 'desc' }, { media_id: 'asc' }],
         skip,
         take: limit,
@@ -172,9 +194,14 @@ export class GalleryService {
       this.prisma.gallery_images.count({ where }),
     ]);
 
+    const mapped = items.map((img) => ({
+      ...img,
+      translation: resolveTranslation(img.gallery_image_translations, null),
+    }));
+
     return {
       message: 'Trash fetched',
-      data: { items, pagination: buildPaginationMeta(page, limit, total) },
+      data: { items: mapped, pagination: buildPaginationMeta(page, limit, total) },
     };
   }
 

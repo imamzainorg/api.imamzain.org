@@ -1289,7 +1289,630 @@ you read the service code:
 
 ---
 
-## 14. Open follow-ups (still not in this push)
+## 14. Round 10 (this push) — pre-release hardening
+
+This push closes the pre-release audit (`docs/pre-release-audit-tasks.md`).
+Every change below is a tightening or a contract-correction, **not** a
+redesign — generated clients keep working, but the schema is now
+trustworthy in places it previously over- or under-promised. Read the
+sections that touch endpoints your client actually exercises.
+
+### 14.1 New migration to apply
+
+```text
+prisma/migrations/20260526120000_form_notification_failed_at/migration.sql
+```
+
+Adds a nullable `notification_failed_at TIMESTAMPTZ` column to
+`contact_submissions` and `proxy_visit_requests`. The migration is
+idempotent (`ADD COLUMN IF NOT EXISTS`). Required before
+`/dashboard/stats.forms.unsent_notifications` returns anything but zero
+— without it, every form submit logs a warning. Apply with:
+
+```bash
+npx prisma migrate deploy
+```
+
+### 14.2 User responses no longer leak `token_version` / `deleted_at`
+
+Every endpoint that returns a user (`GET /users/:id`, `POST /users`,
+`PATCH /users/:id`, `POST /users/:id/roles`,
+`DELETE /users/:id/roles/:roleId`) now returns exactly the fields
+declared in `UserDetailDataDto`: `{ id, username, is_active, created_at,
+updated_at, user_roles, permissions }`.
+
+Previously the `findOne` destructure spread leaked `token_version` (an
+internal counter used for forced-logout) and `deleted_at` (always
+`null` on these endpoints since they only return live users) into the
+response. The DTO never declared either, so generated clients aren't
+typed against them — flag only if your CMS code reads
+`user.token_version` directly. Use `is_active` (already in the DTO) for
+the soft-delete state.
+
+### 14.3 `POST` / `PATCH` on the four `*-categories` resources — full hydration
+
+The four create + four update endpoints —
+
+```text
+POST   /api/v1/post-categories            PATCH  /api/v1/post-categories/:id
+POST   /api/v1/book-categories            PATCH  /api/v1/book-categories/:id
+POST   /api/v1/gallery-categories         PATCH  /api/v1/gallery-categories/:id
+POST   /api/v1/academic-paper-categories  PATCH  /api/v1/academic-paper-categories/:id
+```
+
+— now return the full hydrated category with `<resource>_translations[]`
+and a resolved `translation` field, matching the
+`<*>CategoryCreatedResponseDto` / `<*>CategoryDetailResponseDto`
+declared in Scalar.
+
+**Old `POST` response shape:**
+
+```jsonc
+{ "id": "uuid", "created_at": "...", "deleted_at": null }
+```
+
+**Old `PATCH` response shape:**
+
+```jsonc
+{ "message": "Category updated", "data": null }
+```
+
+**New shape (both):**
+
+```jsonc
+{
+  "message": "Category created",
+  "data": {
+    "id": "uuid",
+    "created_at": "...",
+    "deleted_at": null,
+    "post_category_translations": [
+      { "lang": "ar", "title": "أخبار", "slug": "akhbar", "description": null },
+      { "lang": "en", "title": "News",   "slug": "news",   "description": null }
+    ],
+    "translation": { "lang": "ar", "title": "أخبار", "slug": "akhbar", "description": null }
+  }
+}
+```
+
+This is a **breaking change for the `PATCH` endpoints only** — anyone
+who was specifically reading `data === null` to short-circuit needs to
+update. The CMS likely wasn't, since the controllers' OpenAPI
+`@ApiOkResponse` always declared the full DTO; reality just didn't
+match until now.
+
+### 14.4 Trash listings now include `translation` + stripped slugs
+
+Eight endpoints —
+
+```text
+GET /api/v1/posts/trash              GET /api/v1/post-categories/trash
+GET /api/v1/books/trash              GET /api/v1/book-categories/trash
+GET /api/v1/gallery/trash            GET /api/v1/gallery-categories/trash
+GET /api/v1/academic-papers/trash    GET /api/v1/academic-paper-categories/trash
+```
+
+— now include a resolved `translation` field on every item, and the
+`__del_<timestamp>` suffix is stripped from
+`<resource>_translations[].slug` before serialisation. Matches what the
+controllers' Swagger docstrings already promised.
+
+The CMS trash view can stop running the suffix-strip in JS and stop
+defaulting `translation` to the first array element — both are now
+authoritative server-side.
+
+### 14.5 `POST /media/confirm` — new 410 case for expired uploads
+
+If a CMS user lets a pre-signed upload URL sit for more than 15 minutes
+before calling `/media/confirm`, the confirm now fails fast:
+
+```jsonc
+// HTTP 410 Gone
+{
+  "success": false,
+  "error":   "Upload URL has expired — request a new one",
+  "timestamp": "...",
+  "path": "/api/v1/media/confirm"
+}
+```
+
+Previously the confirm succeeded as long as the row hadn't been
+cleaned up by the hourly cron (so the window where you could
+successfully confirm a stale upload was up to 60 minutes). On 410,
+prompt the user to re-pick the file and call `/media/upload-url` again.
+
+### 14.6 Rate limits on the media-upload endpoints
+
+```text
+POST /api/v1/media/upload-url   60 requests / minute / IP
+POST /api/v1/media/confirm      60 requests / minute / IP
+```
+
+Returned as a standard `429` envelope (`TooManyRequestsErrorDto`).
+Normal interactive uploads are well under this cap; only batched /
+scripted migrations need to pace themselves. The previous global
+throttler (1000 / 15 min) still applies on top.
+
+### 14.7 `PATCH /media/:id` — request DTO trimmed
+
+`UpdateMediaDto` now accepts **only** `filename` and `alt_text`.
+Sending any of `mime_type`, `file_size`, `width`, `height` returns a
+400 validation error. Previously those fields were accepted and
+silently ignored, because R2's `HeadObject` is the authoritative source
+for them at confirm time — there is no scenario where the CMS should
+overwrite them.
+
+If the CMS form was including these fields in the PATCH body (most
+likely from a generic "edit media metadata" form), drop them — keeping
+them around will now break the request.
+
+### 14.8 `POST /forms/qutuf-sajjadiya-contest/start` — new `attempt_token` field
+
+The `/start` response now includes an `attempt_token` alongside
+`attempt_id`:
+
+```jsonc
+{
+  "message": "Contest started",
+  "data": {
+    "attempt_id":    "9f86d081-...",
+    "attempt_token": "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08"
+  }
+}
+```
+
+The token is an HMAC-SHA256 of the attempt id with a server-side
+secret. Pass it back in the `/submit` body:
+
+```jsonc
+POST /api/v1/forms/qutuf-sajjadiya-contest/submit
+{
+  "attempt_id":    "9f86d081-...",
+  "attempt_token": "9f86d081884c...",
+  "answers":       [ /* ... */ ]
+}
+```
+
+**Rollout policy: optional today, will become required.** Submits
+without `attempt_token` continue to work and log a server-side warning
+so we can track adoption. A wrong token returns 401 immediately. Once
+the contest UI is shipping the token, we'll flip the validator to
+required (will be communicated in a follow-up round).
+
+Without token-binding, anyone who guesses or intercepts an
+`attempt_id` can submit on behalf of the contestant. With it, they
+also need the matching token, which never leaves the contestant's
+device.
+
+### 14.9 `/dashboard/stats` — new `forms.unsent_notifications` counter
+
+```jsonc
+"forms": {
+  "contact_new": 4,
+  "contact_recent": 11,
+  "proxy_visit_pending": 2,
+  "proxy_visit_recent": 5,
+  "unsent_notifications": 0   // ← new
+}
+```
+
+Count of `contact_submissions` + `proxy_visit_requests` whose admin
+notification email failed. A non-zero value is an operational alert
+(stale SMTP credentials, mail provider outage, etc.) — the row was
+still saved, just the notification didn't go out. Surface it on the
+CMS home screen so the team isn't flying blind on email failures.
+
+Requires the migration in [14.1](#141-new-migration-to-apply). Until
+applied, the column doesn't exist and Prisma queries against it will
+fail — the column-existence check is the only deploy-ordering
+constraint in this round.
+
+### 14.10 New audit-log action: `NEWSLETTER_CAMPAIGN_COMPLETED`
+
+The newsletter campaign sender now writes one audit row per campaign
+at the `sending → sent` transition. The `changes` JSON carries the
+final counters:
+
+```jsonc
+{
+  "action":         "NEWSLETTER_CAMPAIGN_COMPLETED",
+  "resource_type":  "newsletter_campaign",
+  "resource_id":    "<campaign_uuid>",
+  "user_id":        null,                       // system-driven, no actor
+  "changes": {
+    "delivered_count": 1247,
+    "failed_count":    3,
+    "recipient_count": 1250
+  }
+}
+```
+
+Add to the audit-log dashboard's known-action list. The other newsletter
+campaign actions (`*_CREATED`, `*_UPDATED`, `*_DELETED`, `*_CANCELLED`,
+`*_SEND_QUEUED`) are unchanged.
+
+Related correctness fix on the same sender: a subscriber who
+unsubscribes **between** `/send` (which snapshots all recipients) and
+the per-tick processing now correctly skips the send. The recipient
+row is marked `failed_at` with
+`error_message: 'Subscriber unsubscribed before send'`. No CMS code
+change; surfaces only in the per-campaign recipient breakdown if you
+expose one.
+
+### 14.11 Audit-log `changes` JSON — sensitive keys are now stripped
+
+Defence-in-depth. The audit-log read endpoint (`GET /audit-logs`,
+permission `audit-logs:read`) returns `changes` verbatim, so any
+service that accidentally writes a sensitive value through that field
+would leak it. The `AuditService.write()` path now strips a recursive
+deny-list before persist:
+
+```text
+password, password_hash, new_password, old_password,
+token, access_token, refresh_token,
+secret, api_key, authorization
+```
+
+Matching is case-insensitive and applies to nested objects + arrays of
+objects. No current call site writes these keys (we audited); this is
+purely a guard against future regressions.
+
+The CMS audit-log viewer will never see these keys. If any historical
+audit row already contained one, it was persisted before this guard —
+not retroactively stripped.
+
+### 14.12 `assignRole` is now idempotent
+
+```text
+POST /api/v1/users/:id/roles  { "role_id": "<role-already-assigned>" }
+```
+
+Now returns 200 with the user detail unchanged, **without** writing a
+new `user_roles` row, **without** emitting a
+`ROLE_ASSIGNED_TO_USER` audit row. Previously it wrote a no-op audit
+row every time — useful nowhere, noisy in the audit-log dashboard.
+
+Re-assignment via the CMS role picker is now safe to spam; the audit
+trail only reflects state changes.
+
+### 14.13 `DELETE /users/:id/roles/:roleId` — specific 404 message
+
+Previously, removing an unassigned role returned the generic Prisma
+P2025 fallback (`error: "Record not found"`). Now:
+
+```jsonc
+// HTTP 404
+{ "success": false, "error": "Role is not assigned to this user", ... }
+```
+
+The CMS can surface the error verbatim in the role-management UI's
+toast.
+
+### 14.14 No-action items also shipped this round
+
+These are either runtime-compatible or invisible to the CMS:
+
+- **Newsletter sender has a re-entrancy guard.** If a `runSendingTick`
+  cron run is still in flight when the next tick fires (large
+  campaigns, slow SMTP), the second tick now skips with a log line
+  instead of double-sending to the same recipients. Same wire surface;
+  observable only if you have alerts on duplicate sends — there
+  shouldn't be any.
+- **Variant generation now gated server-side** at 2 concurrent jobs
+  per process (`p-limit`). Sequential `/media/confirm` calls work
+  exactly as before; bursty parallel uploads will see individual
+  `confirm` calls take longer (queued internally) but never OOM the
+  dyno. No new error codes.
+- **YouTube playlist sync wrapped in `$transaction`.** Internal —
+  closes a window where a sync crash between `deleteMany` and
+  `createMany` left a playlist temporarily empty.
+- **YouTube bootstrap sync now skipped if `last_synced_at < 6h ago`.**
+  Restart loops no longer burn YouTube Data API quota. The 6-hour cron
+  is unchanged.
+- **`PostSummaryDto.post_attachments?` now declared in OpenAPI.** The
+  field was already being shipped by `GET /posts/admin` list payloads
+  (the first attachment, capped at one item, for thumbnail rendering).
+  Generated clients can now type it correctly — was missing from the
+  spec before this round.
+- **`PATCH /users/:id` mass-assignment closed.** The service now
+  builds an explicit `Prisma.usersUpdateInput` instead of spreading
+  `dto`. Same wire request today (only `username` is in `UpdateUserDto`);
+  guards against future DTO fields silently becoming writable.
+
+### 14.15 New env var (optional)
+
+```text
+CONTEST_ATTEMPT_SECRET     # optional — falls back to JWT_SECRET
+```
+
+Used to sign the contest `attempt_token`. Set a distinct value only if
+you want to rotate the contest signing key without invalidating JWTs.
+Refuses to boot if **neither** `CONTEST_ATTEMPT_SECRET` nor `JWT_SECRET`
+is set — same fail-loud policy as the newsletter unsubscribe secret in
+round 9.
+
+### 14.16 Explicitly skipped — for transparency
+
+Two items in the pre-release audit were considered and intentionally
+not shipped:
+
+- **CAPTCHA on public forms** (`/forms/contact`, `/forms/proxy-visit`).
+  Current per-IP throttler at 300/hr/IP is enough at present spam
+  volume; revisit if the contact form starts seeing bot floods.
+  Recommended provider when needed: Cloudflare Turnstile (lower
+  friction than hCaptcha for genuine users).
+- **Contest timing enforcement.** The Qutuf Sajjadiya contest is
+  intentionally **not** time-bounded. The `started_at` /
+  `submitted_at` columns are stored for analytics ("how long did each
+  contestant take?"), not for enforcement. No "time limit exceeded"
+  rejection will ever fire.
+
+---
+
+## 15. Performance pass + multi-instance readiness
+
+A broad performance + design-correctness audit, applied in one push. The
+goal: cheap wins on the request path, plus the design changes needed to
+scale beyond a single dyno without surprises. Wire-level breaking
+changes are minimal and called out in 15.2 and 15.4. The rest is
+transparent to the CMS.
+
+### 15.1 New migration to apply
+
+```text
+prisma/migrations/20260528120000_perf_partial_indexes/migration.sql
+```
+
+Adds partial indexes that the planner now uses for the hottest queries:
+
+- `idx_posts_live_published_at` — `WHERE deleted_at IS NULL` on posts
+  sorted by `published_at DESC, created_at DESC`. Replaces a sequence
+  scan with an index-only scan on the public post feed.
+- `idx_books_live_created_at`, `idx_academic_papers_live_created_at`,
+  `idx_gallery_images_live_created_at` — same idea on the other
+  soft-deletable content tables.
+- `idx_contact_submissions_submitted_at`,
+  `idx_proxy_visit_requests_submitted_at` — for forms list ordering
+  and dashboard time-window queries.
+- `idx_contact_submissions_notif_failed`,
+  `idx_proxy_visit_requests_notif_failed` — sparse partial indexes
+  serving the `unsent_notifications` dashboard count in effectively O(1).
+
+Apply with:
+
+```bash
+npx prisma migrate deploy
+```
+
+Idempotent (`CREATE INDEX IF NOT EXISTS`). The migration runs in a
+single transaction, so the brief lock is acceptable on every env we
+target.
+
+### 15.2 List endpoints — slimmer response payloads (BREAKING)
+
+The four heaviest list endpoints — `GET /posts`, `GET /books`,
+`GET /academic-papers`, `GET /gallery` — and their `/trash` variants now
+return **slimmer translation objects**. The detail endpoints
+(`GET /posts/:id`, `GET /posts/by-slug/:slug`, `GET /books/:id`, …)
+still return the full shape; only list payloads changed.
+
+| Endpoint | Field dropped from each translation in `items[]` |
+| --- | --- |
+| `GET /posts`, `GET /posts/trash`, `GET /posts/admin` | `body` |
+| `GET /books`, `GET /books/trash` | `description` |
+| `GET /academic-papers`, `GET /academic-papers/trash` | `abstract` |
+| `GET /gallery`, `GET /gallery/trash` | `description` |
+
+A typical list page shrinks **80–95%** in bytes. The dropped fields are
+free-text rich-text / multi-paragraph fields that were 5–50 KB each per
+translation per row, multiplied by page size — most of the response.
+
+Two side effects to handle:
+
+- **`reading_time_minutes`** on post-list translations is now always
+  `0`. The value is derived from the `body` text length, which the list
+  endpoint no longer fetches. Call the detail endpoint when you need
+  the real reading time.
+- **Category includes** are still present, but `media` (cover image)
+  carries only the public-facing fields: `id`, `url`, `filename`,
+  `alt_text`, `mime_type`, `width`, `height`. The `created_at`,
+  `uploaded_by`, `file_size` columns were never useful in a list view
+  and are no longer shipped.
+
+CMS action: detail-on-hover, expand-to-read, or any UI that wanted
+`body` from the list response needs to call the detail endpoint
+instead. The `id` and `slug` on the list payload are sufficient to do
+so cheaply (both are indexed).
+
+### 15.3 Search — same wire, uses Postgres trigram indexes now
+
+`GET /search` returns the same response shape, but the implementation
+switched from Prisma's `contains` filter (compiles to `ILIKE '%q%'`,
+which the GIN indexes from round 6 cannot serve because of the leading
+wildcard) to a two-stage query using the `%` similarity operator.
+Stage 1 hits the GIN index and ranks by `pg_trgm` similarity score;
+stage 2 hydrates the top N rows with Prisma's typed models.
+
+Net effect: same response, **sub-10 ms** even on the largest corpus,
+and results are now ranked by relevance (best match first) instead of
+the previous `published_at DESC` fallback.
+
+No CMS or front-end change required.
+
+### 15.4 `POST /media/confirm` — variants are now generated in background (BREAKING)
+
+Variant generation previously ran synchronously inside the confirm
+request — the response held the freshly written `variants[]` array. A
+20 MB image meant 2–5 seconds of `sharp` work blocking the request.
+
+The confirm now returns **immediately** with an **empty `variants: []`
+array**. Generation runs on the next event-loop tick, gated by the same
+`p-limit(2)` from round 14.
+
+CMS action:
+
+- If the CMS shows the variants in the upload UI, **poll `GET /media/:id`**
+  (every ~500 ms is fine) until `variants.length === 4` — typically
+  1–3 seconds after confirm.
+- If the CMS just stages the original and lets the public site render
+  it, no change — the original `url` is fully usable; variants
+  populate transparently.
+- The `variants_generated` field in the `MEDIA_CREATED` audit row is
+  now the literal string `"pending"` instead of a count. If you read
+  this in an audit-log viewer, treat the field as informational.
+
+Failures still surface the same way: empty `variants[]` after the
+poll-window means call `POST /media/:id/regenerate-variants`.
+
+### 15.5 Audit-log writes are fire-and-forget
+
+`AuditService.write()` now schedules the DB insert via `setImmediate`
+and returns immediately. The request handler no longer pays the audit
+round-trip. Failure policy is unchanged (log + swallow); compliance
+callers that need synchronous persistence can use the new
+`AuditService.writeSync()`.
+
+Net effect on the CMS: every mutation endpoint (`POST /posts`,
+`PATCH /books/:id`, every bulk operation, …) is **~50–100 ms faster**
+end-to-end. The audit row appears in `GET /audit-logs` within
+milliseconds of the response, not before it.
+
+No code change required. A new batched helper
+`AuditService.writeMany()` is used internally by bulk endpoints so a
+200-row publish batch issues one `INSERT` instead of 200.
+
+### 15.6 Pagination limit is clamped server-side
+
+`?limit=999999` previously could scan a whole table when the request
+bypassed the DTO (custom controllers, internal calls). `limit` is now
+clamped to `[1, 100]` inside `resolvePagination` itself, on top of the
+existing `class-validator` constraint on the DTO. No behaviour change
+for compliant clients; defence-in-depth against future endpoints that
+forget the DTO.
+
+### 15.7 New cron — `audit_logs` retention (one year)
+
+A daily sweep at **03:30 server time** drops `audit_logs` rows older
+than **365 days**. Without it, the table grows unbounded and the
+planner cost on `idx_audit_logs_created_at` slowly degrades.
+
+Retention constant: `AUDIT_LOG_RETENTION_DAYS = 365` in
+`src/common/audit/audit.service.ts`. Lengthen it if a future compliance
+requirement (longer legal-hold periods, data-residency) demands it —
+the cleanup query honours whatever the constant says.
+
+CMS implication: the audit-log viewer should not assume entries are
+available forever. Older queries return empty result sets, not errors.
+
+### 15.8 New cron — `refresh_tokens` cleanup
+
+A daily sweep at **03:15 server time** drops:
+
+- Tokens past their `expires_at` (already useless).
+- Tokens with `revoked_at` older than 30 days (past the reuse-detection
+  grace window).
+
+The 30-day grace keeps the reuse-detection path from round 1 working;
+beyond that, the row is dead weight. No CMS-visible behaviour change.
+
+### 15.9 Response compression upgraded — brotli when the client accepts it
+
+The `compression` middleware was replaced with a small custom
+middleware ([src/common/middleware/compression.middleware.ts](../src/common/middleware/compression.middleware.ts))
+that picks **brotli** when the client's `Accept-Encoding` includes
+`br`, falls back to **gzip** otherwise. Quality level 4 — the sweet
+spot for JSON. Skips bodies under 1 KB. Honours
+`Cache-Control: no-transform`.
+
+Net effect: **~15% smaller** payloads to any modern browser,
+transparent to the client. No CMS or front-end action.
+
+### 15.10 Optional Redis — multi-instance readiness
+
+Two design issues that didn't matter at one instance but would silently
+break at N instances are now both addressed via an **optional** Redis
+dependency. Setting `REDIS_URL` opts in; leaving it unset keeps current
+behaviour.
+
+**Throttler (`@nestjs/throttler`):** counters lived in an in-memory map
+per process. With N processes that meant N independent buckets — the
+1000/15min global ceiling effectively became 1000×N. Now backed by
+`@nest-lab/throttler-storage-redis` when `REDIS_URL` is set; one
+shared counter per IP across the fleet.
+
+**JWT user cache (round 14 perf):** invalidations
+(`invalidateJwtUserCache`) cleared only the local process's cache.
+Logout / password change / soft-delete on instance A left instance B
+serving the stale row for up to 30 seconds (the cache TTL). The
+strategy now subscribes to a Redis pub/sub channel
+(`jwt-cache:invalidate`) and propagates invalidations cluster-wide in
+single-digit milliseconds.
+
+**Failure mode:** if `REDIS_URL` is set but the Redis instance is
+unreachable, the API still boots — ioredis retries with exponential
+backoff, throttler degrades to in-memory counters until reconnection,
+JWT pub/sub starts working again on reconnect. No request path blocks
+on Redis being up.
+
+No CMS code change required. Set `REDIS_URL` only when you scale to
+>1 instance.
+
+### 15.11 Pre-warmed caches at boot
+
+`SettingsService`, `LanguagesService`, and `ContestService` now hit
+their respective tables once on `OnApplicationBootstrap` to populate
+in-process caches before the dyno accepts traffic. Eliminates the
+cold-cache cost on the first request after every deploy. Best-effort —
+a failed pre-warm logs a warning but doesn't block boot.
+
+No CMS-visible change. The dashboard cold-start render is just
+noticeably snappier post-deploy.
+
+### 15.12 New optional env var: `REDIS_URL`
+
+```text
+REDIS_URL              # optional; format: redis://… or rediss://…
+                       # Enables 15.10 (shared throttler + JWT pub/sub).
+                       # When unset, both fall back to in-process state —
+                       # fine for single-instance deployments.
+```
+
+Add it to deployment env when scaling to >1 instance; leave it unset
+for dev and single-instance prod. The validator accepts any string;
+ioredis itself rejects malformed URLs at boot.
+
+### 15.13 No-action items also shipped this round
+
+These are either runtime-compatible or invisible to the CMS:
+
+- **Newsletter sender concurrency.** SMTP sends within a batch now run
+  with `p-limit(5)` instead of fully sequential. A 50-recipient tick
+  finishes in single-digit seconds instead of nearly a minute. Same
+  wire surface; visible only as a faster `delivered_count` progression
+  on the campaign detail view.
+- **Newsletter recipient population** uses `INSERT ... SELECT` instead
+  of fetching the subscriber list into Node memory. Matters at scale
+  (50k+ subscribers); transparent otherwise.
+- **Bulk post operations** (`POST /posts/bulk/publish`,
+  `POST /posts/bulk/delete`) now issue at most 2 `updateMany` calls
+  plus one batched audit insert, instead of N sequential `update` +
+  audit pairs. A 200-row batch goes from ~200 round-trips to ~3. Same
+  request and response.
+- **Scheduled-publish cron** is now one `updateMany` + one batched
+  audit insert per tick. Same observable behaviour.
+- **Posts soft-delete** is now a single raw `UPDATE` on
+  `post_translations` to suffix every slug, then one update on
+  `posts`. Was previously a loop of N updates inside the transaction.
+- **`ResponseInterceptor` mutates in place** instead of allocating a
+  new envelope object per response. Sub-millisecond per request, but
+  every authenticated request pays it.
+- **JWT validation cache.** Added in round 14 (see 14 perf notes);
+  this round's pub/sub-driven invalidation (15.10) is what makes it
+  safe across instances.
+
+---
+
+## 16. Open follow-ups (still not in this push)
 
 - Self-service password reset flow (would need an `email` column on
   `users` plus the `password_reset_tokens` table described in the
