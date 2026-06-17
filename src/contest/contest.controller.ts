@@ -12,6 +12,7 @@ import {
   ApiTags,
   ApiUnauthorizedResponse,
 } from '@nestjs/swagger';
+import { Throttle } from '@nestjs/throttler';
 import { Request } from 'express';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RequirePermission } from '../common/decorators/require-permission.decorator';
@@ -61,6 +62,12 @@ export class ContestController {
 
   @Post('start')
   @HttpCode(201)
+  // Public, unauthenticated, and DB-writing (one attempt row per call). The
+  // global limit (1000/15min) is far too loose for row-creation abuse; cap it
+  // per-IP. DB uniqueness already bounds *successful* attempts to one per
+  // identity — this bounds the row-spam/probing around that. Tune if events
+  // put many genuine participants behind one NAT'd IP.
+  @Throttle({ default: { limit: 20, ttl: 900_000 } })
   @ApiOperation({
     summary: 'Start a contest attempt (public)',
     description:
@@ -77,6 +84,10 @@ export class ContestController {
 
   @Post('submit')
   @HttpCode(200)
+  // Public scoring endpoint. Each attempt finalizes once (WHERE final_score IS
+  // NULL) and attempt IDs are non-enumerable UUIDv4, but cap per-IP anyway to
+  // blunt brute-forcing against known/leaked attempt IDs.
+  @Throttle({ default: { limit: 20, ttl: 900_000 } })
   @ApiOperation({
     summary: 'Submit contest answers and receive a score (public)',
     description:
