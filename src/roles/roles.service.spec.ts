@@ -53,6 +53,7 @@ describe("RolesService", () => {
         {
           provide: PrismaService,
           useValue: {
+            users: { updateMany: jest.fn().mockResolvedValue({ count: 0 }) },
             roles: {
               findMany: jest.fn(),
               findUnique: jest.fn(),
@@ -72,7 +73,7 @@ describe("RolesService", () => {
               delete: jest.fn(),
               deleteMany: jest.fn(),
             },
-            user_roles: { count: jest.fn() },
+            user_roles: { count: jest.fn(), findMany: jest.fn().mockResolvedValue([]) },
             permissions: { findMany: jest.fn(), count: jest.fn().mockResolvedValue(0) },
             audit_logs: { create: jest.fn().mockResolvedValue({}) },
             $transaction: jest.fn(),

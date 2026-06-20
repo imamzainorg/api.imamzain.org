@@ -1912,7 +1912,221 @@ These are either runtime-compatible or invisible to the CMS:
 
 ---
 
-## 16. Open follow-ups (still not in this push)
+## 16. Round 11 (this push) — static pages, stores, slugs + SEO, restore parity
+
+### Schema migration to apply first
+
+```bash
+psql "$DIRECT_URL" -f prisma/migrations/20260528150000_static_pages_and_stores/migration.sql
+psql "$DIRECT_URL" -f prisma/migrations/20260607120000_book_paper_slugs_and_seo_meta/migration.sql
+npm run prisma:pull && npm run prisma:generate
+npm run prisma:seed     # adds static-pages:* and stores:* permissions + role grants
+```
+
+Both migrations are additive + idempotent. **Until they're applied, writes to
+the affected resources will fail** (the client expects the new columns); reads
+of existing data are unaffected.
+
+### Static pages (`/static-pages`) — now live
+
+A previously-built-but-unwired module is now registered. Canonical
+rarely-changing pages (biography, about, …) with one row per page and one
+translation per language (`title`, `slug`, `body` + SEO fields). Full CRUD +
+trash/restore + publish toggle. Public `GET /static-pages`,
+`/static-pages/by-slug/:slug`, `/static-pages/:id` (published only); admin
+`GET /static-pages/admin` + `/static-pages/admin/:id` reach drafts. New
+permissions: `static-pages:{read,create,update,delete}`.
+
+> **Security note:** `GET /static-pages/:id` is published-only — an unpublished
+> draft is **not** readable by UUID. Use the admin route for drafts.
+
+### Stores (`/stores`) — new module
+
+"Where to buy / visit us". A `store` is a city (translated `city_name`); each
+city has one or more nested **sale-points** (`store_locations`) with phone +
+GPS (`gps_embed_url`, `gps_link`) and translated `name` + `address`. Public
+`GET /stores`, `/stores/:id`; admin CRUD under `stores:{create,update,delete}`
+(public reads need no permission — there is no `stores:read`). Manage
+sale-points via the nested routes: `POST /stores/:id/locations`,
+`PATCH /stores/:storeId/locations/:locationId`, `DELETE …`.
+
+### Books & academic papers — optional slugs + `by-slug`
+
+Both now accept an **optional** per-translation `slug` (lowercase latin, unique
+per language), exposed at `GET /books/by-slug/:slug` and
+`GET /academic-papers/by-slug/:slug`. Existing rows have no slug until an editor
+sets one (nullable; `by-slug` 404s until then). The homepage `publications`
+payload now returns the real slug when present, falling back to the UUID.
+
+### SEO meta on detail payloads
+
+Static pages, books, and academic papers gained per-translation `meta_title`,
+`meta_description`, and `og_image_id` (matching posts). **Detail** endpoints
+resolve `og_image_id` into a usable `og_image` object; posts' `og_image` is now
+resolved too (it previously returned a bare UUID).
+
+### `media.variants[]` on content payloads
+
+Posts, books, and gallery list **and** detail payloads now include
+`media.variants[]` (`{ id, width, url, format }`). Responsive `<img srcset>`
+works straight off any content endpoint — previously the variants were only on
+`GET /media/:id`.
+
+### Machine-readable error `code`
+
+Every error envelope now carries a stable `code` (e.g. `VALIDATION_FAILED`,
+`NOT_FOUND`, `RATE_LIMITED`, and specific auth codes like `AUTH_TOKEN_REUSED`).
+Branch on `code` instead of string-matching `error`. See the catalogue in
+[integration.md](integration.md#error-code-catalogue).
+
+### Restore parity
+
+`users`, `newsletter` subscribers, and `forms` (contacts + proxy-visits) now
+expose `GET /<resource>/trash` + `POST /<resource>/:id/restore`, gated by the
+existing `:delete` permission. User restore reverses the username suffix (409
+if reclaimed).
+
+### Sitemap coverage
+
+`sitemap.xml` now includes static pages and any books/papers that have a slug,
+each with hreflang alternates.
+
+### Multi-instance correctness — YouTube sync
+
+The 6-hour YouTube mirror cron is now gated by a Postgres advisory lock + a
+recency check, so a fleet of N instances performs exactly one sync per window
+instead of N (which could exhaust the YouTube Data API quota).
+
+---
+
+## 17. Round 12 (this push) — audios library (i18n + speakers)
+
+### Schema migration to apply first
+
+```bash
+psql "$DIRECT_URL" -f prisma/migrations/20260608120000_audios/migration.sql
+npm run prisma:pull && npm run prisma:generate
+npm run prisma:seed              # adds audios:* permissions + role grants
+npm run prisma:seed-content      # seeds audios + ar translations + deduped speakers
+npm run prisma:reconcile-audios  # (optional) draft-import any CDN file not in the JSON
+```
+
+Additive + idempotent. The migration creates four tables: `speakers`,
+`speaker_translations`, `audios`, `audio_translations`. Until applied, audio
+writes fail (the client expects the new tables); existing data is unaffected.
+
+### Data model
+
+- **`audios`** — language-agnostic core: `audio_url` (MP3 on R2, **unique** —
+  the reseed/reconcile key), optional `pdf_url`, a single canonical `slug`,
+  `speaker_id` (FK → speakers, nullable), `duration_seconds`, `size_mb`, `peaks`
+  (≤300-point waveform, jsonb), `is_published`. No view counter, no `legacy_id`.
+- **`audio_translations`** — `title` per language, `is_default`.
+- **`speakers` / `speaker_translations`** — a first-class lecturer entity:
+  `name` per language (no slug/bio). Browse-by-speaker is the primary navigation
+  (there is no category dimension).
+
+Every response resolves the request-language `translation` (via
+`Accept-Language`, falling back to the default) and embeds the resolved
+`speaker`. **Dropped from the old flat design:** `categories`, `duration`/`size`
+strings, `bitrate`, `sample_rate`, `codec`, `is_vbr`, `search_text` — search now
+trigram-matches `audio_translations.title` + `speaker_translations.name`.
+
+### Endpoints
+
+- **Audios — public:** `GET /audios` (`?speaker_id=` + `?search=`, newest-first,
+  drops `peaks`), `GET /audios/by-slug/:slug`, `GET /audios/:id` (includes
+  `peaks`).
+- **Audios — admin** (`audios:read|create|update|delete`): `GET /audios/admin`
+  + `/admin/:id` (drafts), `POST /audios`, `PATCH /audios/:id`,
+  `PATCH /audios/:id/publish`, `GET /audios/trash`, `POST /audios/:id/restore`,
+  `DELETE /audios/:id`. Create/update take a `translations[]` array (exactly one
+  `is_default`), an optional `speaker_id`, and an optional canonical `slug`.
+- **Speakers — public:** `GET /speakers` (with live-published `audio_count`),
+  `GET /speakers/:id`.
+- **Speakers — admin** (reuses `audios:*` permissions): `POST /speakers`,
+  `PATCH /speakers/:id`, `GET /speakers/trash`, `POST /speakers/:id/restore`,
+  `DELETE /speakers/:id` (409 if live audios still reference it).
+- **Uploads:** `POST /audios/upload-url` returns a pre-signed R2 PUT for an
+  mp3/m4a (≤ 300 MB) or pdf (≤ 50 MB) under the `audio/` prefix. Send the same
+  `Content-Type` on the PUT as you declared, then save the returned `publicUrl`
+  onto the record (no confirm step). `maxBytes` is advisory.
+
+Audios are wired into `GET /search`, the dashboard stats
+(`audios: { total, published, drafts }`), and `sitemap.xml` (published + slugged
+translations, with hreflang alternates like books). Soft-delete suffixes each
+translation slug (restore reverses it, 409 on conflict).
+
+### CMS upload — extracting duration / size / peaks in the browser
+
+The metadata in the JSON (`durationSeconds`, `sizeMB`, `peaks[300]`) is produced
+**client-side at upload time** and POSTed with the create request. Do **not**
+re-derive it on the server — the browser already holds the file. The recommended
+"smart" extractor decodes real PCM (the old byte-method read raw compressed MP3
+bytes, which is noise, not loudness) and downsamples at 8 kHz mono so even a
+99-minute lecture decodes fast:
+
+```ts
+const PEAK_COUNT = 300;
+
+export async function extractAudioMeta(file: File): Promise<{
+  durationSeconds: number; sizeMB: number; peaks: number[];
+}> {
+  const sizeMB = +(file.size / 1048576).toFixed(2);
+  const raw = await file.arrayBuffer();
+
+  // Decode once at a low sample rate — plenty for a 300-point envelope, and
+  // an order of magnitude less work than full-resolution decode.
+  const probe = new AudioContext();
+  const meta = await probe.decodeAudioData(raw.slice(0));
+  await probe.close();
+  const durationSeconds = Math.round(meta.duration);
+
+  const offline = new OfflineAudioContext(1, Math.ceil(meta.duration * 8000), 8000);
+  const buf = await offline.decodeAudioData(raw);
+  const data = buf.getChannelData(0);
+  const block = Math.floor(data.length / PEAK_COUNT) || 1;
+
+  const peaks: number[] = [];
+  for (let i = 0; i < PEAK_COUNT; i++) {
+    let max = 0;
+    for (let j = i * block; j < Math.min((i + 1) * block, data.length); j++) {
+      const v = Math.abs(data[j]);
+      if (v > max) max = v;
+    }
+    peaks.push(max);
+  }
+  // Normalise the envelope to its 95th percentile so quiet lectures still fill
+  // the waveform; clamp to [0,1] and round to keep the payload small.
+  const sorted = [...peaks].sort((a, b) => a - b);
+  const p95 = sorted[Math.floor(sorted.length * 0.95)] || 1;
+  return {
+    durationSeconds,
+    sizeMB,
+    peaks: peaks.map((p) => +Math.min(1, p / p95).toFixed(4)),
+  };
+}
+```
+
+POST the three values on `CreateAudioDto`. The API validates `peaks` (≤300
+floats in 0–1) and stores them verbatim; it never decodes audio itself. Fields
+are all optional — omit them for an API-only upload and backfill later.
+
+> **Consistency note:** the seeded records use the older byte-method peaks
+> (rough), while new CMS uploads use real PCM (accurate). Both render fine; if
+> you want a uniform look, re-analyse the legacy set with the PCM method later.
+
+### Reconcile — every CDN file gets a row
+
+`npm run prisma:reconcile-audios` lists the R2 `audio/` prefix and creates a
+**draft** (`is_published=false`) for any object with no `audios` row, parsing
+`title`/`speaker` from the `"<title> - <speaker>.mp3"` filename and deduping
+speakers by Arabic name. `peaks`/`duration`/`size` are left null for an editor
+to fill in. Idempotent (matches by R2 key); `-- --dry` reports without writing.
+
+---
+
+## 18. Open follow-ups (still not in this push)
 
 - Self-service password reset flow (would need an `email` column on
   `users` plus the `password_reset_tokens` table described in the

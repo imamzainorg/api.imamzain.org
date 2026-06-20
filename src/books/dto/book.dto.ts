@@ -9,6 +9,8 @@ import {
   IsString,
   IsUUID,
   Length,
+  Matches,
+  MaxLength,
   Min,
   MinLength,
   ValidateNested,
@@ -49,6 +51,34 @@ export class BookTranslationDto {
   series?: string;
 
   @ApiPropertyOptional({
+    example: "al-sahifa-al-sajjadiyya",
+    description:
+      "Optional editor slug. Lowercase latin letters, numbers and hyphens; unique per language. Sets the public /{lang}/books/{slug} URL. Omit to keep the book reachable only by UUID.",
+  })
+  @IsOptional()
+  @IsString()
+  @Matches(/^[a-z0-9]+(?:-[a-z0-9]+)*$/)
+  @MaxLength(200)
+  slug?: string;
+
+  @ApiPropertyOptional({ description: "SEO <title> override for this translation." })
+  @IsOptional()
+  @IsString()
+  @MaxLength(300)
+  meta_title?: string;
+
+  @ApiPropertyOptional({ description: "SEO meta description for this translation." })
+  @IsOptional()
+  @IsString()
+  @MaxLength(500)
+  meta_description?: string;
+
+  @ApiPropertyOptional({ format: "uuid", description: "Media ID used as the OpenGraph image for this translation." })
+  @IsOptional()
+  @IsUUID()
+  og_image_id?: string;
+
+  @ApiPropertyOptional({
     example: true,
     description: "Exactly one translation must be the default",
   })
@@ -75,6 +105,7 @@ export class CreateBookDto {
   @ApiPropertyOptional({ example: "978-9953-0-2287-6" })
   @IsOptional()
   @IsString()
+  @MinLength(1)
   isbn?: string;
 
   @ApiPropertyOptional({ example: 320, minimum: 1 })
@@ -133,6 +164,7 @@ export class UpdateBookDto {
   @ApiPropertyOptional({ example: "978-9953-0-2287-6" })
   @IsOptional()
   @IsString()
+  @MinLength(1)
   isbn?: string;
 
   @ApiPropertyOptional({ example: 400, minimum: 1 })

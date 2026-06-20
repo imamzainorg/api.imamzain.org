@@ -44,6 +44,10 @@ describe('MediaService', () => {
             books: { count: jest.fn() },
             gallery_images: { count: jest.fn() },
             post_attachments: { count: jest.fn() },
+            post_translations: { count: jest.fn().mockResolvedValue(0) },
+            book_translations: { count: jest.fn().mockResolvedValue(0) },
+            academic_paper_translations: { count: jest.fn().mockResolvedValue(0) },
+            static_page_translations: { count: jest.fn().mockResolvedValue(0) },
             pending_media_uploads: {
               create: jest.fn().mockResolvedValue({}),
               findFirst: jest.fn(),
@@ -329,6 +333,21 @@ describe('MediaService', () => {
       prisma.post_attachments.count.mockResolvedValue(0);
 
       await expect(service.delete('media-1', 'user-1')).rejects.toThrow(ConflictException);
+    });
+
+    it('throws ConflictException when media is referenced only by a book/paper/page og:image', async () => {
+      // Regression guard: these three og_image_id FKs were previously
+      // uncounted, so deleting a media used only as a book/paper/page OG image
+      // passed the guard and the FK silently SET NULL'd the SEO image.
+      prisma.media.findUnique.mockResolvedValue(baseMedia);
+      prisma.posts.count.mockResolvedValue(0);
+      prisma.books.count.mockResolvedValue(0);
+      prisma.gallery_images.count.mockResolvedValue(0);
+      prisma.post_attachments.count.mockResolvedValue(0);
+      prisma.book_translations.count.mockResolvedValue(1);
+
+      await expect(service.delete('media-1', 'user-1')).rejects.toThrow(ConflictException);
+      expect(prisma.media.delete).not.toHaveBeenCalled();
     });
 
     it('throws NotFoundException when media not found', async () => {

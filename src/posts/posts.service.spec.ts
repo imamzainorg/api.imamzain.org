@@ -83,7 +83,14 @@ describe("PostsService", () => {
               findMany: jest.fn().mockResolvedValue([]),
             },
             audit_logs: { create: jest.fn().mockResolvedValue({}) },
-            $transaction: jest.fn(),
+            // Default handles the callback form (with the advisory-lock SELECT)
+            // used by withAdvisoryLock to gate the runScheduledPublish cron.
+            // create/restore tests override this with their own mockTx.
+            $transaction: jest.fn((arg: any) =>
+              typeof arg === 'function'
+                ? arg({ $queryRaw: jest.fn().mockResolvedValue([{ locked: true }]) })
+                : Promise.all(arg),
+            ),
           },
         },
         { provide: AuditService, useValue: audit },
@@ -363,6 +370,114 @@ describe("PostsService", () => {
           null,
         ),
       ).rejects.toThrow(NotFoundException);
+    });
+
+    it("stamps published_at when created already-published without a timestamp", async () => {
+      prisma.post_categories.findFirst.mockResolvedValue({ id: "cat-1" });
+      mockTx.posts.create.mockResolvedValue({ id: "post-new" });
+      mockTx.post_translations.createMany.mockResolvedValue({});
+      prisma.$transaction.mockImplementation((cb: any) => cb(mockTx));
+      prisma.posts.findFirst.mockResolvedValue({ ...basePost, id: "post-new" });
+
+      await service.create(
+        {
+          category_id: "cat-1",
+          is_published: true,
+          translations: [
+            { lang: "ar", title: "t", body: "b", slug: "s", is_default: true },
+          ],
+        },
+        "user-1",
+        null,
+      );
+
+      const call = mockTx.posts.create.mock.calls[0][0];
+      expect(call.data.is_published).toBe(true);
+      expect(call.data.published_at).toBeInstanceOf(Date);
+    });
+
+    it("leaves published_at null for a draft", async () => {
+      prisma.post_categories.findFirst.mockResolvedValue({ id: "cat-1" });
+      mockTx.posts.create.mockResolvedValue({ id: "post-new" });
+      mockTx.post_translations.createMany.mockResolvedValue({});
+      prisma.$transaction.mockImplementation((cb: any) => cb(mockTx));
+      prisma.posts.findFirst.mockResolvedValue({ ...basePost, id: "post-new" });
+
+      await service.create(
+        {
+          category_id: "cat-1",
+          translations: [
+            { lang: "ar", title: "t", body: "b", slug: "s", is_default: true },
+          ],
+        },
+        "user-1",
+        null,
+      );
+
+      const call = mockTx.posts.create.mock.calls[0][0];
+      expect(call.data.is_published).toBe(false);
+      expect(call.data.published_at).toBeNull();
+    });
+  });
+
+  describe("update — published_at stamping", () => {
+    it("stamps published_at when publishing a draft that has no timestamp", async () => {
+      prisma.posts.findFirst.mockResolvedValue({
+        ...basePost,
+        is_published: false,
+        published_at: null,
+      });
+      prisma.$transaction.mockImplementation((cb: any) => cb(mockTx));
+
+      await service.update("post-1", { is_published: true }, "user-1", null);
+
+      const call = mockTx.posts.update.mock.calls[0][0];
+      expect(call.data.is_published).toBe(true);
+      expect(call.data.published_at).toBeInstanceOf(Date);
+    });
+
+    it("backfills published_at on an unrelated edit when a published post has none", async () => {
+      prisma.posts.findFirst.mockResolvedValue({
+        ...basePost,
+        is_published: true,
+        published_at: null,
+      });
+      prisma.$transaction.mockImplementation((cb: any) => cb(mockTx));
+
+      await service.update("post-1", { is_featured: true }, "user-1", null);
+
+      const call = mockTx.posts.update.mock.calls[0][0];
+      expect(call.data.published_at).toBeInstanceOf(Date);
+    });
+
+    it("does not overwrite a valid existing published_at on an unrelated edit", async () => {
+      const existing = new Date("2020-01-01T00:00:00.000Z");
+      prisma.posts.findFirst.mockResolvedValue({
+        ...basePost,
+        is_published: true,
+        published_at: existing,
+      });
+      prisma.$transaction.mockImplementation((cb: any) => cb(mockTx));
+
+      await service.update("post-1", { is_featured: true }, "user-1", null);
+
+      const call = mockTx.posts.update.mock.calls[0][0];
+      expect(call.data.published_at).toBeUndefined();
+    });
+
+    it("does not stamp published_at when unpublishing", async () => {
+      prisma.posts.findFirst.mockResolvedValue({
+        ...basePost,
+        is_published: true,
+        published_at: new Date(),
+      });
+      prisma.$transaction.mockImplementation((cb: any) => cb(mockTx));
+
+      await service.update("post-1", { is_published: false }, "user-1", null);
+
+      const call = mockTx.posts.update.mock.calls[0][0];
+      expect(call.data.is_published).toBe(false);
+      expect(call.data.published_at).toBeUndefined();
     });
   });
 

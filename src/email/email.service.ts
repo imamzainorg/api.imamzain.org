@@ -49,10 +49,19 @@ export class EmailService {
       return;
     }
 
+    const port = Number(process.env.SMTP_PORT ?? 465);
     this.transporter = nodemailer.createTransport({
       host,
-      port: Number(process.env.SMTP_PORT ?? 465),
-      secure: process.env.SMTP_SECURE === 'true',
+      port,
+      // When SMTP_SECURE is set, honour it. Otherwise infer from the port:
+      // 465 is implicit TLS (secure: true), everything else (587/STARTTLS,
+      // 25) is secure: false. The previous unconditional `=== 'true'` paired
+      // a default port of 465 with secure: false, so an operator who set only
+      // host/user/pass got a plaintext greeting on an implicit-TLS port —
+      // every send hung until socketTimeout (20s) and returned false.
+      secure: process.env.SMTP_SECURE !== undefined
+        ? process.env.SMTP_SECURE === 'true'
+        : port === 465,
       auth: { user, pass },
       // Bound network waits so a hung SMTP server can't stall request handlers.
       connectionTimeout: 10_000,

@@ -205,19 +205,23 @@ describeIfDb('UsersService (integration)', () => {
     // ─── assignRole / removeRole ──────────────────────────────────────────────
 
     describe('assignRole / removeRole', () => {
+        // Roles created here carry no permissions, so they are within any
+        // actor's envelope and the privilege-subset guard passes.
+        const actor = { id: 'actor', username: 'tester', permissions: [] as string[] }
+
         it('creates a user_roles row and removes it correctly', async () => {
             const hash = await bcrypt.hash('pass', 4)
             const user = await prisma.users.create({ data: { username: 'roleuser', password_hash: hash } })
             const role = await prisma.roles.create({ data: { name: 'Moderator' } })
 
-            await service.assignRole(user.id, { roleId: role.id }, 'actor')
+            await service.assignRole(user.id, { role_id: role.id }, actor)
 
             const assigned = await prisma.user_roles.findFirst({
                 where: { user_id: user.id, role_id: role.id },
             })
             expect(assigned).not.toBeNull()
 
-            await service.removeRole(user.id, role.id, 'actor')
+            await service.removeRole(user.id, role.id, actor)
 
             const removed = await prisma.user_roles.findFirst({
                 where: { user_id: user.id, role_id: role.id },
@@ -230,9 +234,9 @@ describeIfDb('UsersService (integration)', () => {
             const user = await prisma.users.create({ data: { username: 'idempotent', password_hash: hash } })
             const role = await prisma.roles.create({ data: { name: 'Viewer' } })
 
-            await service.assignRole(user.id, { roleId: role.id }, 'actor')
+            await service.assignRole(user.id, { role_id: role.id }, actor)
             await expect(
-                service.assignRole(user.id, { roleId: role.id }, 'actor'),
+                service.assignRole(user.id, { role_id: role.id }, actor),
             ).resolves.toBeDefined()
         })
     })

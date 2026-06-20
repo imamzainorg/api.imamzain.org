@@ -208,19 +208,39 @@ describe("ContestService", () => {
       expect(result.data.final_score).toBe(2);
     });
 
-    it("ignores duplicate question_id entries to prevent score replay", async () => {
+    it("rejects an incomplete submission padded with duplicate question_ids", async () => {
+      prisma.$queryRaw.mockResolvedValueOnce(mockQuestions);
+
+      // Two entries for the same question leave question 2 unanswered. The
+      // completeness gate now counts UNIQUE VALID answers, so this is rejected
+      // instead of being finalized with a genuinely missing answer.
+      await expect(
+        service.submit({
+          attempt_id: ATTEMPT_ID,
+          answers: [
+            { question_id: "1", answer: "C" },
+            { question_id: "1", answer: "C" },
+          ],
+        }),
+      ).rejects.toThrow(ConflictException);
+    });
+
+    it("counts a duplicated question only once in a complete submission", async () => {
       setUpHappyPath();
 
+      // q1 appears twice (first occurrence wins) and q2 once — every question
+      // is answered, so the submission is complete and the duplicate can't
+      // inflate the score.
       const result = await service.submit({
         attempt_id: ATTEMPT_ID,
-        // Two entries for the same question; only the first should count.
         answers: [
           { question_id: "1", answer: "C" },
-          { question_id: "1", answer: "C" },
+          { question_id: "1", answer: "A" },
+          { question_id: "2", answer: "A" },
         ],
       });
 
-      expect(result.data.final_score).toBe(1);
+      expect(result.data.final_score).toBe(1); // q1 correct (first=C), q2 wrong
     });
 
     it("rejects when the conditional final_score UPDATE matches no rows", async () => {

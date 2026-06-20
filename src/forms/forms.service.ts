@@ -89,6 +89,18 @@ export class FormsService {
     if (prevStatus !== 'COMPLETED' && dto.status === 'COMPLETED') {
       this.whatsappService
         .sendProxyVisitCompletion(record.phone ?? '', record.name)
+        .then((ok) => {
+          if (!ok) {
+            // sendProxyVisitCompletion returns false (without throwing) when
+            // WhatsApp is unconfigured / the phone is invalid / the API
+            // errored. Log the non-throwing failure too, so a completion
+            // notification that never reached the visitor leaves a trace —
+            // the thrown case was already logged, this one was silently lost.
+            this.logger.warn(
+              `Proxy-visit completion WhatsApp not delivered for ${id} (send returned false)`,
+            );
+          }
+        })
         .catch((err) => this.logger.warn(`Proxy-visit WhatsApp failed: ${err}`));
     }
 
@@ -131,6 +143,35 @@ export class FormsService {
     ]);
 
     return { message: 'Requests fetched', data: { items, pagination: buildPaginationMeta(page, limit, total) } };
+  }
+
+  /** List soft-deleted proxy-visit requests (admin trash view). */
+  async findTrashProxyVisits(page: number, limit: number) {
+    const skip = (page - 1) * limit;
+    const where: Prisma.proxy_visit_requestsWhereInput = { deleted_at: { not: null } };
+    const [items, total] = await Promise.all([
+      this.prisma.proxy_visit_requests.findMany({ where, orderBy: [{ deleted_at: 'desc' }, { id: 'asc' }], skip, take: limit }),
+      this.prisma.proxy_visit_requests.count({ where }),
+    ]);
+    return { message: 'Trash fetched', data: { items, pagination: buildPaginationMeta(page, limit, total) } };
+  }
+
+  /** Restore a soft-deleted proxy-visit request (no unique columns — always safe). */
+  async restoreProxyVisit(id: string, adminId: string) {
+    const record = await this.prisma.proxy_visit_requests.findFirst({ where: { id, deleted_at: { not: null } } });
+    if (!record) throw new NotFoundException('Deleted request not found');
+
+    const updated = await this.prisma.proxy_visit_requests.update({ where: { id }, data: { deleted_at: null } });
+
+    await this.audit.write({
+      actorId: adminId,
+      action: AUDIT_ACTIONS.PROXY_VISIT_RESTORED,
+      resourceType: 'proxy_visit_request',
+      resourceId: id,
+      changes: { method: 'POST', path: `/api/v1/forms/proxy-visits/${id}/restore` },
+    });
+
+    return { message: 'Request restored', data: updated };
   }
 
   async submitContact(dto: CreateContactDto) {
@@ -230,5 +271,34 @@ export class FormsService {
     ]);
 
     return { message: 'Submissions fetched', data: { items, pagination: buildPaginationMeta(page, limit, total) } };
+  }
+
+  /** List soft-deleted contact submissions (admin trash view). */
+  async findTrashContacts(page: number, limit: number) {
+    const skip = (page - 1) * limit;
+    const where: Prisma.contact_submissionsWhereInput = { deleted_at: { not: null } };
+    const [items, total] = await Promise.all([
+      this.prisma.contact_submissions.findMany({ where, orderBy: [{ deleted_at: 'desc' }, { id: 'asc' }], skip, take: limit }),
+      this.prisma.contact_submissions.count({ where }),
+    ]);
+    return { message: 'Trash fetched', data: { items, pagination: buildPaginationMeta(page, limit, total) } };
+  }
+
+  /** Restore a soft-deleted contact submission (no unique columns — always safe). */
+  async restoreContact(id: string, adminId: string) {
+    const record = await this.prisma.contact_submissions.findFirst({ where: { id, deleted_at: { not: null } } });
+    if (!record) throw new NotFoundException('Deleted submission not found');
+
+    const updated = await this.prisma.contact_submissions.update({ where: { id }, data: { deleted_at: null } });
+
+    await this.audit.write({
+      actorId: adminId,
+      action: AUDIT_ACTIONS.CONTACT_RESTORED,
+      resourceType: 'contact_submission',
+      resourceId: id,
+      changes: { method: 'POST', path: `/api/v1/forms/contacts/${id}/restore` },
+    });
+
+    return { message: 'Submission restored', data: updated };
   }
 }

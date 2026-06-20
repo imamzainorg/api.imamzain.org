@@ -217,6 +217,9 @@ src/
 ├── gallery-categories/
 ├── academic-papers/              # Academic papers + categories
 ├── academic-paper-categories/
+├── static-pages/                 # Canonical rarely-changing pages (biography, about) + SEO
+├── stores/                       # Physical sale / contact locations grouped by city
+├── audios/                       # Single-language audio library (MP3 + PDF on R2) + pre-signed upload
 ├── newsletter/                   # Newsletter subscriptions
 ├── forms/                        # Contact forms & proxy-visit tracking
 ├── contest/                      # Qutuf Sajjadiya contest (start/submit lifecycle)
@@ -267,25 +270,32 @@ For cross-cutting concepts the OpenAPI spec doesn't cover, the
 | Media | `/media` | R2 pre-signed upload URLs. `POST /media/confirm` returns immediately with `variants: []`; sharp runs in the background (~1–3 s) and the variants populate via `GET /media/:id`. `POST /media/:id/regenerate-variants` re-runs sharp if a generation step failed |
 | Posts | `/posts` | i18n via translation tables (`meta_title` / `meta_description` / `og_image_id` SEO fields + derived `reading_time_minutes` per translation). `?featured=true` filters to flagged posts; `?sort=views` returns the popular sort. Admin-only `GET /posts/admin/:id` returns drafts. Posts whose `published_at` is in the past are auto-published by an EVERY_MINUTE cron. **List payloads drop the `body` field** to keep responses small — call the detail endpoint when you need full text |
 | Post Categories | `/post-categories` | |
-| Books | `/books` | |
+| Books | `/books` | Optional per-translation `slug` → public `GET /books/by-slug/:slug`. Per-translation SEO fields (`meta_title` / `meta_description` / `og_image`). `media.variants[]` included for responsive `<img srcset>`. |
 | Book Categories | `/book-categories` | |
 | Gallery Images | `/gallery` | |
 | Gallery Categories | `/gallery-categories` | |
-| Academic Papers | `/academic-papers` | |
+| Academic Papers | `/academic-papers` | Optional per-translation `slug` → public `GET /academic-papers/by-slug/:slug`. Per-translation SEO fields (`meta_title` / `meta_description` / `og_image`). |
 | Academic Paper Categories | `/academic-paper-categories` | |
+| Static Pages | `/static-pages` | Canonical rarely-changing pages (biography, about). Per-language `slug` + SEO fields. Public `GET /static-pages`, `/static-pages/by-slug/:slug`, `/static-pages/:id` (published only); admin `GET /static-pages/admin` + `/static-pages/admin/:id` reach drafts. |
+| Stores | `/stores` | "Where to buy / visit us" — a `store` is a city (translated `city_name`) with one or more nested sale-points (`/stores/:id/locations`) carrying phone + GPS. Public `GET /stores`, `/stores/:id`; admin CRUD under `stores:*`. |
+| Audios | `/audios` | **Single-language** audio library (MP3 + optional PDF on R2). Flat records with `categories[]`, optional `slug`, `is_published`, view counter, and waveform `peaks` (detail only). Public `GET /audios`, `/audios/categories`, `/audios/by-slug/:slug`, `/audios/:id`, `POST /audios/:id/view`; admin CRUD + `/admin` (drafts) + publish toggle + trash/restore. `POST /audios/upload-url` pre-signs an R2 PUT for the mp3/pdf. In `GET /search`, dashboard stats, and the sitemap. |
 | Newsletter Subscribers | `/newsletter/subscribers` | List, soft-delete, plus admin `POST /:id/unsubscribe` and `POST /:id/resubscribe` for flipping `is_active` without going through the public token-based flow |
 | Newsletter Campaigns | `/newsletter/campaigns` | Compose, schedule, send, and track per-recipient delivery. Cron-driven batched sender resumes cleanly after process restarts. |
 | Audit logs | `/audit-logs` | List filterable by `user_id`, `action`, `resource_type`, `resource_id`, date range; `GET /audit-logs/:id` returns a single entry with the originating user inlined |
 
-Every soft-deletable resource (posts / books / academic-papers / gallery and their categories) also exposes:
+Every soft-deletable resource — posts / books / academic-papers / gallery and
+their categories, static-pages, stores, audios, **users**, **newsletter
+subscribers**, and **form submissions** (contacts + proxy-visits) — also exposes:
 
 ```text
 GET  /<resource>/trash          — paginated list of soft-deleted records
 POST /<resource>/:id/restore    — undo a soft delete (404 if id not in trash;
-                                  409 if a unique slug/ISBN was taken since)
+                                  409 if a unique slug / ISBN / username was
+                                  taken since)
 ```
 
-Both routes are gated by the existing `<resource>:delete` permission.
+Both routes are gated by the existing `<resource>:delete` permission (forms /
+newsletter use `forms:delete` / `newsletter:delete`).
 
 ### Public Endpoints
 

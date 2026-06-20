@@ -90,6 +90,20 @@ export class BooksController {
     return this.booksService.restore(id, user.id);
   }
 
+  @Get('by-slug/:slug')
+  @PublicCache(60, 300)
+  @ApiOperation({
+    summary: 'Get a single book by slug (public)',
+    description:
+      'Resolves a book by an editor-assigned translation slug, regardless of the visitor\'s Accept-Language — the display translation still respects Accept-Language. 404 if no live book owns that slug. CDN-cacheable.',
+  })
+  @ApiParam({ name: 'slug', example: 'al-sahifa-al-sajjadiyya' })
+  @ApiOkResponse({ type: BookDetailResponseDto, description: 'Book detail with all translations' })
+  @ApiNotFoundResponse({ type: NotFoundErrorDto, description: 'No live book owns that slug' })
+  findBySlug(@Param('slug') slug: string, @Lang() lang: string | null) {
+    return this.booksService.findBySlug(slug, lang);
+  }
+
   @Get(':id')
   @PublicCache(60)
   @ApiOperation({ summary: 'Get a single book by ID (public)', description: 'Returns the book with its translations. Falls back to the default translation if no translation exists for the requested language. Response is CDN-cacheable (`public, max-age=60, s-maxage=300`) and varies by `Accept-Language`.' })

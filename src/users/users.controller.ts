@@ -60,6 +60,35 @@ export class UsersController {
     return this.usersService.findAll(query.page ?? 1, query.limit ?? 20);
   }
 
+  @Get('trash')
+  @RequirePermission('users:delete')
+  @ApiOperation({
+    summary: 'List soft-deleted users (CMS trash view)',
+    description: 'Paginated list of deleted accounts with their original (suffix-stripped) username. Requires permission: `users:delete`.',
+  })
+  @ApiQuery({ name: 'page', required: false, type: Number, example: 1 })
+  @ApiQuery({ name: 'limit', required: false, type: Number, example: 20 })
+  @ApiOkResponse({ type: UserListResponseDto, description: 'Paginated list of trashed users' })
+  findTrash(@Query() query: PaginationDto) {
+    return this.usersService.findTrash(query.page ?? 1, query.limit ?? 20);
+  }
+
+  @Post(':id/restore')
+  @HttpCode(200)
+  @RequirePermission('users:delete')
+  @ApiOperation({
+    summary: 'Restore a soft-deleted user',
+    description:
+      'Clears `deleted_at` and reverses the username suffix. Fails with 409 if a live user has claimed the original username in the meantime — rename one side first. Requires permission: `users:delete`.',
+  })
+  @ApiParam({ name: 'id', format: 'uuid' })
+  @ApiOkResponse({ type: UserDetailResponseDto, description: 'User restored' })
+  @ApiNotFoundResponse({ type: NotFoundErrorDto, description: 'No soft-deleted user with that ID exists' })
+  @ApiConflictResponse({ type: ConflictErrorDto, description: 'The original username was reclaimed by another live user' })
+  restore(@Param('id') id: string, @CurrentUser() user: CurrentUserPayload) {
+    return this.usersService.restore(id, user.id);
+  }
+
   @Get(':id')
   @RequirePermission('users:read')
   @ApiOperation({ summary: 'Get a single user with their roles and permissions', description: 'Requires permission: `users:read`' })
@@ -117,7 +146,7 @@ export class UsersController {
     @Body() dto: AssignRoleDto,
     @CurrentUser() user: CurrentUserPayload,
   ) {
-    return this.usersService.assignRole(id, dto, user.id);
+    return this.usersService.assignRole(id, dto, user);
   }
 
   @Delete(':id/roles/:roleId')
@@ -132,7 +161,7 @@ export class UsersController {
     @Param('roleId') roleId: string,
     @CurrentUser() user: CurrentUserPayload,
   ) {
-    return this.usersService.removeRole(id, roleId, user.id);
+    return this.usersService.removeRole(id, roleId, user);
   }
 
   @Post(':id/reset-password')

@@ -40,10 +40,16 @@ model academic_paper_translations {
   publication_venue String?
   page_count        Int?
   is_default        Boolean         @default(false)
+  slug              String?
+  meta_title        String?
+  meta_description  String?
+  og_image_id       String?         @db.Uuid
   languages         languages       @relation(fields: [lang], references: [code], onDelete: Cascade, onUpdate: NoAction)
+  og_image          media?          @relation("academic_paper_translation_og_image", fields: [og_image_id], references: [id], onUpdate: NoAction)
   academic_papers   academic_papers @relation(fields: [paper_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
 
   @@id([paper_id, lang])
+  @@index([og_image_id], map: "idx_academic_paper_translations_og_image")
   @@index([abstract(ops: raw("gin_trgm_ops"))], map: "idx_academic_paper_translations_abstract_trgm", type: Gin)
   @@index([title(ops: raw("gin_trgm_ops"))], map: "idx_academic_paper_translations_title_trgm", type: Gin)
 }
@@ -105,18 +111,24 @@ model book_category_translations {
 }
 
 model book_translations {
-  book_id     String    @db.Uuid
-  lang        String    @db.Char(2)
-  title       String
-  author      String?
-  publisher   String?
-  description String?
-  series      String?
-  is_default  Boolean   @default(false)
-  books       books     @relation(fields: [book_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
-  languages   languages @relation(fields: [lang], references: [code], onDelete: Cascade, onUpdate: NoAction)
+  book_id          String    @db.Uuid
+  lang             String    @db.Char(2)
+  title            String
+  author           String?
+  publisher        String?
+  description      String?
+  series           String?
+  is_default       Boolean   @default(false)
+  slug             String?
+  meta_title       String?
+  meta_description String?
+  og_image_id      String?   @db.Uuid
+  books            books     @relation(fields: [book_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  languages        languages @relation(fields: [lang], references: [code], onDelete: Cascade, onUpdate: NoAction)
+  og_image         media?    @relation("book_translation_og_image", fields: [og_image_id], references: [id], onUpdate: NoAction)
 
   @@id([book_id, lang])
+  @@index([og_image_id], map: "idx_book_translations_og_image")
   @@index([author(ops: raw("gin_trgm_ops"))], map: "idx_book_translations_author_trgm", type: Gin)
   @@index([description(ops: raw("gin_trgm_ops"))], map: "idx_book_translations_description_trgm", type: Gin)
   @@index([title(ops: raw("gin_trgm_ops"))], map: "idx_book_translations_title_trgm", type: Gin)
@@ -231,6 +243,7 @@ model languages {
   deleted_at                           DateTime?                              @db.Timestamptz(6)
   academic_paper_category_translations academic_paper_category_translations[]
   academic_paper_translations          academic_paper_translations[]
+  audio_translations                   audio_translations[]
   book_category_translations           book_category_translations[]
   book_translations                    book_translations[]
   daily_hadith_translations            daily_hadith_translations[]
@@ -240,27 +253,34 @@ model languages {
   post_category_translations           post_category_translations[]
   post_translations                    post_translations[]
   role_translations                    role_translations[]
+  speaker_translations                 speaker_translations[]
+  static_page_translations             static_page_translations[]
+  store_location_translations          store_location_translations[]
+  store_translations                   store_translations[]
 }
 
 /// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
 model media {
-  id                  String              @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  filename            String
-  alt_text            String?
-  url                 String              @unique
-  mime_type           String
-  file_size           BigInt
-  width               Int?
-  height              Int?
-  created_at          DateTime            @default(now()) @db.Timestamptz(6)
-  uploaded_by         String?             @db.Uuid
-  books               books[]
-  gallery_images      gallery_images?
-  users               users?              @relation(fields: [uploaded_by], references: [id], onUpdate: NoAction)
-  media_variants      media_variants[]
-  post_attachments    post_attachments[]
-  post_translation_og post_translations[] @relation("post_translation_og_image")
-  posts               posts?
+  id                            String                        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  filename                      String
+  alt_text                      String?
+  url                           String                        @unique
+  mime_type                     String
+  file_size                     BigInt
+  width                         Int?
+  height                        Int?
+  created_at                    DateTime                      @default(now()) @db.Timestamptz(6)
+  uploaded_by                   String?                       @db.Uuid
+  academic_paper_translation_og academic_paper_translations[] @relation("academic_paper_translation_og_image")
+  book_translation_og           book_translations[]           @relation("book_translation_og_image")
+  books                         books[]
+  gallery_images                gallery_images?
+  users                         users?                        @relation(fields: [uploaded_by], references: [id], onUpdate: NoAction)
+  media_variants                media_variants[]
+  post_attachments              post_attachments[]
+  post_translation_og           post_translations[]           @relation("post_translation_og_image")
+  posts                         posts?
+  static_page_translation_og    static_page_translations[]    @relation("static_page_translation_og_image")
 
   @@index([uploaded_by], map: "idx_media_uploaded_by")
   @@index([alt_text(ops: raw("gin_trgm_ops"))], map: "idx_media_alt_text_trgm", type: Gin)
@@ -455,6 +475,7 @@ model users {
   deleted_at            DateTime?               @db.Timestamptz(6)
   token_version         Int                     @default(1)
   academic_papers       academic_papers[]
+  audios                audios[]
   audit_logs            audit_logs[]
   books                 books[]
   contact_submissions   contact_submissions[]
@@ -657,6 +678,138 @@ model newsletter_campaigns {
 
   @@index([created_at(sort: Desc)], map: "idx_newsletter_campaigns_created_at")
   @@index([status], map: "idx_newsletter_campaigns_status")
+}
+
+model static_pages {
+  id                       String                     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  display_order            Int                        @default(0)
+  is_published             Boolean                    @default(true)
+  created_at               DateTime                   @default(now()) @db.Timestamptz(6)
+  updated_at               DateTime                   @default(now()) @db.Timestamptz(6)
+  deleted_at               DateTime?                  @db.Timestamptz(6)
+  static_page_translations static_page_translations[]
+}
+
+model static_page_translations {
+  page_id          String       @db.Uuid
+  lang             String       @db.Char(2)
+  title            String
+  slug             String
+  body             String
+  is_default       Boolean      @default(false)
+  meta_title       String?
+  meta_description String?
+  og_image_id      String?      @db.Uuid
+  languages        languages    @relation(fields: [lang], references: [code], onDelete: Cascade, onUpdate: NoAction)
+  og_image         media?       @relation("static_page_translation_og_image", fields: [og_image_id], references: [id], onUpdate: NoAction)
+  static_pages     static_pages @relation(fields: [page_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@id([page_id, lang])
+  @@unique([lang, slug])
+  @@index([og_image_id], map: "idx_static_page_translations_og_image")
+}
+
+model stores {
+  id                 String               @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  display_order      Int                  @default(0)
+  created_at         DateTime             @default(now()) @db.Timestamptz(6)
+  updated_at         DateTime             @default(now()) @db.Timestamptz(6)
+  deleted_at         DateTime?            @db.Timestamptz(6)
+  store_locations    store_locations[]
+  store_translations store_translations[]
+}
+
+model store_translations {
+  store_id  String    @db.Uuid
+  lang      String    @db.Char(2)
+  city_name String
+  languages languages @relation(fields: [lang], references: [code], onDelete: Cascade, onUpdate: NoAction)
+  stores    stores    @relation(fields: [store_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@id([store_id, lang])
+}
+
+model store_locations {
+  id                          String                        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  store_id                    String                        @db.Uuid
+  phone                       String?
+  gps_embed_url               String?
+  gps_link                    String?
+  display_order               Int                           @default(0)
+  created_at                  DateTime                      @default(now()) @db.Timestamptz(6)
+  updated_at                  DateTime                      @default(now()) @db.Timestamptz(6)
+  deleted_at                  DateTime?                     @db.Timestamptz(6)
+  store_location_translations store_location_translations[]
+  stores                      stores                        @relation(fields: [store_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@index([store_id], map: "idx_store_locations_store")
+}
+
+model store_location_translations {
+  location_id     String          @db.Uuid
+  lang            String          @db.Char(2)
+  name            String
+  address         String
+  languages       languages       @relation(fields: [lang], references: [code], onDelete: Cascade, onUpdate: NoAction)
+  store_locations store_locations @relation(fields: [location_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@id([location_id, lang])
+}
+
+model audios {
+  id                 String               @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  speaker_id         String?              @db.Uuid
+  audio_url          String               @unique(map: "uq_audios_audio_url")
+  pdf_url            String?
+  slug               String?
+  duration_seconds   Int?
+  size_mb            Float?
+  peaks              Json?
+  is_published       Boolean              @default(true)
+  created_at         DateTime             @default(now()) @db.Timestamptz(6)
+  updated_at         DateTime             @default(now()) @db.Timestamptz(6)
+  deleted_at         DateTime?            @db.Timestamptz(6)
+  added_by           String?              @db.Uuid
+  audio_translations audio_translations[]
+  speakers           speakers?            @relation(fields: [speaker_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  users              users?               @relation(fields: [added_by], references: [id], onUpdate: NoAction)
+
+  @@index([is_published, deleted_at], map: "idx_audios_published")
+  @@index([speaker_id], map: "idx_audios_speaker_id")
+  @@index([added_by], map: "idx_audios_added_by")
+}
+
+model audio_translations {
+  audio_id   String    @db.Uuid
+  lang       String    @db.Char(2)
+  title      String
+  is_default Boolean   @default(false)
+  audios     audios    @relation(fields: [audio_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  languages  languages @relation(fields: [lang], references: [code], onDelete: Cascade, onUpdate: NoAction)
+
+  @@id([audio_id, lang])
+  @@index([title(ops: raw("gin_trgm_ops"))], map: "idx_audio_translations_title_trgm", type: Gin)
+}
+
+model speakers {
+  id                   String                 @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  created_at           DateTime               @default(now()) @db.Timestamptz(6)
+  updated_at           DateTime               @default(now()) @db.Timestamptz(6)
+  deleted_at           DateTime?              @db.Timestamptz(6)
+  audios               audios[]
+  speaker_translations speaker_translations[]
+}
+
+model speaker_translations {
+  speaker_id String    @db.Uuid
+  lang       String    @db.Char(2)
+  name       String
+  is_default Boolean   @default(false)
+  languages  languages @relation(fields: [lang], references: [code], onDelete: Cascade, onUpdate: NoAction)
+  speakers   speakers  @relation(fields: [speaker_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@id([speaker_id, lang])
+  @@index([name(ops: raw("gin_trgm_ops"))], map: "idx_speaker_translations_name_trgm", type: Gin)
 }
 
 enum site_setting_type {

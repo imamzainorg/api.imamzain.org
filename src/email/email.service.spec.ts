@@ -83,6 +83,46 @@ describe("EmailService", () => {
     });
   });
 
+  describe("secure flag inference", () => {
+    const lastTransportConfig = () => {
+      const calls = (nodemailer.createTransport as jest.Mock).mock.calls;
+      return calls[calls.length - 1][0];
+    };
+
+    it("infers secure: true on port 465 when SMTP_SECURE is unset", () => {
+      delete process.env.SMTP_SECURE;
+      process.env.SMTP_PORT = "465";
+
+      new EmailService();
+
+      expect(lastTransportConfig()).toEqual(
+        expect.objectContaining({ port: 465, secure: true }),
+      );
+    });
+
+    it("infers secure: false on port 587 when SMTP_SECURE is unset", () => {
+      delete process.env.SMTP_SECURE;
+      process.env.SMTP_PORT = "587";
+
+      new EmailService();
+
+      expect(lastTransportConfig()).toEqual(
+        expect.objectContaining({ port: 587, secure: false }),
+      );
+    });
+
+    it("honours an explicit SMTP_SECURE=false even on port 465", () => {
+      process.env.SMTP_SECURE = "false";
+      process.env.SMTP_PORT = "465";
+
+      new EmailService();
+
+      expect(lastTransportConfig()).toEqual(
+        expect.objectContaining({ port: 465, secure: false }),
+      );
+    });
+  });
+
   describe("when SMTP is NOT configured", () => {
     it("returns false without attempting to send", async () => {
       delete process.env.SMTP_HOST;

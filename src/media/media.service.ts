@@ -264,14 +264,38 @@ export class MediaService {
     const media = await this.prisma.media.findUnique({ where: { id } });
     if (!media) throw new NotFoundException('Media not found');
 
-    const [postRef, bookRef, galleryRef, attachRef] = await Promise.all([
-      this.prisma.posts.count({ where: { cover_image_id: id, deleted_at: null } }),
-      this.prisma.books.count({ where: { cover_image_id: id, deleted_at: null } }),
+    // Refuse deletion while ANY row physically references this media, so the
+    // caller gets a clean 409 instead of a silent FK SET NULL (post cover /
+    // og:image) or a raw FK error (book cover RESTRICT). Count references
+    // regardless of the parent's deleted_at: the FKs still point at this row
+    // even from a soft-deleted post/book. This must cover EVERY FK into media —
+    // the og_image_id columns on post/book/paper/static-page translations all
+    // SET NULL on delete, so any one missed here lets a delete silently strip a
+    // resource's SEO image (book/paper/page og:image were previously unguarded).
+    const [
+      postRef,
+      bookRef,
+      galleryRef,
+      attachRef,
+      postOgRef,
+      bookOgRef,
+      paperOgRef,
+      pageOgRef,
+    ] = await Promise.all([
+      this.prisma.posts.count({ where: { cover_image_id: id } }),
+      this.prisma.books.count({ where: { cover_image_id: id } }),
       this.prisma.gallery_images.count({ where: { media_id: id } }),
       this.prisma.post_attachments.count({ where: { media_id: id } }),
+      this.prisma.post_translations.count({ where: { og_image_id: id } }),
+      this.prisma.book_translations.count({ where: { og_image_id: id } }),
+      this.prisma.academic_paper_translations.count({ where: { og_image_id: id } }),
+      this.prisma.static_page_translations.count({ where: { og_image_id: id } }),
     ]);
 
-    if (postRef + bookRef + galleryRef + attachRef > 0) {
+    if (
+      postRef + bookRef + galleryRef + attachRef + postOgRef + bookOgRef + paperOgRef + pageOgRef >
+      0
+    ) {
       throw new ConflictException('Media is still referenced by other records');
     }
 

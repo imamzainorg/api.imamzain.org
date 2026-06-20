@@ -28,6 +28,7 @@ describe('LanguagesService', () => {
             languages: {
               findMany: jest.fn(),
               findFirst: jest.fn(),
+              findUnique: jest.fn().mockResolvedValue(null),
               create: jest.fn(),
               update: jest.fn().mockResolvedValue({}),
             },

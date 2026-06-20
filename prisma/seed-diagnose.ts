@@ -11,7 +11,7 @@ import * as path from 'path';
 import * as fs from 'fs';
 
 const prisma = new PrismaClient();
-const DATA_DIR = path.join(__dirname, '../../../Web/imamzain-website/src/data');
+const DATA_DIR = path.join(__dirname, '../../imamzain.org/src/data');
 
 function loadJson<T>(file: string): T {
   return JSON.parse(fs.readFileSync(path.join(DATA_DIR, file), 'utf-8')) as T;
@@ -145,7 +145,7 @@ async function diagnoseJournals() {
 
   // Find academic paper category for journals
   const catTranslation = await prisma.academic_paper_category_translations.findFirst({
-    where: { lang: 'en', slug: 'academic-journal-articles' },
+    where: { lang: 'ar', slug: 'buhuth-fi-dawriyyat' },
   });
   if (!catTranslation) { console.log('  ⚠ Journals category not found in DB'); return; }
 

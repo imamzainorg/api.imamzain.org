@@ -1,5 +1,5 @@
 import { Test, TestingModule } from '@nestjs/testing';
-import { ConflictException, NotFoundException } from '@nestjs/common';
+import { ConflictException, ForbiddenException, NotFoundException } from '@nestjs/common';
 import * as bcrypt from 'bcryptjs';
 import { UsersService } from './users.service';
 import { PrismaService } from '../prisma/prisma.service';
@@ -15,6 +15,14 @@ const baseUser = {
   updated_at: new Date(),
   deleted_at: null,
   user_roles: [],
+};
+
+// A super-admin-ish actor: holds every permission the test roles reference, so
+// the privilege-subset guard on assign/remove passes for the happy-path cases.
+const actor = {
+  id: 'actor-1',
+  username: 'admin',
+  permissions: ['users:create', 'users:update', 'users:delete', 'posts:create'],
 };
 
 describe('UsersService', () => {
@@ -202,14 +210,17 @@ describe('UsersService', () => {
   });
 
   describe('assignRole', () => {
+    // role with no permissions → trivially within any actor's envelope.
+    const emptyRole = { id: 'role-1', name: 'Admin', role_permissions: [] };
+
     it('creates user_roles record and returns hydrated user detail when not already assigned', async () => {
       // Default mock covers the initial existence check and the hydrate fetch.
       prisma.users.findFirst.mockResolvedValue(baseUser);
-      prisma.roles.findUnique.mockResolvedValue({ id: 'role-1', name: 'Admin' });
+      prisma.roles.findUnique.mockResolvedValue(emptyRole);
       prisma.user_roles.findUnique.mockResolvedValue(null);
       prisma.user_roles.create.mockResolvedValue({});
 
-      const result = await service.assignRole('user-1', { role_id: 'role-1' }, 'actor-1');
+      const result = await service.assignRole('user-1', { role_id: 'role-1' }, actor);
 
       expect(prisma.user_roles.create).toHaveBeenCalled();
       expect(result.message).toBe('Role assigned');
@@ -218,20 +229,20 @@ describe('UsersService', () => {
 
     it('skips the create and audit row when the role is already assigned', async () => {
       prisma.users.findFirst.mockResolvedValue(baseUser);
-      prisma.roles.findUnique.mockResolvedValue({ id: 'role-1', name: 'Admin' });
+      prisma.roles.findUnique.mockResolvedValue(emptyRole);
       prisma.user_roles.findUnique.mockResolvedValue({ user_id: 'user-1' });
 
-      await service.assignRole('user-1', { role_id: 'role-1' }, 'actor-1');
+      await service.assignRole('user-1', { role_id: 'role-1' }, actor);
 
       expect(prisma.user_roles.create).not.toHaveBeenCalled();
     });
 
     it('throws NotFoundException when user not found', async () => {
       prisma.users.findFirst.mockResolvedValue(null);
-      prisma.roles.findUnique.mockResolvedValue({ id: 'role-1', name: 'Admin' });
+      prisma.roles.findUnique.mockResolvedValue(emptyRole);
 
       await expect(
-        service.assignRole('ghost', { role_id: 'role-1' }, 'actor-1'),
+        service.assignRole('ghost', { role_id: 'role-1' }, actor),
       ).rejects.toThrow(NotFoundException);
     });
 
@@ -240,17 +251,35 @@ describe('UsersService', () => {
       prisma.roles.findUnique.mockResolvedValue(null);
 
       await expect(
-        service.assignRole('user-1', { role_id: 'ghost' }, 'actor-1'),
+        service.assignRole('user-1', { role_id: 'ghost' }, actor),
       ).rejects.toThrow(NotFoundException);
+    });
+
+    it('forbids assigning a role that grants permissions beyond the actor', async () => {
+      prisma.users.findFirst.mockResolvedValue(baseUser);
+      prisma.roles.findUnique.mockResolvedValue({
+        id: 'role-x',
+        name: 'super-admin',
+        role_permissions: [{ permissions: { name: 'roles:assign' } }],
+      });
+
+      await expect(
+        // actor does not hold `roles:assign`
+        service.assignRole('user-1', { role_id: 'role-x' }, actor),
+      ).rejects.toThrow(ForbiddenException);
+      expect(prisma.user_roles.create).not.toHaveBeenCalled();
     });
   });
 
   describe('removeRole', () => {
+    const emptyRole = { id: 'role-1', name: 'Admin', role_permissions: [] };
+
     it('deletes user_roles record and returns hydrated user detail', async () => {
       prisma.users.findFirst.mockResolvedValue(baseUser);
+      prisma.roles.findUnique.mockResolvedValue(emptyRole);
       prisma.user_roles.deleteMany.mockResolvedValue({ count: 1 });
 
-      const result = await service.removeRole('user-1', 'role-1', 'actor-1');
+      const result = await service.removeRole('user-1', 'role-1', actor);
 
       expect(prisma.user_roles.deleteMany).toHaveBeenCalled();
       expect(result.message).toBe('Role removed');
@@ -259,17 +288,33 @@ describe('UsersService', () => {
 
     it('throws NotFoundException when user not found', async () => {
       prisma.users.findFirst.mockResolvedValue(null);
+      prisma.roles.findUnique.mockResolvedValue(emptyRole);
 
-      await expect(service.removeRole('ghost', 'role-1', 'actor-1')).rejects.toThrow(NotFoundException);
+      await expect(service.removeRole('ghost', 'role-1', actor)).rejects.toThrow(NotFoundException);
     });
 
     it('throws NotFoundException with specific message when role is not assigned', async () => {
       prisma.users.findFirst.mockResolvedValue(baseUser);
+      prisma.roles.findUnique.mockResolvedValue(emptyRole);
       prisma.user_roles.deleteMany.mockResolvedValue({ count: 0 });
 
-      await expect(service.removeRole('user-1', 'role-1', 'actor-1')).rejects.toThrow(
+      await expect(service.removeRole('user-1', 'role-1', actor)).rejects.toThrow(
         'Role is not assigned to this user',
       );
+    });
+
+    it('forbids removing a role that grants permissions beyond the actor', async () => {
+      prisma.users.findFirst.mockResolvedValue(baseUser);
+      prisma.roles.findUnique.mockResolvedValue({
+        id: 'role-x',
+        name: 'super-admin',
+        role_permissions: [{ permissions: { name: 'roles:assign' } }],
+      });
+
+      await expect(service.removeRole('user-1', 'role-x', actor)).rejects.toThrow(
+        ForbiddenException,
+      );
+      expect(prisma.user_roles.deleteMany).not.toHaveBeenCalled();
     });
   });
 });

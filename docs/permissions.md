@@ -15,7 +15,7 @@ the API emits.
 
 ## Permissions catalogue
 
-57 permissions in total, grouped by resource. The seed
+68 permissions in total, grouped by resource. The seed
 (`prisma/seed.ts`) is the authoritative source.
 
 ### Content
@@ -47,6 +47,34 @@ the API emits.
 | `gallery-categories:create` | Create gallery categories |
 | `gallery-categories:update` | Edit gallery categories |
 | `gallery-categories:delete` | Soft-delete + restore + list trash for gallery categories |
+| `static-pages:read` | List static pages incl. drafts (admin) + open a draft by id |
+| `static-pages:create` | Create static pages |
+| `static-pages:update` | Edit + publish / unpublish static pages |
+| `static-pages:delete` | Soft-delete + restore + list trash for static pages |
+| `audios:read` | List audios incl. drafts (admin) + open a draft by id |
+| `audios:create` | Create audios + speakers + request a pre-signed R2 upload URL |
+| `audios:update` | Edit + publish / unpublish audios; edit speakers |
+| `audios:delete` | Soft-delete + restore + list trash for audios **and speakers** |
+
+> **Speakers** are part of the audio domain and reuse the `audios:*`
+> permissions — there is no separate `speakers:*` set. Public speaker reads
+> (`GET /speakers`, `GET /speakers/:id`) need no auth.
+
+### Stores
+
+A `store` is a city (translated `city_name`); each city has one or more
+`store_locations` (sale-points). All store + location management is gated by a
+single permission set.
+
+Public list / detail need no permission. There is no `stores:read` — matching
+the category resources, the only admin-read surface (trash) is gated by
+`stores:delete`.
+
+| Permission | Action |
+| --- | --- |
+| `stores:create` | Create a store (with optional nested locations) |
+| `stores:update` | Edit a store + add / edit its sale-points |
+| `stores:delete` | Soft-delete + restore stores and sale-points + list trash |
 
 ### Media
 
@@ -119,9 +147,9 @@ upserts only.
 
 | Role | Description | Permission count |
 | --- | --- | --- |
-| `super-admin` | Full system access including roles, users, and languages. Reserved for the technical owner. | 57 (all) |
-| `admin` | All content + users + forms + newsletter + media. Cannot modify roles or languages. | 51 |
-| `editor` | All content types, media, and daily hadiths. No access to forms, users, roles, or system settings. | 34 |
+| `super-admin` | Full system access including roles, users, and languages. Reserved for the technical owner. | 68 (all) |
+| `admin` | All content + users + forms + newsletter + media. Cannot modify roles or languages. | 62 |
+| `editor` | All content types (incl. static pages, stores, audios), media, and daily hadiths. No access to forms, users, roles, or system settings. | 45 |
 | `moderator` | Reviews and responds to contact submissions, proxy visit requests, and the newsletter. Read-only on posts and contest. | 9 |
 
 Translations for each role title / description exist in `ar`, `en`,
@@ -158,6 +186,9 @@ Legend: ✓ = has by default, — = does not.
 | `academic-paper-categories:*` | ✓ | ✓ | ✓ | — |
 | `gallery:*` | ✓ | ✓ | ✓ | — |
 | `gallery-categories:*` | ✓ | ✓ | ✓ | — |
+| `static-pages:*` | ✓ | ✓ | ✓ | — |
+| `stores:*` (create/update/delete) | ✓ | ✓ | ✓ | — |
+| `audios:*` | ✓ | ✓ | ✓ | — |
 | `media:*` | ✓ | ✓ | ✓ | — |
 | `daily-hadiths:*` | ✓ | ✓ | ✓ | — |
 | `forms:read` | ✓ | ✓ | — | ✓ |
@@ -210,6 +241,7 @@ change.
 | `USER_CREATED` | `POST /users` |
 | `USER_UPDATED` | `PATCH /users/:id` |
 | `USER_DELETED` | `DELETE /users/:id` |
+| `USER_RESTORED` | `POST /users/:id/restore` |
 | `ROLE_ASSIGNED_TO_USER` | `POST /users/:id/roles` |
 | `ROLE_REMOVED_FROM_USER` | `DELETE /users/:id/roles/:roleId` |
 | `ROLE_CREATED` | `POST /roles` |
@@ -231,6 +263,18 @@ change.
 | `BOOK_CREATED` / `BOOK_UPDATED` / `BOOK_DELETED` / `BOOK_RESTORED` | Books CRUD |
 | `ACADEMIC_PAPER_CREATED` / `ACADEMIC_PAPER_UPDATED` / `ACADEMIC_PAPER_DELETED` / `ACADEMIC_PAPER_RESTORED` | Academic papers CRUD |
 | `GALLERY_IMAGE_CREATED` / `GALLERY_IMAGE_UPDATED` / `GALLERY_IMAGE_DELETED` / `GALLERY_IMAGE_RESTORED` | Gallery images CRUD |
+| `STATIC_PAGE_CREATED` / `STATIC_PAGE_UPDATED` / `STATIC_PAGE_DELETED` / `STATIC_PAGE_RESTORED` | Static pages CRUD |
+| `STATIC_PAGE_PUBLISHED` / `STATIC_PAGE_UNPUBLISHED` | `PATCH /static-pages/:id/publish` |
+| `AUDIO_CREATED` / `AUDIO_UPDATED` / `AUDIO_DELETED` / `AUDIO_RESTORED` | Audios CRUD |
+| `AUDIO_PUBLISHED` / `AUDIO_UNPUBLISHED` | `PATCH /audios/:id/publish` |
+| `SPEAKER_CREATED` / `SPEAKER_UPDATED` / `SPEAKER_DELETED` / `SPEAKER_RESTORED` | Speakers CRUD |
+
+### Stores
+
+| Action | Trigger |
+| --- | --- |
+| `STORE_CREATED` / `STORE_UPDATED` / `STORE_DELETED` / `STORE_RESTORED` | Store (city) CRUD |
+| `STORE_LOCATION_CREATED` / `STORE_LOCATION_UPDATED` / `STORE_LOCATION_DELETED` | Sale-point CRUD via `/stores/:id/locations*` |
 
 ### Categories
 
@@ -276,6 +320,7 @@ need to investigate why a video is or isn't present, check the
 | `NEWSLETTER_UNSUBSCRIBED_BY_ADMIN` | `POST /newsletter/subscribers/:id/unsubscribe` |
 | `NEWSLETTER_RESUBSCRIBED_BY_ADMIN` | `POST /newsletter/subscribers/:id/resubscribe` |
 | `NEWSLETTER_SUBSCRIBER_DELETED` | `DELETE /newsletter/subscribers/:id` |
+| `NEWSLETTER_SUBSCRIBER_RESTORED` | `POST /newsletter/subscribers/:id/restore` |
 | `NEWSLETTER_CAMPAIGN_CREATED` | `POST /newsletter/campaigns` |
 | `NEWSLETTER_CAMPAIGN_UPDATED` | `PATCH /newsletter/campaigns/:id` |
 | `NEWSLETTER_CAMPAIGN_SEND_QUEUED` | `POST /newsletter/campaigns/:id/send` |
@@ -289,9 +334,11 @@ need to investigate why a video is or isn't present, check the
 | `CONTACT_SUBMITTED` | `POST /forms/contact` — public action, `user_id` null |
 | `CONTACT_UPDATED` | `PATCH /forms/contacts/:id` |
 | `CONTACT_DELETED` | `DELETE /forms/contacts/:id` |
+| `CONTACT_RESTORED` | `POST /forms/contacts/:id/restore` |
 | `PROXY_VISIT_SUBMITTED` | `POST /forms/proxy-visit` — public action, `user_id` null |
 | `PROXY_VISIT_UPDATED` | `PATCH /forms/proxy-visits/:id` |
 | `PROXY_VISIT_DELETED` | `DELETE /forms/proxy-visits/:id` |
+| `PROXY_VISIT_RESTORED` | `POST /forms/proxy-visits/:id/restore` |
 
 ### System
 

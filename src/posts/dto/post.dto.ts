@@ -1,6 +1,7 @@
 import { ApiProperty, ApiPropertyOptional } from "@nestjs/swagger";
 import { Transform, Type } from "class-transformer";
 import {
+  ArrayMaxSize,
   ArrayMinSize,
   IsArray,
   IsBoolean,
@@ -215,6 +216,7 @@ export class BulkIdsDto {
   })
   @IsArray()
   @ArrayMinSize(1)
+  @ArrayMaxSize(200)
   @IsUUID('all', { each: true })
   ids!: string[];
 }

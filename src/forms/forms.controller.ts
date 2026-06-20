@@ -18,10 +18,9 @@ import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { CurrentUser, CurrentUserPayload } from '../common/decorators/current-user.decorator';
 import { RequirePermission } from '../common/decorators/require-permission.decorator';
 import { ForbiddenErrorDto, NotFoundErrorDto, TooManyRequestsErrorDto, UnauthorizedErrorDto, ValidationErrorDto } from '../common/dto/api-response.dto';
-import { PaginationDto } from '../common/dto/pagination.dto';
 import { PermissionGuard } from '../common/guards/permission.guard';
-import { CreateContactDto, UpdateContactDto } from './dto/contact.dto';
-import { CreateProxyVisitDto, UpdateProxyVisitDto } from './dto/proxy-visit.dto';
+import { ContactQueryDto, CreateContactDto, UpdateContactDto } from './dto/contact.dto';
+import { CreateProxyVisitDto, ProxyVisitQueryDto, UpdateProxyVisitDto } from './dto/proxy-visit.dto';
 import {
   ContactListResponseDto,
   ContactResponseDto,
@@ -64,8 +63,8 @@ export class FormsController {
   @ApiBadRequestResponse({ type: ValidationErrorDto, description: 'Invalid query parameters (page < 1, limit out of 1–100, or non-integer values)' })
   @ApiUnauthorizedResponse({ type: UnauthorizedErrorDto, description: 'Missing or invalid JWT' })
   @ApiForbiddenResponse({ type: ForbiddenErrorDto, description: 'Insufficient permissions' })
-  findAllProxyVisits(@Query() pagination: PaginationDto, @Query('status') status?: string) {
-    return this.formsService.findAllProxyVisits(pagination.page ?? 1, pagination.limit ?? 20, status);
+  findAllProxyVisits(@Query() query: ProxyVisitQueryDto) {
+    return this.formsService.findAllProxyVisits(query.page ?? 1, query.limit ?? 20, query.status);
   }
 
   @Patch('proxy-visits/:id')
@@ -100,6 +99,35 @@ export class FormsController {
     return this.formsService.softDeleteProxyVisit(id, user.id);
   }
 
+  @Get('proxy-visits/trash')
+  @UseGuards(JwtAuthGuard, PermissionGuard)
+  @ApiBearerAuth('jwt')
+  @RequirePermission('forms:delete')
+  @ApiOperation({ summary: 'List soft-deleted proxy visit requests (CMS trash view)', description: 'Requires permission: `forms:delete`.' })
+  @ApiQuery({ name: 'page', required: false, type: Number, example: 1 })
+  @ApiQuery({ name: 'limit', required: false, type: Number, example: 20 })
+  @ApiOkResponse({ type: ProxyVisitListResponseDto, description: 'Paginated list of trashed proxy visit requests' })
+  @ApiUnauthorizedResponse({ type: UnauthorizedErrorDto, description: 'Missing or invalid JWT' })
+  @ApiForbiddenResponse({ type: ForbiddenErrorDto, description: 'Insufficient permissions' })
+  findTrashProxyVisits(@Query() query: ProxyVisitQueryDto) {
+    return this.formsService.findTrashProxyVisits(query.page ?? 1, query.limit ?? 20);
+  }
+
+  @Post('proxy-visits/:id/restore')
+  @HttpCode(200)
+  @UseGuards(JwtAuthGuard, PermissionGuard)
+  @ApiBearerAuth('jwt')
+  @RequirePermission('forms:delete')
+  @ApiOperation({ summary: 'Restore a soft-deleted proxy visit request', description: 'Requires permission: `forms:delete`.' })
+  @ApiParam({ name: 'id', format: 'uuid' })
+  @ApiOkResponse({ type: ProxyVisitResponseDto, description: 'Proxy visit request restored' })
+  @ApiNotFoundResponse({ type: NotFoundErrorDto, description: 'No soft-deleted proxy visit request with that ID exists' })
+  @ApiUnauthorizedResponse({ type: UnauthorizedErrorDto, description: 'Missing or invalid JWT' })
+  @ApiForbiddenResponse({ type: ForbiddenErrorDto, description: 'Insufficient permissions' })
+  restoreProxyVisit(@Param('id') id: string, @CurrentUser() user: CurrentUserPayload) {
+    return this.formsService.restoreProxyVisit(id, user.id);
+  }
+
   // ── Contact Submissions (public submission) ──────────────────────────────
 
   @Post('contact')
@@ -128,8 +156,8 @@ export class FormsController {
   @ApiBadRequestResponse({ type: ValidationErrorDto, description: 'Invalid query parameters (page < 1, limit out of 1–100, or non-integer values)' })
   @ApiUnauthorizedResponse({ type: UnauthorizedErrorDto, description: 'Missing or invalid JWT' })
   @ApiForbiddenResponse({ type: ForbiddenErrorDto, description: 'Insufficient permissions' })
-  findAllContacts(@Query() pagination: PaginationDto, @Query('status') status?: string) {
-    return this.formsService.findAllContacts(pagination.page ?? 1, pagination.limit ?? 20, status);
+  findAllContacts(@Query() query: ContactQueryDto) {
+    return this.formsService.findAllContacts(query.page ?? 1, query.limit ?? 20, query.status);
   }
 
   @Patch('contacts/:id')
@@ -159,5 +187,34 @@ export class FormsController {
   @ApiForbiddenResponse({ type: ForbiddenErrorDto, description: 'Insufficient permissions' })
   deleteContact(@Param('id') id: string, @CurrentUser() user: CurrentUserPayload) {
     return this.formsService.softDeleteContact(id, user.id);
+  }
+
+  @Get('contacts/trash')
+  @UseGuards(JwtAuthGuard, PermissionGuard)
+  @ApiBearerAuth('jwt')
+  @RequirePermission('forms:delete')
+  @ApiOperation({ summary: 'List soft-deleted contact submissions (CMS trash view)', description: 'Requires permission: `forms:delete`.' })
+  @ApiQuery({ name: 'page', required: false, type: Number, example: 1 })
+  @ApiQuery({ name: 'limit', required: false, type: Number, example: 20 })
+  @ApiOkResponse({ type: ContactListResponseDto, description: 'Paginated list of trashed contact submissions' })
+  @ApiUnauthorizedResponse({ type: UnauthorizedErrorDto, description: 'Missing or invalid JWT' })
+  @ApiForbiddenResponse({ type: ForbiddenErrorDto, description: 'Insufficient permissions' })
+  findTrashContacts(@Query() query: ContactQueryDto) {
+    return this.formsService.findTrashContacts(query.page ?? 1, query.limit ?? 20);
+  }
+
+  @Post('contacts/:id/restore')
+  @HttpCode(200)
+  @UseGuards(JwtAuthGuard, PermissionGuard)
+  @ApiBearerAuth('jwt')
+  @RequirePermission('forms:delete')
+  @ApiOperation({ summary: 'Restore a soft-deleted contact submission', description: 'Requires permission: `forms:delete`.' })
+  @ApiParam({ name: 'id', format: 'uuid' })
+  @ApiOkResponse({ type: ContactResponseDto, description: 'Contact submission restored' })
+  @ApiNotFoundResponse({ type: NotFoundErrorDto, description: 'No soft-deleted contact submission with that ID exists' })
+  @ApiUnauthorizedResponse({ type: UnauthorizedErrorDto, description: 'Missing or invalid JWT' })
+  @ApiForbiddenResponse({ type: ForbiddenErrorDto, description: 'Insufficient permissions' })
+  restoreContact(@Param('id') id: string, @CurrentUser() user: CurrentUserPayload) {
+    return this.formsService.restoreContact(id, user.id);
   }
 }

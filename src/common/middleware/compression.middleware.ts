@@ -108,7 +108,11 @@ export function smartCompression() {
           // serve gzipped bytes against a brotli ETag (per RFC 7232 §2.3).
           res.removeHeader('ETag');
         }
-        res.setHeader('Vary', 'Accept-Encoding');
+        // Append (not replace) so the route's own Vary tokens survive — most
+        // public endpoints set `Vary: Accept-Language` via @PublicCache, and
+        // setHeader would clobber it, letting a CDN serve one language's body
+        // to every language. res.vary() unions tokens into the existing header.
+        res.vary('Accept-Encoding');
         res.setHeader('Content-Length', out.length);
         if (callback) origEnd(out, callback);
         else origEnd(out);

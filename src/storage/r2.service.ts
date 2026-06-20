@@ -44,6 +44,22 @@ const MAX_BYTES_BY_MIME: Record<string, number> = {
 
 const DEFAULT_MAX_BYTES = 25 * 1024 * 1024;
 
+// ── Audio uploads ───────────────────────────────────────────────────────────
+// Audio (and its optional companion PDF) lives under the existing R2 `audio/`
+// folder, referenced by a plain CDN URL on the audios row — it does NOT go
+// through the image media table / variant pipeline / confirm step.
+const AUDIO_ALLOWED_MIME_TYPES = new Set(['audio/mpeg', 'audio/mp4', 'audio/x-m4a']);
+const PDF_MIME_TYPE = 'application/pdf';
+const AUDIO_EXTENSIONS: Record<string, string> = {
+  'audio/mpeg': 'mp3',
+  'audio/mp4': 'm4a',
+  'audio/x-m4a': 'm4a',
+};
+const AUDIO_PREFIX = 'audio/';
+const AUDIO_PDF_PREFIX = 'audio/pdf/';
+const MAX_AUDIO_BYTES = 300 * 1024 * 1024; // ~300 MB; long high-bitrate lectures
+const MAX_PDF_BYTES = 50 * 1024 * 1024; // ~50 MB; transcript / booklet PDFs
+
 /** Match new-format original keys: `media/originals/<uuid>/<filename>`. */
 const ORIGINAL_KEY_PATTERN = /^media\/originals\/([0-9a-f-]{36})\//i;
 
@@ -97,8 +113,12 @@ export class R2Service {
       return publicUrl.slice(this.publicBaseUrl.length + 1);
     }
     try {
+      // Decode so this branch yields the same RAW key as the prefix-slice branch
+      // above (R2 object keys are raw bytes — `new URL().pathname` percent-encodes
+      // non-ASCII, which would otherwise break key equality, e.g. the reconcile
+      // idempotency check and S3 deletes for Arabic/space filenames).
       const u = new URL(publicUrl);
-      return u.pathname.replace(/^\/+/, '');
+      return decodeURIComponent(u.pathname.replace(/^\/+/, ''));
     } catch {
       return publicUrl;
     }
@@ -150,6 +170,74 @@ export class R2Service {
     const publicUrl = `${this.publicBaseUrl}/${key}`;
 
     return { uploadUrl, key, publicUrl, mediaId, maxBytes: this.maxBytesFor(mimeType) };
+  }
+
+  /**
+   * Presign a PUT for a single audio (mp3/m4a) or PDF object under the `audio/`
+   * prefix. Unlike {@link generateUploadUrl} this does NOT touch the image
+   * variant pipeline, does NOT create a media / pending-upload row, and has NO
+   * confirm step — the returned `publicUrl` is saved directly onto the audios
+   * record (audio_url / pdf_url, plain text columns).
+   *
+   * The `maxBytes` returned is advisory: there is no server-side re-check (no
+   * confirm/HeadObject step), so the client should validate file size before
+   * the PUT.
+   */
+  async presignAudioUpload(filename: string, contentType: string) {
+    const isPdf = contentType === PDF_MIME_TYPE;
+    if (!isPdf && !AUDIO_ALLOWED_MIME_TYPES.has(contentType)) {
+      throw new BadRequestException(
+        `MIME type "${contentType}" is not allowed. Permitted: ${[...AUDIO_ALLOWED_MIME_TYPES, PDF_MIME_TYPE].join(', ')}`,
+      );
+    }
+
+    const id = randomUUID();
+    const slug = slugifyFilename(filename);
+    const ext = isPdf ? 'pdf' : AUDIO_EXTENSIONS[contentType];
+    const safeName = `${slug || 'file'}.${ext}`;
+    const prefix = isPdf ? AUDIO_PDF_PREFIX : AUDIO_PREFIX;
+    const key = `${prefix}${id}/${safeName}`;
+
+    const command = new PutObjectCommand({
+      Bucket: this.bucket,
+      Key: key,
+      ContentType: contentType,
+    });
+
+    const uploadUrl = await getSignedUrl(this.client, command, { expiresIn: this.uploadUrlTtl });
+    const publicUrl = `${this.publicBaseUrl}/${key}`;
+    const maxBytes = isPdf ? MAX_PDF_BYTES : MAX_AUDIO_BYTES;
+
+    return { uploadUrl, key, publicUrl, maxBytes };
+  }
+
+  /**
+   * List every object key under the `audio/` prefix (paginated). Used by the
+   * audio reconcile script to find CDN files that have no `audios` row yet.
+   * Skips directory markers (keys ending in `/`); callers filter by extension.
+   */
+  async listAudioKeys(): Promise<string[]> {
+    const keys: string[] = [];
+    let continuationToken: string | undefined;
+    do {
+      const res = await this.client.send(
+        new ListObjectsV2Command({
+          Bucket: this.bucket,
+          Prefix: AUDIO_PREFIX,
+          ContinuationToken: continuationToken,
+        }),
+      );
+      for (const obj of res.Contents ?? []) {
+        if (obj.Key && !obj.Key.endsWith('/')) keys.push(obj.Key);
+      }
+      continuationToken = res.IsTruncated ? res.NextContinuationToken : undefined;
+    } while (continuationToken);
+    return keys;
+  }
+
+  /** Build the public CDN URL for a stored object key. */
+  publicUrlForKey(key: string): string {
+    return `${this.publicBaseUrl}/${key}`;
   }
 
   async deleteObject(key: string): Promise<void> {

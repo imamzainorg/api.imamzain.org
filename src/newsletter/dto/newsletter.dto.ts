@@ -25,9 +25,10 @@ export class UnsubscribeDto {
 }
 
 export class SubscriberQueryDto extends PaginationDto {
-  @ApiPropertyOptional({ example: "reader@example.com", description: "Partial email search" })
+  @ApiPropertyOptional({ example: "reader@example.com", description: "Partial email search", maxLength: 200 })
   @IsOptional()
   @IsString()
+  @MaxLength(200)
   search?: string;
 
   @ApiPropertyOptional({ example: true, description: "Filter by active status. Omit to return all." })

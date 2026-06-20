@@ -10,6 +10,8 @@ import {
   IsUrl,
   IsUUID,
   Length,
+  Matches,
+  MaxLength,
   Min,
   MinLength,
   ValidateNested,
@@ -60,6 +62,34 @@ export class AcademicPaperTranslationDto {
   @IsInt()
   @Min(1)
   page_count?: number;
+
+  @ApiPropertyOptional({
+    example: "fiqh-al-imam-sajjad",
+    description:
+      "Optional editor slug. Lowercase latin letters, numbers and hyphens; unique per language. Sets the public /{lang}/academic-papers/{slug} URL. Omit to keep the paper reachable only by UUID.",
+  })
+  @IsOptional()
+  @IsString()
+  @Matches(/^[a-z0-9]+(?:-[a-z0-9]+)*$/)
+  @MaxLength(200)
+  slug?: string;
+
+  @ApiPropertyOptional({ description: "SEO <title> override for this translation." })
+  @IsOptional()
+  @IsString()
+  @MaxLength(300)
+  meta_title?: string;
+
+  @ApiPropertyOptional({ description: "SEO meta description for this translation." })
+  @IsOptional()
+  @IsString()
+  @MaxLength(500)
+  meta_description?: string;
+
+  @ApiPropertyOptional({ format: "uuid", description: "Media ID used as the OpenGraph image for this translation." })
+  @IsOptional()
+  @IsUUID()
+  og_image_id?: string;
 
   @ApiPropertyOptional({
     example: true,
@@ -136,9 +166,11 @@ export class AcademicPaperQueryDto extends PaginationDto {
 
   @ApiPropertyOptional({
     example: "الصحيفة",
-    description: "Search across titles",
+    description: "Search across titles and abstracts",
+    maxLength: 200,
   })
   @IsOptional()
   @IsString()
+  @MaxLength(200)
   search?: string;
 }

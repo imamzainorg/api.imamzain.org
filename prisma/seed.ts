@@ -236,6 +236,40 @@ const PERMISSIONS: { name: string; translations: Translations }[] = [
     },
   },
 
+  // Audios
+  {
+    name: 'audios:read',
+    translations: {
+      ar: { title: 'عرض الصوتيات', description: 'عرض قائمة الملفات الصوتية وتفاصيلها بما فيها المسودات' },
+      en: { title: 'Read Audios', description: 'View published and unpublished audio records' },
+      fa: { title: 'مشاهده صوت‌ها', description: 'مشاهده لیست و جزئیات فایل‌های صوتی شامل پیش‌نویس‌ها' },
+    },
+  },
+  {
+    name: 'audios:create',
+    translations: {
+      ar: { title: 'إضافة صوتية', description: 'رفع وإضافة ملفات صوتية جديدة' },
+      en: { title: 'Create Audios', description: 'Upload and add new audio records' },
+      fa: { title: 'افزودن صوت', description: 'بارگذاری و افزودن فایل‌های صوتی جدید' },
+    },
+  },
+  {
+    name: 'audios:update',
+    translations: {
+      ar: { title: 'تعديل الصوتيات', description: 'تحرير ونشر الملفات الصوتية' },
+      en: { title: 'Update Audios', description: 'Edit and publish audio records' },
+      fa: { title: 'ویرایش صوت‌ها', description: 'ویرایش و انتشار فایل‌های صوتی' },
+    },
+  },
+  {
+    name: 'audios:delete',
+    translations: {
+      ar: { title: 'حذف الصوتيات', description: 'حذف الملفات الصوتية واستعادتها' },
+      en: { title: 'Delete Audios', description: 'Soft-delete and restore audio records' },
+      fa: { title: 'حذف صوت‌ها', description: 'حذف و بازیابی فایل‌های صوتی' },
+    },
+  },
+
   // Media
   {
     name: 'media:create',
@@ -480,6 +514,67 @@ const PERMISSIONS: { name: string; translations: Translations }[] = [
     },
   },
 
+  // Static pages
+  {
+    name: 'static-pages:read',
+    translations: {
+      ar: { title: 'عرض الصفحات الثابتة', description: 'عرض الصفحات الثابتة بما فيها المسودات' },
+      en: { title: 'Read Static Pages', description: 'View static pages including drafts' },
+      fa: { title: 'مشاهده صفحات ثابت', description: 'مشاهده صفحات ثابت شامل پیش‌نویس‌ها' },
+    },
+  },
+  {
+    name: 'static-pages:create',
+    translations: {
+      ar: { title: 'إنشاء صفحة ثابتة', description: 'إضافة صفحات ثابتة جديدة' },
+      en: { title: 'Create Static Pages', description: 'Add new static pages' },
+      fa: { title: 'ایجاد صفحه ثابت', description: 'افزودن صفحات ثابت جدید' },
+    },
+  },
+  {
+    name: 'static-pages:update',
+    translations: {
+      ar: { title: 'تعديل الصفحات الثابتة', description: 'تحرير ونشر الصفحات الثابتة' },
+      en: { title: 'Update Static Pages', description: 'Edit and publish static pages' },
+      fa: { title: 'ویرایش صفحات ثابت', description: 'ویرایش و انتشار صفحات ثابت' },
+    },
+  },
+  {
+    name: 'static-pages:delete',
+    translations: {
+      ar: { title: 'حذف الصفحات الثابتة', description: 'حذف الصفحات الثابتة واستعادتها' },
+      en: { title: 'Delete Static Pages', description: 'Soft-delete and restore static pages' },
+      fa: { title: 'حذف صفحات ثابت', description: 'حذف و بازیابی صفحات ثابت' },
+    },
+  },
+
+  // Stores (public read needs no permission; trash is gated by stores:delete,
+  // matching the category resources which likewise have no `:read`).
+  {
+    name: 'stores:create',
+    translations: {
+      ar: { title: 'إنشاء متجر', description: 'إضافة متاجر ومواقع بيع جديدة' },
+      en: { title: 'Create Stores', description: 'Add new stores and sale locations' },
+      fa: { title: 'ایجاد فروشگاه', description: 'افزودن فروشگاه‌ها و محل‌های فروش جدید' },
+    },
+  },
+  {
+    name: 'stores:update',
+    translations: {
+      ar: { title: 'تعديل المتاجر', description: 'تحرير بيانات المتاجر ومواقع البيع' },
+      en: { title: 'Update Stores', description: 'Edit stores and their sale locations' },
+      fa: { title: 'ویرایش فروشگاه‌ها', description: 'ویرایش فروشگاه‌ها و محل‌های فروش آن‌ها' },
+    },
+  },
+  {
+    name: 'stores:delete',
+    translations: {
+      ar: { title: 'حذف المتاجر', description: 'حذف المتاجر ومواقع البيع واستعادتها' },
+      en: { title: 'Delete Stores', description: 'Soft-delete and restore stores and locations' },
+      fa: { title: 'حذف فروشگاه‌ها', description: 'حذف و بازیابی فروشگاه‌ها و محل‌های فروش' },
+    },
+  },
+
   // Roles
   {
     name: 'roles:read',
@@ -596,6 +691,10 @@ const ROLES: { name: string; permissions: string[]; translations: RoleTranslatio
       'gallery-categories:create',
       'gallery-categories:update',
       'gallery-categories:delete',
+      'audios:read',
+      'audios:create',
+      'audios:update',
+      'audios:delete',
       'media:create',
       'media:read',
       'media:update',
@@ -604,6 +703,13 @@ const ROLES: { name: string; permissions: string[]; translations: RoleTranslatio
       'daily-hadiths:create',
       'daily-hadiths:update',
       'daily-hadiths:delete',
+      'static-pages:read',
+      'static-pages:create',
+      'static-pages:update',
+      'static-pages:delete',
+      'stores:create',
+      'stores:update',
+      'stores:delete',
       'dashboard:read',
     ],
     translations: {

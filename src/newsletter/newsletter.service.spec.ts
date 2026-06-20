@@ -237,13 +237,13 @@ describe('NewsletterService', () => {
   });
 
   describe('softDelete', () => {
-    it('sets deleted_at on the subscriber', async () => {
+    it('sets deleted_at and clears is_active on the subscriber', async () => {
       prisma.newsletter_subscribers.findFirst.mockResolvedValue(activeSubscriber);
 
       const result = await service.softDelete(SUB_ID, 'admin-1');
 
       expect(prisma.newsletter_subscribers.update).toHaveBeenCalledWith(
-        expect.objectContaining({ data: { deleted_at: expect.any(Date) } }),
+        expect.objectContaining({ data: { deleted_at: expect.any(Date), is_active: false } }),
       );
       expect(result.message).toBe('Subscriber deleted');
     });

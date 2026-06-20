@@ -1,6 +1,6 @@
 import { MiddlewareConsumer, Module, NestModule } from "@nestjs/common";
 import { APP_GUARD } from "@nestjs/core";
-import { ConfigModule, ConfigService } from "@nestjs/config";
+import { ConfigModule } from "@nestjs/config";
 import { ScheduleModule } from "@nestjs/schedule";
 import { ThrottlerGuard, ThrottlerModule } from "@nestjs/throttler";
 import { ThrottlerStorageRedisService } from "@nest-lab/throttler-storage-redis";
@@ -36,8 +36,13 @@ import { SearchModule } from "./search/search.module";
 import { FeedsModule } from "./feeds/feeds.module";
 import { DailyHadithsModule } from "./daily-hadiths/daily-hadiths.module";
 import { YoutubeModule } from "./youtube/youtube.module";
+import { StaticPagesModule } from "./static-pages/static-pages.module";
+import { StoresModule } from "./stores/stores.module";
+import { AudiosModule } from "./audios/audios.module";
+import { SpeakersModule } from "./speakers/speakers.module";
 import { HealthController } from "./health/health.controller";
 import { LanguageMiddleware } from "./common/middleware/language.middleware";
+import { REDIS_CLIENT } from "./common/redis/redis.service";
 import { SentryModule } from "@sentry/nestjs/setup";
 
 @Module({
@@ -79,15 +84,17 @@ import { SentryModule } from "@sentry/nestjs/setup";
     // Without REDIS_URL the throttler keeps its in-memory map (current
     // behaviour) — fine for single-instance prod and dev.
     ThrottlerModule.forRootAsync({
-      inject: [ConfigService],
-      useFactory: (config: ConfigService) => {
-        const url = config.get<string>('REDIS_URL');
+      // Reuse the RedisModule command client (REDIS_CLIENT) rather than opening
+      // a second, unmanaged connection. That client already has an 'error'
+      // listener (so a disconnect can't surface as an unhandled 'error' event)
+      // and is quit() by RedisService.onModuleDestroy on shutdown — the inline
+      // `new Redis(...)` had neither, leaking a connection past graceful
+      // shutdown. ThrottlerStorageRedisService won't disconnect a client it was
+      // handed, so RedisService stays the sole owner.
+      inject: [REDIS_CLIENT],
+      useFactory: (client: Redis | null) => {
         const base = { throttlers: [{ ttl: 900_000, limit: 1_000 }] };
-        if (!url) return base;
-        // ThrottlerStorageRedisService accepts an ioredis client. Reuse one
-        // dedicated client so we don't double-connect with the RedisModule
-        // command client — keeps the connection budget predictable.
-        const client = new Redis(url, { lazyConnect: false, maxRetriesPerRequest: 3 });
+        if (!client) return base;
         return { ...base, storage: new ThrottlerStorageRedisService(client) };
       },
     }),
@@ -120,6 +127,10 @@ import { SentryModule } from "@sentry/nestjs/setup";
     FeedsModule,
     DailyHadithsModule,
     YoutubeModule,
+    StaticPagesModule,
+    StoresModule,
+    AudiosModule,
+    SpeakersModule,
   ],
   controllers: [HealthController],
   providers: [{ provide: APP_GUARD, useClass: ThrottlerGuard }],

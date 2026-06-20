@@ -14,6 +14,7 @@ import { AuditService } from '../common/audit/audit.service';
 import { AUDIT_ACTIONS } from '../common/audit/audit.actions';
 import { sanitizeEditorHtml } from '../common/utils/html-sanitize.util';
 import { buildPaginationMeta, resolvePagination } from '../common/utils/pagination.util';
+import { ADVISORY_LOCK_KEYS, withAdvisoryLock } from '../common/utils/advisory-lock.util';
 import { NewsletterService } from './newsletter.service';
 import {
   CampaignQueryDto,
@@ -28,6 +29,14 @@ import {
  * the team moves to a transactional ESP (Resend / Brevo / Mailgun).
  */
 const BATCH_SIZE_PER_TICK = 50;
+
+/**
+ * Upper bound on how long the sender's advisory-lock transaction may run for a
+ * single tick. Sits well above a realistic SMTP batch (50 emails at concurrency
+ * 5 ≈ seconds) and above the 60s cron interval, so a slow batch can't trip the
+ * util's 120s default and abort the tick mid-send.
+ */
+const SENDER_LOCK_TIMEOUT_MS = 300_000;
 
 /**
  * Maximum number of SMTP sends to have in flight at once. Hostinger SMTP
@@ -316,37 +325,71 @@ export class CampaignsService {
     }
     this.isRunning = true;
     try {
-      // Step 1: promote any due scheduled campaigns.
-      const now = new Date();
-      const promoted = await this.prisma.newsletter_campaigns.findMany({
-        where: { status: 'scheduled', scheduled_at: { lte: now } },
-        select: { id: true },
-      });
-      for (const { id } of promoted) {
-        try {
-          await this.prisma.newsletter_campaigns.updateMany({
-            where: { id, status: 'scheduled' },
-            data: { status: 'sending', updated_at: now },
-          });
-          await this.populateRecipients(id);
-        } catch (err) {
-          this.logger.warn(`Failed to promote campaign ${id}: ${err}`);
+      // ScheduleModule runs this cron on every replica. Gate the whole tick
+      // behind a Postgres advisory lock so only ONE instance sends a given
+      // minute's batch — otherwise two replicas fetch the same pending
+      // recipient rows and deliver duplicate emails / double-count the
+      // delivered/failed counters. (isRunning still guards same-process
+      // overlap as a cheap fast-path.)
+      //
+      // The lock is held for the whole tick, including the SMTP batch. A 50-
+      // email batch at concurrency 5 is normally a few seconds, but slow SMTP
+      // can stretch it. We raise the lock-transaction timeout to SENDER_LOCK_
+      // TIMEOUT_MS (well above both a realistic batch and the 60s cron
+      // interval) so a slow batch can't trip the default 120s timeout and
+      // abort mid-tick — the per-recipient sent_at/failed_at writes commit in
+      // their own inner transaction, so progress is never lost, but aborting
+      // would surface as recurring error noise. Peers that can't get the lock
+      // pg_try → false and skip instantly; they never block on a slow batch.
+      const ran = await withAdvisoryLock(
+        this.prisma,
+        ADVISORY_LOCK_KEYS.NEWSLETTER_SENDER,
+        async () => {
+        // Step 1: promote any due scheduled campaigns.
+        const now = new Date();
+        const promoted = await this.prisma.newsletter_campaigns.findMany({
+          where: { status: 'scheduled', scheduled_at: { lte: now } },
+          select: { id: true },
+        });
+        for (const { id } of promoted) {
+          try {
+            await this.prisma.newsletter_campaigns.updateMany({
+              where: { id, status: 'scheduled' },
+              data: { status: 'sending', updated_at: now },
+            });
+            await this.populateRecipients(id);
+          } catch (err) {
+            this.logger.warn(`Failed to promote campaign ${id}: ${err}`);
+          }
         }
-      }
 
-      // Step 2: process one batch per sending campaign.
-      const inFlight = await this.prisma.newsletter_campaigns.findMany({
-        where: { status: 'sending' },
-        select: { id: true, subject: true, body_html: true },
-      });
+        // Step 2: process one batch per sending campaign.
+        const inFlight = await this.prisma.newsletter_campaigns.findMany({
+          where: { status: 'sending' },
+          select: { id: true, subject: true, body_html: true },
+        });
 
-      for (const campaign of inFlight) {
-        try {
-          await this.processCampaignBatch(campaign);
-        } catch (err) {
-          this.logger.warn(`Batch failed for campaign ${campaign.id}: ${err}`);
+        for (const campaign of inFlight) {
+          try {
+            await this.processCampaignBatch(campaign);
+          } catch (err) {
+            this.logger.warn(`Batch failed for campaign ${campaign.id}: ${err}`);
+          }
         }
+        },
+        SENDER_LOCK_TIMEOUT_MS,
+      );
+      if (!ran) {
+        this.logger.log('runSendingTick skipped — another instance holds the sender lock');
       }
+    } catch (err) {
+      // A lock-transaction timeout or transient DB error must not surface as an
+      // unhandled promise rejection on the cron path — log it and let the next
+      // tick retry. Per-recipient writes already committed, so no progress is
+      // lost.
+      this.logger.error(
+        `runSendingTick failed: ${err instanceof Error ? err.message : String(err)}`,
+      );
     } finally {
       this.isRunning = false;
     }
@@ -364,15 +407,55 @@ export class CampaignsService {
     });
 
     if (pending.length === 0) {
-      // All recipients processed; transition to sent (or failed if every
-      // recipient errored). The denormalised counters on the campaign row
-      // already reflect the totals.
-      const updated = await this.prisma.newsletter_campaigns.update({
+      // All recipients processed. Read the denormalised counters first so we
+      // can choose the terminal status from them.
+      const counters = await this.prisma.newsletter_campaigns.findUnique({
         where: { id: campaign.id },
-        data: { status: 'sent', sent_at: new Date() },
+        select: { delivered_count: true, failed_count: true, recipient_count: true },
       });
+      const delivered = counters?.delivered_count ?? 0;
+      // recipient_count is nullable (Int?, no default), so a campaign stranded
+      // in 'sending' with no recipient rows has it NULL — coerce NULL -> 0 and
+      // drive BOTH the guard and the terminal status from this one value (a
+      // bare `recipient_count === 0` would miss the NULL case the guard exists
+      // for and silently mark the campaign 'sent' to nobody).
+      const recipientTotal = counters?.recipient_count ?? 0;
+
+      // Stranded-campaign guard: a campaign can reach 'sending' with zero
+      // recipient rows if populateRecipients failed after the status flip
+      // (send() / scheduled promotion flip status and populate in separate
+      // steps). Don't silently mark it 'sent' to nobody — try to populate now;
+      // if it gains recipients the next tick sends them.
+      if (recipientTotal === 0) {
+        const populated = await this.populateRecipients(campaign.id);
+        if (populated > 0) return;
+      }
+
+      // Choose the terminal status from the counters: a campaign where every
+      // recipient failed (e.g. SMTP misconfigured) must surface as 'failed',
+      // not a misleading 'sent'.
+      const terminalStatus: newsletter_campaign_status =
+        delivered === 0 && recipientTotal > 0 ? 'failed' : 'sent';
+
+      // Conditionally finalize: only transition out of 'sending'. cancel()
+      // legitimately flips a 'sending' campaign to 'cancelled', and that can
+      // race this terminal write (the in-flight set was snapshotted at tick
+      // start). An unconditional update would clobber the cancel back to
+      // 'sent'/'failed' — corrupting the state machine and contradicting the
+      // audit row cancel() already wrote. updateMany with a status guard makes
+      // the cancel win.
+      const finalized = await this.prisma.newsletter_campaigns.updateMany({
+        where: { id: campaign.id, status: 'sending' },
+        data: { status: terminalStatus, sent_at: new Date() },
+      });
+      if (finalized.count === 0) {
+        this.logger.log(
+          `Campaign ${campaign.id} no longer 'sending' (likely cancelled) — skipping completion`,
+        );
+        return;
+      }
       this.logger.log(
-        `Campaign ${campaign.id} complete: ${updated.delivered_count} delivered, ${updated.failed_count} failed`,
+        `Campaign ${campaign.id} ${terminalStatus}: ${delivered} delivered, ${counters?.failed_count ?? 0} failed`,
       );
       await this.audit.write({
         actorId: null,
@@ -380,9 +463,9 @@ export class CampaignsService {
         resourceType: 'newsletter_campaign',
         resourceId: campaign.id,
         changes: {
-          delivered_count: updated.delivered_count,
-          failed_count: updated.failed_count,
-          recipient_count: updated.recipient_count,
+          delivered_count: delivered,
+          failed_count: counters?.failed_count ?? 0,
+          recipient_count: recipientTotal,
         },
       });
       return;
