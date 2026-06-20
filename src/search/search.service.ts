@@ -46,6 +46,7 @@ export class SearchService {
           SearchResourceType.Book,
           SearchResourceType.AcademicPaper,
           SearchResourceType.GalleryImage,
+          SearchResourceType.Audio,
         ]);
 
     const tasks: Array<Promise<{ type: SearchResourceType; items: Hit[] }>> = [];
@@ -61,6 +62,9 @@ export class SearchService {
     }
     if (requestedTypes.has(SearchResourceType.GalleryImage)) {
       tasks.push(this.searchGallery(q, limit, lang).then((items) => ({ type: SearchResourceType.GalleryImage, items })));
+    }
+    if (requestedTypes.has(SearchResourceType.Audio)) {
+      tasks.push(this.searchAudios(q, limit, lang).then((items) => ({ type: SearchResourceType.Audio, items })));
     }
 
     const buckets = await Promise.all(tasks);
@@ -83,16 +87,19 @@ export class SearchService {
    */
   private async searchPosts(q: string, limit: number, lang: string | null): Promise<Hit[]> {
     const matches = await this.prisma.$queryRaw<Array<{ post_id: string; score: number }>>(Prisma.sql`
-      SELECT DISTINCT ON (pt.post_id)
-        pt.post_id,
-        GREATEST(similarity(pt.title, ${q}), similarity(LEFT(pt.body, 8000), ${q})) AS score
-      FROM post_translations pt
-      JOIN posts p ON p.id = pt.post_id
-      WHERE p.deleted_at IS NULL
-        AND p.is_published = TRUE
-        AND (pt.title % ${q} OR pt.body % ${q})
-      ORDER BY pt.post_id, score DESC
-      LIMIT ${limit * 4}
+      SELECT post_id, score FROM (
+        SELECT DISTINCT ON (pt.post_id)
+          pt.post_id,
+          GREATEST(similarity(pt.title, ${q}), similarity(LEFT(pt.body, 8000), ${q})) AS score
+        FROM post_translations pt
+        JOIN posts p ON p.id = pt.post_id
+        WHERE p.deleted_at IS NULL
+          AND p.is_published = TRUE
+          AND (pt.title % ${q} OR pt.body % ${q})
+        ORDER BY pt.post_id, score DESC
+      ) sub
+      ORDER BY score DESC
+      LIMIT ${limit}
     `);
 
     if (matches.length === 0) return [];
@@ -125,19 +132,22 @@ export class SearchService {
 
   private async searchBooks(q: string, limit: number, lang: string | null): Promise<Hit[]> {
     const matches = await this.prisma.$queryRaw<Array<{ book_id: string; score: number }>>(Prisma.sql`
-      SELECT DISTINCT ON (bt.book_id)
-        bt.book_id,
-        GREATEST(
-          similarity(bt.title, ${q}),
-          similarity(COALESCE(bt.author, ''), ${q}),
-          similarity(COALESCE(bt.description, ''), ${q})
-        ) AS score
-      FROM book_translations bt
-      JOIN books b ON b.id = bt.book_id
-      WHERE b.deleted_at IS NULL
-        AND (bt.title % ${q} OR bt.author % ${q} OR bt.description % ${q})
-      ORDER BY bt.book_id, score DESC
-      LIMIT ${limit * 4}
+      SELECT book_id, score FROM (
+        SELECT DISTINCT ON (bt.book_id)
+          bt.book_id,
+          GREATEST(
+            similarity(bt.title, ${q}),
+            similarity(COALESCE(bt.author, ''), ${q}),
+            similarity(COALESCE(bt.description, ''), ${q})
+          ) AS score
+        FROM book_translations bt
+        JOIN books b ON b.id = bt.book_id
+        WHERE b.deleted_at IS NULL
+          AND (bt.title % ${q} OR bt.author % ${q} OR bt.description % ${q})
+        ORDER BY bt.book_id, score DESC
+      ) sub
+      ORDER BY score DESC
+      LIMIT ${limit}
     `);
 
     if (matches.length === 0) return [];
@@ -169,15 +179,18 @@ export class SearchService {
 
   private async searchPapers(q: string, limit: number, lang: string | null): Promise<Hit[]> {
     const matches = await this.prisma.$queryRaw<Array<{ paper_id: string; score: number }>>(Prisma.sql`
-      SELECT DISTINCT ON (apt.paper_id)
-        apt.paper_id,
-        GREATEST(similarity(apt.title, ${q}), similarity(COALESCE(apt.abstract, ''), ${q})) AS score
-      FROM academic_paper_translations apt
-      JOIN academic_papers ap ON ap.id = apt.paper_id
-      WHERE ap.deleted_at IS NULL
-        AND (apt.title % ${q} OR apt.abstract % ${q})
-      ORDER BY apt.paper_id, score DESC
-      LIMIT ${limit * 4}
+      SELECT paper_id, score FROM (
+        SELECT DISTINCT ON (apt.paper_id)
+          apt.paper_id,
+          GREATEST(similarity(apt.title, ${q}), similarity(COALESCE(apt.abstract, ''), ${q})) AS score
+        FROM academic_paper_translations apt
+        JOIN academic_papers ap ON ap.id = apt.paper_id
+        WHERE ap.deleted_at IS NULL
+          AND (apt.title % ${q} OR apt.abstract % ${q})
+        ORDER BY apt.paper_id, score DESC
+      ) sub
+      ORDER BY score DESC
+      LIMIT ${limit}
     `);
 
     if (matches.length === 0) return [];
@@ -209,15 +222,18 @@ export class SearchService {
 
   private async searchGallery(q: string, limit: number, lang: string | null): Promise<Hit[]> {
     const matches = await this.prisma.$queryRaw<Array<{ media_id: string; score: number }>>(Prisma.sql`
-      SELECT DISTINCT ON (git.media_id)
-        git.media_id,
-        GREATEST(similarity(git.title, ${q}), similarity(COALESCE(git.description, ''), ${q})) AS score
-      FROM gallery_image_translations git
-      JOIN gallery_images gi ON gi.media_id = git.media_id
-      WHERE gi.deleted_at IS NULL
-        AND (git.title % ${q} OR git.description % ${q})
-      ORDER BY git.media_id, score DESC
-      LIMIT ${limit * 4}
+      SELECT media_id, score FROM (
+        SELECT DISTINCT ON (git.media_id)
+          git.media_id,
+          GREATEST(similarity(git.title, ${q}), similarity(COALESCE(git.description, ''), ${q})) AS score
+        FROM gallery_image_translations git
+        JOIN gallery_images gi ON gi.media_id = git.media_id
+        WHERE gi.deleted_at IS NULL
+          AND (git.title % ${q} OR git.description % ${q})
+        ORDER BY git.media_id, score DESC
+      ) sub
+      ORDER BY score DESC
+      LIMIT ${limit}
     `);
 
     if (matches.length === 0) return [];
@@ -243,6 +259,63 @@ export class SearchService {
           lang: matched?.lang ?? '',
           slug: null,
           cover_image_url: image.media?.url ?? null,
+        };
+      });
+  }
+
+  /**
+   * Audios match on their translation title and their speaker's translated name.
+   * The GROUP BY collapses an audio's multiple translations (and its speaker's
+   * translations) to a single best-similarity score. Visibility follows the
+   * POSTS rule — `is_published = TRUE AND deleted_at IS NULL` — because audios
+   * carry a publish flag (unlike books/papers/gallery).
+   */
+  private async searchAudios(q: string, limit: number, lang: string | null): Promise<Hit[]> {
+    const matches = await this.prisma.$queryRaw<Array<{ id: string; score: number }>>(Prisma.sql`
+      SELECT a.id, GREATEST(
+        MAX(similarity(at.title, ${q})),
+        COALESCE(MAX(similarity(sp.name, ${q})), 0)
+      ) AS score
+      FROM audios a
+      JOIN audio_translations at ON at.audio_id = a.id
+      LEFT JOIN speaker_translations sp ON sp.speaker_id = a.speaker_id
+      WHERE a.deleted_at IS NULL
+        AND a.is_published = TRUE
+        AND (at.title % ${q} OR sp.name % ${q})
+      GROUP BY a.id
+      ORDER BY score DESC
+      LIMIT ${limit}
+    `);
+
+    if (matches.length === 0) return [];
+    const ranked = [...matches].sort((a, b) => b.score - a.score).slice(0, limit);
+    const ids = ranked.map((m) => m.id);
+
+    const rows = await this.prisma.audios.findMany({
+      where: { id: { in: ids } },
+      select: {
+        id: true,
+        slug: true,
+        audio_translations: { select: { lang: true, title: true, is_default: true } },
+        speakers: { select: { speaker_translations: { select: { lang: true, name: true, is_default: true } } } },
+      },
+    });
+    const byId = new Map(rows.map((r) => [r.id, r]));
+
+    return ids
+      .map((id) => byId.get(id))
+      .filter((a): a is NonNullable<typeof a> => Boolean(a))
+      .map((audio) => {
+        const matched = this.pickMatchedTranslation(audio.audio_translations, q, lang, ['title']);
+        const speaker = resolveTranslation(audio.speakers?.speaker_translations ?? null, matched?.lang ?? lang);
+        return {
+          type: SearchResourceType.Audio,
+          id: audio.id,
+          title: matched?.title ?? '',
+          summary: speaker?.name ?? null,
+          lang: matched?.lang ?? '',
+          slug: audio.slug ?? null,
+          cover_image_url: null,
         };
       });
   }

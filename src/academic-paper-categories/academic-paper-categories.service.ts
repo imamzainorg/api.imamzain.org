@@ -81,13 +81,18 @@ export class AcademicPaperCategoriesService {
     if (!category) throw new NotFoundException('Category not found');
 
     if (dto.translations) {
-      for (const t of dto.translations) {
-        await this.prisma.academic_paper_category_translations.upsert({
-          where: { category_id_lang: { category_id: id, lang: t.lang } },
-          create: { category_id: id, lang: t.lang, title: t.title, slug: t.slug, description: t.description ?? null },
-          update: { title: t.title, slug: t.slug, description: t.description ?? null },
-        });
-      }
+      // Apply all translation upserts atomically (matches create/restore/
+      // softDelete here and the sibling main-resource updates) so a mid-loop
+      // failure can't leave the category half-updated.
+      await this.prisma.$transaction(
+        dto.translations.map((t) =>
+          this.prisma.academic_paper_category_translations.upsert({
+            where: { category_id_lang: { category_id: id, lang: t.lang } },
+            create: { category_id: id, lang: t.lang, title: t.title, slug: t.slug, description: t.description ?? null },
+            update: { title: t.title, slug: t.slug, description: t.description ?? null },
+          }),
+        ),
+      );
     }
 
     await this.audit.write({

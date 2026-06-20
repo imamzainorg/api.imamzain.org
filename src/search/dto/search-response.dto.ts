@@ -19,7 +19,7 @@ export class SearchHitDto {
 
   @ApiPropertyOptional({
     example: 'hayat-al-imam-zain',
-    description: 'Translation slug. Only present for resources that expose slugs (currently posts).',
+    description: 'Slug, where the resource exposes one (posts, static pages, slugged books / papers / audios).',
   })
   slug?: string | null;
 
@@ -50,6 +50,9 @@ class SearchResultsDto {
 
   @ApiPropertyOptional({ type: SearchTypeBucketDto })
   gallery_image?: SearchTypeBucketDto;
+
+  @ApiPropertyOptional({ type: SearchTypeBucketDto })
+  audio?: SearchTypeBucketDto;
 }
 
 export class SearchResponseDto {

@@ -10,6 +10,7 @@ import {
   MaxLength,
   MinLength,
 } from "class-validator";
+import { PaginationDto } from "../../common/dto/pagination.dto";
 
 export class CreateContactDto {
   @ApiProperty({ example: "Ahmad Al-Hassan", minLength: 2, maxLength: 100 })
@@ -43,6 +44,16 @@ export class CreateContactDto {
   @MinLength(10)
   @MaxLength(2000)
   message!: string;
+}
+
+export class ContactQueryDto extends PaginationDto {
+  @ApiPropertyOptional({
+    enum: ["NEW", "RESPONDED", "SPAM"],
+    description: "Filter by status",
+  })
+  @IsOptional()
+  @IsIn(["NEW", "RESPONDED", "SPAM"])
+  status?: string;
 }
 
 export class UpdateContactDto {

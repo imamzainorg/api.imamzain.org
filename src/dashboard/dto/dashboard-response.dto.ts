@@ -14,6 +14,17 @@ class PostsStatsDto {
   recent: number;
 }
 
+class AudiosStatsDto {
+  @ApiProperty({ example: 50 })
+  total: number;
+
+  @ApiProperty({ example: 48 })
+  published: number;
+
+  @ApiProperty({ example: 2 })
+  drafts: number;
+}
+
 class LibraryStatsDto {
   @ApiProperty({ example: 87 })
   books: number;
@@ -76,6 +87,9 @@ class DashboardStatsDataDto {
 
   @ApiProperty({ type: PostsStatsDto })
   posts: PostsStatsDto;
+
+  @ApiProperty({ type: AudiosStatsDto })
+  audios: AudiosStatsDto;
 
   @ApiProperty({ type: LibraryStatsDto })
   library: LibraryStatsDto;

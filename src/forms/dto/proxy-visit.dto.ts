@@ -9,6 +9,7 @@ import {
   MaxLength,
   MinLength,
 } from "class-validator";
+import { PaginationDto } from "../../common/dto/pagination.dto";
 
 export class CreateProxyVisitDto {
   @ApiProperty({
@@ -41,6 +42,16 @@ export class CreateProxyVisitDto {
   @Length(2, 2)
   @Matches(/^[A-Z]{2}$/)
   visitor_country!: string;
+}
+
+export class ProxyVisitQueryDto extends PaginationDto {
+  @ApiPropertyOptional({
+    enum: ["PENDING", "APPROVED", "COMPLETED", "REJECTED"],
+    description: "Filter by status",
+  })
+  @IsOptional()
+  @IsIn(["PENDING", "APPROVED", "COMPLETED", "REJECTED"])
+  status?: string;
 }
 
 export class UpdateProxyVisitDto {

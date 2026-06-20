@@ -231,7 +231,13 @@ export class NewsletterService {
     const subscriber = await this.prisma.newsletter_subscribers.findFirst({ where: { id, deleted_at: null } });
     if (!subscriber) throw new NotFoundException('Subscriber not found');
 
-    await this.prisma.newsletter_subscribers.update({ where: { id }, data: { deleted_at: new Date() } });
+    // Clear is_active too so the deleted row's flag matches its real state,
+    // consistent with the unsubscribe paths (a deleted subscriber is no longer
+    // active). Otherwise the row reads is_active=true, deleted_at=<date>.
+    await this.prisma.newsletter_subscribers.update({
+      where: { id },
+      data: { deleted_at: new Date(), is_active: false },
+    });
 
     await this.audit.write({
       actorId,
@@ -242,5 +248,49 @@ export class NewsletterService {
     });
 
     return { message: 'Subscriber deleted', data: null };
+  }
+
+  /** List soft-deleted subscribers (admin trash view). */
+  async findTrash(page: number, limit: number) {
+    const skip = (page - 1) * limit;
+    const where: Prisma.newsletter_subscribersWhereInput = { deleted_at: { not: null } };
+    const [items, total] = await Promise.all([
+      this.prisma.newsletter_subscribers.findMany({
+        where,
+        orderBy: [{ deleted_at: 'desc' }, { id: 'asc' }],
+        skip,
+        take: limit,
+      }),
+      this.prisma.newsletter_subscribers.count({ where }),
+    ]);
+    return { message: 'Trash fetched', data: { items, pagination: buildPaginationMeta(page, limit, total) } };
+  }
+
+  /**
+   * Restore a soft-deleted subscriber. The email never leaves the unique
+   * constraint while trashed (subscribe() re-activates the same row rather than
+   * inserting a duplicate), so no conflict is possible — this just reverses the
+   * delete: clears `deleted_at` and flips `is_active` back on.
+   */
+  async restore(id: string, actorId: string) {
+    const subscriber = await this.prisma.newsletter_subscribers.findFirst({
+      where: { id, deleted_at: { not: null } },
+    });
+    if (!subscriber) throw new NotFoundException('Deleted subscriber not found');
+
+    const updated = await this.prisma.newsletter_subscribers.update({
+      where: { id },
+      data: { deleted_at: null, is_active: true, unsubscribed_at: null },
+    });
+
+    await this.audit.write({
+      actorId,
+      action: AUDIT_ACTIONS.NEWSLETTER_SUBSCRIBER_RESTORED,
+      resourceType: 'newsletter_subscriber',
+      resourceId: id,
+      changes: { method: 'POST', path: `/api/v1/newsletter/subscribers/${id}/restore` },
+    });
+
+    return { message: 'Subscriber restored', data: updated };
   }
 }

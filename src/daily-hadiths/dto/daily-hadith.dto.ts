@@ -1,5 +1,5 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { Type } from 'class-transformer';
+import { Transform, Type } from 'class-transformer';
 import {
   ArrayMinSize,
   IsArray,
@@ -119,7 +119,14 @@ export class DailyHadithQueryDto extends PaginationDto {
     description: 'Filter by active state. Omit to include both.',
   })
   @IsOptional()
-  @Type(() => Boolean)
+  @Transform(({ value }) => {
+    // class-transformer's @Type(() => Boolean) runs Boolean('false') === true,
+    // so a query string ?is_active=false was being coerced to true. Map the
+    // string explicitly instead, matching the sibling query DTOs.
+    if (value === true || value === 'true') return true;
+    if (value === false || value === 'false') return false;
+    return value;
+  })
   @IsBoolean()
   is_active?: boolean;
 }

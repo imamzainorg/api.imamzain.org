@@ -51,6 +51,7 @@ top-level keys being present.
 ```jsonc
 {
   "success": false,
+  "code": "VALIDATION_FAILED",
   "error": "Validation failed: title must not be empty",
   "timestamp": "2026-05-11T12:00:00.000Z",
   "path": "/api/v1/posts",
@@ -59,12 +60,45 @@ top-level keys being present.
 }
 ```
 
-- `error` — short description. Safe to log; **not** safe to render
+- `code` — **stable, machine-readable error code.** Branch on this for
+  error i18n and retry logic instead of string-matching `error`. Always
+  present. Defaults to a status-derived value; some endpoints return a
+  more specific code (see the catalogue below).
+- `error` — short human description. Safe to log; **not** safe to render
   verbatim on the public site (`requestId` and `path` are debug info).
 - `requestId` — propagates to server logs; quote it when reporting
   issues.
 - `errors` — present on 400 validation failures; each item is one
   failed field rule.
+
+### Error code catalogue
+
+Every error carries a `code`. The status-derived defaults:
+
+| `code` | HTTP | Meaning |
+| --- | --- | --- |
+| `BAD_REQUEST` | 400 | Generic bad request |
+| `VALIDATION_FAILED` | 400 | DTO validation failed — see `errors[]` |
+| `UNAUTHORIZED` | 401 | Missing / invalid credentials |
+| `FORBIDDEN` | 403 | Authenticated but lacks the permission |
+| `NOT_FOUND` | 404 | Resource doesn't exist or was soft-deleted |
+| `CONFLICT` | 409 | Uniqueness / state conflict |
+| `FK_CONSTRAINT_VIOLATION` | 400 | Referenced record doesn't exist |
+| `PAYLOAD_TOO_LARGE` | 413 | Upload / body over the size cap |
+| `RATE_LIMITED` | 429 | Throttle limit hit |
+| `INTERNAL_ERROR` | 500 | Unhandled server error |
+
+Endpoint-specific overrides (more precise than the status default):
+
+| `code` | HTTP | Where |
+| --- | --- | --- |
+| `AUTH_REFRESH_INVALID` | 401 | `POST /auth/refresh` — token unknown or expired |
+| `AUTH_TOKEN_REUSED` | 401 | `POST /auth/refresh` — a revoked token was replayed; **the whole session chain is now revoked**, force a fresh login |
+| `AUTH_REFRESH_ALREADY_ROTATED` | 401 | `POST /auth/refresh` — lost the rotation race; retry once with the newest token |
+| `AUTH_ACCOUNT_DISABLED` | 401 | The account was soft-deleted; re-auth won't help |
+
+New codes may be added over time; treat an unrecognised `code` as its
+HTTP-status default.
 
 ---
 
@@ -133,10 +167,60 @@ For post-list translations specifically, `reading_time_minutes` is
 always `0` — the value is derived from `body`, which isn't fetched.
 Read the real value from the detail endpoint.
 
-The `media` (cover image) include on every list payload also carries
-only the public-facing fields: `id`, `url`, `filename`, `alt_text`,
-`mime_type`, `width`, `height`. Internal fields (`created_at`,
-`uploaded_by`, `file_size`) live on the detail endpoint only.
+The `media` (cover image) include on every list payload carries the
+public-facing fields: `id`, `url`, `filename`, `alt_text`, `mime_type`,
+`width`, `height`, plus **`media_variants[]`** (each `{ id, width, url,
+format }`) so the public site can render `<img srcset>` straight from a
+list response. Internal fields (`created_at`, `uploaded_by`,
+`file_size`) live on the detail endpoint only.
+
+### SEO fields on detail payloads
+
+Posts, books, academic papers, and static pages carry per-translation
+`meta_title`, `meta_description`, and `og_image_id`. The **detail**
+endpoints additionally resolve `og_image_id` into an `og_image` object
+(`{ id, url, filename, alt_text, mime_type, width, height }`) so the
+front-end gets a usable image URL, not a bare UUID. List payloads keep
+only the scalar `og_image_id`.
+
+### Human-readable URLs (`by-slug`)
+
+Posts and static pages have always had per-language slugs. Books and
+academic papers now accept an **optional** editor slug per translation
+too, exposed at `GET /books/by-slug/:slug` and
+`GET /academic-papers/by-slug/:slug`. Slugs are nullable — a book/paper
+without one stays reachable only by UUID, and `by-slug` returns 404 for
+it. Set a slug via the translation object on create / update.
+
+**Audios** accept an **optional** canonical `slug` (a single,
+language-agnostic column — the English slug is stable for SEO), exposed at
+`GET /audios/by-slug/:slug` with the same nullable semantics. Speakers are
+addressed by UUID only (no slug).
+
+### Audios + speakers (i18n)
+
+`audios` follows the same translation pattern as books for its `title`
+(in `audio_translations`, resolved per request via `Accept-Language` into a
+`translation` field, with the full `audio_translations[]` array also
+returned). The language-agnostic core (`audio_url`, `pdf_url`, the single
+`slug`, `duration_seconds`, `size_mb`, `peaks`, `is_published`) lives on
+the row. List payloads drop the heavy `peaks` waveform; the detail endpoint
+includes it.
+
+**Speaker** is a first-class entity (`speakers` + `speaker_translations`),
+not a free-text field — each audio carries a nullable `speaker_id` and the
+resolved `speaker` is embedded in audio responses. Browse a lecturer's
+catalogue with `GET /audios?speaker_id=…`, or list lecturers via
+`GET /speakers` (each with a live-published `audio_count`). There is **no**
+category dimension on audios. Speaker management reuses the `audios:*`
+permissions.
+
+Audio + companion-PDF files are uploaded to R2 via
+`POST /audios/upload-url` (pre-signed PUT; send the same `Content-Type` on
+the PUT as you declared) and the returned `publicUrl` is saved onto the
+record's `audio_url` / `pdf_url`. `durationSeconds` / `sizeMB` / `peaks`
+are computed client-side at upload time and POSTed with create — see
+`docs/CMS-INTEGRATION-NOTES.md` §17 for the browser extractor.
 
 ---
 
@@ -281,8 +365,9 @@ indexed.
 ## Soft delete and restore
 
 Every soft-deletable resource (posts, books, papers, gallery images,
-all four category types, users, newsletter subscribers) follows the
-same lifecycle:
+all four category types, **static pages**, **stores** + their
+sale-points, **audios**, users, newsletter subscribers, and form
+submissions — contacts + proxy visits) follows the same lifecycle:
 
 ```text
 ┌───────┐  DELETE /<resource>/:id          ┌─────────┐
@@ -298,9 +383,10 @@ never appear in normal list / detail queries.
 
 ### Suffix scheme for unique columns
 
-For resources with unique columns scoped to live rows (post / category
-translation slugs, `books.isbn`), the API suffixes the value on delete
-to free it up:
+For resources with unique columns scoped to live rows (post / static-page
+/ category translation slugs, the new optional book / academic-paper
+translation slugs, `books.isbn`, and `users.username`), the API suffixes
+the value on delete to free it up:
 
 ```text
 slug:  "hayat-al-imam-zain"  →  "hayat-al-imam-zain__del_1715472000"
@@ -622,9 +708,20 @@ ${PUBLIC_SITE_URL}/{lang}/posts/{slug}
 Default: `https://imamzain.org/{lang}/posts/{slug}`. Set
 `PUBLIC_SITE_URL` to override.
 
-The front-end **must** match this URL pattern for the sitemap to be
+### Other resource URLs (emitted in the sitemap)
+
+```text
+${PUBLIC_SITE_URL}/{lang}/{slug}                    ← static pages
+${PUBLIC_SITE_URL}/{lang}/books/{slug}              ← books with a slug
+${PUBLIC_SITE_URL}/{lang}/academic-papers/{slug}    ← papers with a slug
+${PUBLIC_SITE_URL}/audios/{slug}                    ← audios with a slug (single, language-agnostic)
+```
+
+The front-end **must** match these URL patterns for the sitemap to be
 correct. Changing the front-end's URL structure means updating the
-sitemap controller too (`src/feeds/feeds.service.ts`).
+sitemap helpers in `src/feeds/feeds.service.ts`. Books / papers without
+a slug are intentionally omitted from the sitemap (no SEO-friendly URL
+to advertise).
 
 ### Sitemap pickup
 
@@ -656,7 +753,7 @@ behaviour should account for the latency.
 | Scheduled post publishing | every minute | Flips `is_published=true` on posts whose `published_at <= now()` and were left as drafts. One `updateMany` per tick; audit-logs each transition with `{ scheduled: true, by: 'cron' }`. |
 | Newsletter campaign sender | every minute | Processes 50 pending recipients per campaign per tick. Sends in parallel with a concurrency cap of 5 SMTP connections; the wall-clock per tick dropped from ~50 s to a few seconds. Crash-safe — resumes from `sent_at IS NULL AND failed_at IS NULL`. |
 | Newsletter campaign promoter | every minute | Promotes campaigns with `status=scheduled` whose `scheduled_at <= now()` into `sending`. |
-| YouTube channel mirror sync | every 6 hours (plus once 30 s after boot) | Pulls the configured channel's videos + playlists into the local DB so the homepage / `/youtube/*` endpoints never hit the YouTube Data API on the request path. Silently skipped when `YOUTUBE_API_KEY` / `YOUTUBE_CHANNEL_ID` are unset. |
+| YouTube channel mirror sync | every 6 hours (plus once 30 s after boot) | Pulls the configured channel's videos + playlists into the local DB so the homepage / `/youtube/*` endpoints never hit the YouTube Data API on the request path. Gated by a Postgres advisory lock + a recency check, so a multi-instance fleet performs exactly one sync per window (no N× quota burn). Silently skipped when `YOUTUBE_API_KEY` / `YOUTUBE_CHANNEL_ID` are unset. |
 | Orphan upload cleanup | every hour | Deletes `pending_media_uploads` rows older than the pre-signed URL TTL that were never confirmed via `POST /media/confirm`. Also purges the abandoned R2 object so the bucket doesn't accumulate dead keys. |
 | Refresh-token cleanup | daily at 03:15 | Drops `refresh_tokens` rows past `expires_at` and revoked rows older than 30 days (past the reuse-detection grace window). |
 | Audit-log retention | daily at 03:30 | Drops `audit_logs` rows older than **365 days**. Window is configurable via `AUDIT_LOG_RETENTION_DAYS` in `src/common/audit/audit.service.ts`. The CMS audit-log viewer should not assume rows are available forever. |

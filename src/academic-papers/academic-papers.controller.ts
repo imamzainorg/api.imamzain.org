@@ -76,7 +76,7 @@ export class AcademicPapersController {
   @ApiOperation({
     summary: 'Restore a soft-deleted academic paper',
     description:
-      'Sets `deleted_at` back to null so the paper reappears in public listings. Academic paper translations have no unique slug constraints so restore cannot conflict. Requires permission: `academic-papers:delete`.',
+      'Sets `deleted_at` back to null and reverses any per-translation slug suffix. Fails with 409 if the original slug was claimed by another paper meanwhile. Requires permission: `academic-papers:delete`.',
   })
   @ApiParam({ name: 'id', format: 'uuid' })
   @ApiOkResponse({ type: AcademicPaperMessageResponseDto, description: 'Academic paper restored' })
@@ -85,6 +85,20 @@ export class AcademicPapersController {
   @ApiForbiddenResponse({ type: ForbiddenErrorDto, description: 'Insufficient permissions' })
   restore(@Param('id') id: string, @CurrentUser() user: CurrentUserPayload) {
     return this.service.restore(id, user.id);
+  }
+
+  @Get('by-slug/:slug')
+  @PublicCache(60, 300)
+  @ApiOperation({
+    summary: 'Get a single academic paper by slug (public)',
+    description:
+      'Resolves a paper by an editor-assigned translation slug, regardless of the visitor\'s Accept-Language. 404 if no live paper owns that slug. CDN-cacheable.',
+  })
+  @ApiParam({ name: 'slug', example: 'fiqh-al-imam-sajjad' })
+  @ApiOkResponse({ type: AcademicPaperDetailResponseDto, description: 'Academic paper detail with all translations' })
+  @ApiNotFoundResponse({ type: NotFoundErrorDto, description: 'No live paper owns that slug' })
+  findBySlug(@Param('slug') slug: string, @Lang() lang: string | null) {
+    return this.service.findBySlug(slug, lang);
   }
 
   @Get(':id')

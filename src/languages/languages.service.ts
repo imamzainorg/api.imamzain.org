@@ -1,10 +1,11 @@
-import { Injectable, Logger, NotFoundException, OnApplicationBootstrap } from "@nestjs/common";
+import { ConflictException, Injectable, Logger, NotFoundException, OnApplicationBootstrap } from "@nestjs/common";
 import { languages, Prisma } from "@prisma/client";
+import { Transform } from "class-transformer";
 import {
   IsBoolean,
   IsOptional,
   IsString,
-  MaxLength,
+  Matches,
   MinLength,
 } from "class-validator";
 import { PrismaService } from "../prisma/prisma.service";
@@ -19,9 +20,13 @@ import { TtlCache } from "../common/utils/ttl-cache.util";
 const LANGUAGES_CACHE_TTL_MS = 300_000;
 
 export class CreateLanguageDto {
+  // The column is Char(2) and language resolution is case-sensitive lowercase
+  // (LanguageMiddleware accepts only /^[a-z]{2}$/, resolveTranslation matches
+  // exactly). Normalise to lowercase and require exactly two ASCII letters so
+  // an over-long code can't 500 on insert and a stored code is always matchable.
   @IsString()
-  @MinLength(2)
-  @MaxLength(10)
+  @Transform(({ value }) => (typeof value === "string" ? value.toLowerCase().trim() : value))
+  @Matches(/^[a-z]{2}$/, { message: "code must be a 2-letter lowercase ISO 639-1 code" })
   code!: string;
 
   @IsString()
@@ -85,14 +90,34 @@ export class LanguagesService implements OnApplicationBootstrap {
   }
 
   async create(dto: CreateLanguageDto, actorId: string) {
-    const language = await this.prisma.languages.create({
-      data: {
-        code: dto.code,
-        name: dto.name,
-        native_name: dto.native_name,
-        is_active: dto.is_active ?? true,
-      },
-    });
+    // `code` is the PK and softDelete leaves the row in place, so a plain
+    // create() of a previously-deleted code would hit the PK and 409 forever
+    // (a Char(2) PK can't carry a __del_ suffix to free the value). Look the
+    // row up regardless of deleted_at: restore it if soft-deleted, reject with
+    // a clear 409 if it's live.
+    const existing = await this.prisma.languages.findUnique({ where: { code: dto.code } });
+    if (existing && existing.deleted_at === null) {
+      throw new ConflictException(`A language with code "${dto.code}" already exists`);
+    }
+
+    const language = existing
+      ? await this.prisma.languages.update({
+          where: { code: dto.code },
+          data: {
+            name: dto.name,
+            native_name: dto.native_name,
+            is_active: dto.is_active ?? true,
+            deleted_at: null,
+          },
+        })
+      : await this.prisma.languages.create({
+          data: {
+            code: dto.code,
+            name: dto.name,
+            native_name: dto.native_name,
+            is_active: dto.is_active ?? true,
+          },
+        });
     this.cache.clear();
 
     this.audit.write({

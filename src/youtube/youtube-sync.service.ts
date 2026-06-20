@@ -1,9 +1,18 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { Cron } from '@nestjs/schedule';
 import { PrismaService } from '../prisma/prisma.service';
+import { ADVISORY_LOCK_KEYS, withAdvisoryLock } from '../common/utils/advisory-lock.util';
 
 const YOUTUBE_API_BASE = 'https://www.googleapis.com/youtube/v3';
 const SYNC_TIMEOUT_MS = 30_000;
+// The whole guarded sync is allowed to hold its advisory-lock transaction this
+// long; a normal sync is sub-minute, but a slow channel with many playlists
+// can run longer, and we'd rather hold the lock than abort mid-run.
+const SYNC_LOCK_TIMEOUT_MS = 600_000;
+// If a successful sync landed more recently than this, the guarded path skips —
+// stops a restart loop or a multi-replica cron tick from re-syncing within the
+// 6-hour window even after one replica already did the work.
+const SYNC_MIN_INTERVAL_MS = 5 * 60 * 60 * 1000 + 30 * 60 * 1000; // 5h30m
 const MAX_RECENT_UPLOADS = 50;
 const MAX_PLAYLISTS_PER_CHANNEL = 50;
 const MAX_VIDEOS_PER_PLAYLIST = 200;
@@ -83,7 +92,54 @@ export class YoutubeSyncService {
    */
   @Cron('0 */6 * * *')
   async runScheduledSync() {
-    await this.sync('cron');
+    await this.runGuardedSync('cron');
+  }
+
+  /**
+   * Multi-instance-safe entry point. Every replica runs the cron, so the work
+   * is gated behind a Postgres advisory lock: only one instance acquires it and
+   * performs the YouTube Data API fetch; the others `pg_try` → false and return
+   * immediately (no blocking). A freshness check inside the lock means even the
+   * winner skips if a recent sync is still fresh — so a restart storm or an
+   * overlapping bootstrap+cron can't burn N× the API quota.
+   */
+  async runGuardedSync(
+    trigger: 'cron' | 'bootstrap' | 'manual',
+  ): Promise<{ videos: number; playlists: number } | null> {
+    let result: { videos: number; playlists: number } | null = null;
+    try {
+      const ran = await withAdvisoryLock(
+        this.prisma,
+        ADVISORY_LOCK_KEYS.YOUTUBE_SYNC,
+        async () => {
+          if (await this.syncedWithin(SYNC_MIN_INTERVAL_MS)) {
+            this.logger.log(`YouTube sync (${trigger}) skipped — a recent sync is still fresh`);
+            return;
+          }
+          result = await this.sync(trigger);
+        },
+        SYNC_LOCK_TIMEOUT_MS,
+      );
+      if (!ran) {
+        this.logger.log(`YouTube sync (${trigger}) skipped — another instance holds the lock`);
+      }
+    } catch (err) {
+      // Never let a lock timeout / DB hiccup surface as an unhandled rejection
+      // on the cron path; the next tick retries.
+      this.logger.error(
+        `YouTube guarded sync (${trigger}) failed: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+    return result;
+  }
+
+  /** True if the most recently synced video was written within `ms`. */
+  private async syncedWithin(ms: number): Promise<boolean> {
+    const latest = await this.prisma.youtube_videos.findFirst({
+      orderBy: { last_synced_at: 'desc' },
+      select: { last_synced_at: true },
+    });
+    return !!latest?.last_synced_at && Date.now() - latest.last_synced_at.getTime() < ms;
   }
 
   async sync(trigger: 'cron' | 'bootstrap' | 'manual'): Promise<{ videos: number; playlists: number } | null> {
@@ -298,12 +354,28 @@ export class YoutubeSyncService {
         })
         .filter((x): x is { playlist_id: string; video_id: string; position: number } => x !== null);
 
+      // A video can legitimately appear more than once in a YouTube playlist,
+      // but (playlist_id, video_id) is the PK here. Deduplicate to the lowest
+      // position so createMany's skipDuplicates isn't silently dropping an
+      // arbitrary occurrence (which left the surviving `position`
+      // nondeterministic). item_count keeps mirroring YouTube's authoritative
+      // count rather than this row count.
+      const dedupedJoins = Array.from(
+        joins
+          .reduce((map, j) => {
+            const existing = map.get(j.video_id);
+            if (!existing || j.position < existing.position) map.set(j.video_id, j);
+            return map;
+          }, new Map<string, { playlist_id: string; video_id: string; position: number }>())
+          .values(),
+      );
+
       await this.prisma.$transaction([
         this.prisma.youtube_playlist_items.deleteMany({ where: { playlist_id: upserted.id } }),
-        ...(joins.length > 0
+        ...(dedupedJoins.length > 0
           ? [
               this.prisma.youtube_playlist_items.createMany({
-                data: joins,
+                data: dedupedJoins,
                 skipDuplicates: true,
               }),
             ]

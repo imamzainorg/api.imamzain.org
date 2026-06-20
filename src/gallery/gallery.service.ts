@@ -7,6 +7,14 @@ import { resolveTranslation } from '../common/utils/translation.util';
 import { buildPaginationMeta, resolvePagination } from '../common/utils/pagination.util';
 import { CreateGalleryImageDto, GalleryQueryDto, UpdateGalleryImageDto } from './dto/gallery.dto';
 
+// Public media variant shape — enough for the public site's `<img srcset>`.
+const MEDIA_VARIANT_SELECT = {
+  id: true,
+  width: true,
+  url: true,
+  format: true,
+} satisfies Prisma.media_variantsSelect;
+
 // List queries drop the description from translations.
 const GALLERY_LIST_SELECT = {
   media_id: true,
@@ -22,7 +30,16 @@ const GALLERY_LIST_SELECT = {
     select: { media_id: true, lang: true, title: true },
   },
   media: {
-    select: { id: true, url: true, filename: true, alt_text: true, mime_type: true, width: true, height: true },
+    select: {
+      id: true,
+      url: true,
+      filename: true,
+      alt_text: true,
+      mime_type: true,
+      width: true,
+      height: true,
+      media_variants: { select: MEDIA_VARIANT_SELECT, orderBy: { width: 'asc' } },
+    },
   },
   gallery_categories: {
     select: {
@@ -75,7 +92,7 @@ export class GalleryService {
       where: { media_id: id, deleted_at: null },
       include: {
         gallery_image_translations: true,
-        media: true,
+        media: { include: { media_variants: { select: MEDIA_VARIANT_SELECT, orderBy: { width: 'asc' } } } },
         gallery_categories: { include: { gallery_category_translations: true } },
       },
     });
@@ -89,6 +106,16 @@ export class GalleryService {
   async create(dto: CreateGalleryImageDto, userId: string, lang: string | null) {
     const media = await this.prisma.media.findUnique({ where: { id: dto.media_id } });
     if (!media) throw new NotFoundException('Media not found');
+
+    // Validate the category is live (the FK alone doesn't exclude soft-deleted
+    // categories), mirroring update() and posts.create(). Without this a new
+    // public image could be bound to a trashed category.
+    if (dto.category_id) {
+      const category = await this.prisma.gallery_categories.findFirst({
+        where: { id: dto.category_id, deleted_at: null },
+      });
+      if (!category) throw new NotFoundException('Category not found');
+    }
 
     const image = await this.prisma.$transaction(async (tx) => {
       const created = await tx.gallery_images.create({
@@ -129,7 +156,10 @@ export class GalleryService {
     const image = await this.prisma.gallery_images.findFirst({ where: { media_id: id, deleted_at: null } });
     if (!image) throw new NotFoundException('Gallery image not found');
 
-    if (dto.category_id !== undefined && dto.category_id !== image.category_id) {
+    // Gate the existence check on a TRUTHY id so an explicit `null` clears the
+    // category (reaching the disconnect branch below) instead of triggering a
+    // spurious 'Category not found'. A provided UUID is still validated live.
+    if (dto.category_id && dto.category_id !== image.category_id) {
       const category = await this.prisma.gallery_categories.findFirst({
         where: { id: dto.category_id, deleted_at: null },
       });
@@ -212,9 +242,20 @@ export class GalleryService {
     });
     if (!image) throw new NotFoundException('Deleted gallery image not found');
 
+    // If the image's category was soft-deleted while the image sat in trash,
+    // don't bring back a live image pointing at a deleted category — it would
+    // leak the trashed category's data in public reads. Detach it on restore.
+    let categoryReset: Prisma.gallery_imagesUpdateInput = {};
+    if (image.category_id) {
+      const category = await this.prisma.gallery_categories.findFirst({
+        where: { id: image.category_id, deleted_at: null },
+      });
+      if (!category) categoryReset = { gallery_categories: { disconnect: true } };
+    }
+
     await this.prisma.gallery_images.update({
       where: { media_id: id },
-      data: { deleted_at: null, updated_at: new Date() },
+      data: { deleted_at: null, updated_at: new Date(), ...categoryReset },
     });
 
     await this.audit.write({

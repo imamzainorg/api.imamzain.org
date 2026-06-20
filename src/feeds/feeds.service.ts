@@ -27,6 +27,27 @@ function postUrl(lang: string, slug: string): string {
   return `${publicSiteBase()}/${lang}/posts/${slug}`;
 }
 
+// Static pages are canonical, root-level URLs on the public site:
+// `{PUBLIC_SITE_URL}/{lang}/{slug}` (e.g. /ar/imam-zain-biography). If the
+// front-end serves them under a different path prefix, update this to match —
+// same contract as postUrl above.
+function staticPageUrl(lang: string, slug: string): string {
+  return `${publicSiteBase()}/${lang}/${slug}`;
+}
+
+function bookUrl(lang: string, slug: string): string {
+  return `${publicSiteBase()}/${lang}/books/${slug}`;
+}
+
+function paperUrl(lang: string, slug: string): string {
+  return `${publicSiteBase()}/${lang}/academic-papers/${slug}`;
+}
+
+// Audios use a single, language-agnostic canonical slug → no /{lang}/ segment.
+function audioUrl(slug: string): string {
+  return `${publicSiteBase()}/audios/${slug}`;
+}
+
 /**
  * Sitemap + RSS feed generation for the public main site.
  *
@@ -80,8 +101,97 @@ export class FeedsService {
       }
     }
 
+    // Static pages (biography, about, …) are public, indexable URLs too — emit
+    // one <url> per translation with hreflang alternates, same shape as posts.
+    const pages = await this.prisma.static_pages.findMany({
+      where: { deleted_at: null, is_published: true },
+      include: { static_page_translations: { select: { lang: true, slug: true } } },
+      orderBy: [{ display_order: 'asc' }, { id: 'asc' }],
+    });
+
+    for (const page of pages) {
+      const lastmod = (page.updated_at ?? page.created_at).toISOString();
+      const alternates = page.static_page_translations.map((t) => ({
+        lang: t.lang,
+        url: staticPageUrl(t.lang, t.slug),
+      }));
+
+      for (const t of page.static_page_translations) {
+        const url = staticPageUrl(t.lang, t.slug);
+        lines.push('  <url>');
+        lines.push(`    <loc>${xmlEscape(url)}</loc>`);
+        lines.push(`    <lastmod>${xmlEscape(lastmod)}</lastmod>`);
+        for (const alt of alternates) {
+          lines.push(
+            `    <xhtml:link rel="alternate" hreflang="${xmlEscape(alt.lang)}" href="${xmlEscape(alt.url)}"/>`,
+          );
+        }
+        lines.push('  </url>');
+      }
+    }
+
+    // Books & academic papers that have an editor slug on at least one
+    // translation get indexable URLs too. Rows with no slug stay UUID-only and
+    // are intentionally omitted (no human/SEO-friendly URL to advertise).
+    const books = await this.prisma.books.findMany({
+      where: { deleted_at: null, book_translations: { some: { slug: { not: null } } } },
+      select: { updated_at: true, created_at: true, book_translations: { select: { lang: true, slug: true } } },
+    });
+    for (const book of books) {
+      const slugged = book.book_translations.filter((t): t is { lang: string; slug: string } => !!t.slug);
+      if (slugged.length === 0) continue;
+      const lastmod = (book.updated_at ?? book.created_at).toISOString();
+      const alternates = slugged.map((t) => ({ lang: t.lang, url: bookUrl(t.lang, t.slug) }));
+      for (const t of slugged) this.pushUrlEntry(lines, bookUrl(t.lang, t.slug), lastmod, alternates);
+    }
+
+    const papers = await this.prisma.academic_papers.findMany({
+      where: { deleted_at: null, academic_paper_translations: { some: { slug: { not: null } } } },
+      select: { updated_at: true, created_at: true, academic_paper_translations: { select: { lang: true, slug: true } } },
+    });
+    for (const paper of papers) {
+      const slugged = paper.academic_paper_translations.filter((t): t is { lang: string; slug: string } => !!t.slug);
+      if (slugged.length === 0) continue;
+      const lastmod = (paper.updated_at ?? paper.created_at).toISOString();
+      const alternates = slugged.map((t) => ({ lang: t.lang, url: paperUrl(t.lang, t.slug) }));
+      for (const t of slugged) this.pushUrlEntry(lines, paperUrl(t.lang, t.slug), lastmod, alternates);
+    }
+
+    // Audios: published + slugged only. Single canonical slug, so emit one bare
+    // <url> per audio (no /{lang}/ segment, no hreflang alternates).
+    const audios = await this.prisma.audios.findMany({
+      where: { deleted_at: null, is_published: true, slug: { not: null } },
+      select: { slug: true, updated_at: true, created_at: true },
+    });
+    for (const audio of audios) {
+      if (!audio.slug) continue;
+      const lastmod = (audio.updated_at ?? audio.created_at).toISOString();
+      lines.push('  <url>');
+      lines.push(`    <loc>${xmlEscape(audioUrl(audio.slug))}</loc>`);
+      lines.push(`    <lastmod>${xmlEscape(lastmod)}</lastmod>`);
+      lines.push('  </url>');
+    }
+
     lines.push('</urlset>');
     return lines.join('\n');
+  }
+
+  /** Emit one <url> block with hreflang alternates. */
+  private pushUrlEntry(
+    lines: string[],
+    loc: string,
+    lastmod: string,
+    alternates: { lang: string; url: string }[],
+  ): void {
+    lines.push('  <url>');
+    lines.push(`    <loc>${xmlEscape(loc)}</loc>`);
+    lines.push(`    <lastmod>${xmlEscape(lastmod)}</lastmod>`);
+    for (const alt of alternates) {
+      lines.push(
+        `    <xhtml:link rel="alternate" hreflang="${xmlEscape(alt.lang)}" href="${xmlEscape(alt.url)}"/>`,
+      );
+    }
+    lines.push('  </url>');
   }
 
   /**

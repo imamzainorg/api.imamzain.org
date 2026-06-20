@@ -128,47 +128,75 @@ export class AuthService {
   async refresh(dto: RefreshTokenDto) {
     const hash = this.hashToken(dto.refresh_token);
 
-    // Atomic rotation with reuse-detection: do everything inside a single
-    // transaction. The conditional updateMany guarantees that only one
-    // concurrent caller wins the rotation race; the loser revokes the entire
-    // chain on the assumption the token is being replayed by an attacker.
-    const result = await this.prisma.$transaction(async (tx) => {
-      const stored = await tx.refresh_tokens.findUnique({
-        where: { token_hash: hash },
-        include: { users: true },
+    // Look the presented token up first, outside any rotation transaction, so
+    // that the reuse-detection lockout below can COMMIT before we throw.
+    const stored = await this.prisma.refresh_tokens.findUnique({
+      where: { token_hash: hash },
+      include: { users: true },
+    });
+
+    if (!stored || stored.expires_at < new Date()) {
+      throw new UnauthorizedException({
+        message: 'Invalid or expired refresh token',
+        code: 'AUTH_REFRESH_INVALID',
       });
+    }
 
-      if (!stored || stored.expires_at < new Date()) {
-        throw new UnauthorizedException('Invalid or expired refresh token');
-      }
-
-      // Reuse detection: a revoked token being presented again revokes the
-      // entire chain for that user, forcing all sessions to re-authenticate.
-      if (stored.revoked_at !== null) {
-        await tx.refresh_tokens.updateMany({
+    // Reuse detection: a revoked token being presented again means the chain
+    // is compromised. Revoke every live refresh token AND bump token_version
+    // so already-issued access tokens are rejected immediately (jwt.strategy
+    // enforces token_version). This lockout MUST persist before we signal the
+    // error — performing it inside a transaction that then throws would roll
+    // it back (the original bug) — so it runs in its own committed transaction,
+    // after which we invalidate the JWT cache and only then throw.
+    if (stored.revoked_at !== null) {
+      await this.prisma.$transaction([
+        this.prisma.refresh_tokens.updateMany({
           where: { user_id: stored.user_id, revoked_at: null },
           data: { revoked_at: new Date() },
-        });
-        this.logger.warn(`Refresh-token reuse detected for user ${stored.user_id}; chain revoked`);
-        throw new UnauthorizedException('Refresh token reuse detected');
-      }
+        }),
+        this.prisma.users.update({
+          where: { id: stored.user_id },
+          data: { token_version: { increment: 1 } },
+        }),
+      ]);
+      invalidateJwtUserCache(stored.user_id);
+      this.logger.warn(
+        `Refresh-token reuse detected for user ${stored.user_id}; chain revoked and sessions invalidated`,
+      );
+      throw new UnauthorizedException({
+        message: 'Refresh token reuse detected',
+        code: 'AUTH_TOKEN_REUSED',
+      });
+    }
 
-      if (stored.users.deleted_at !== null) {
-        throw new UnauthorizedException('Account is disabled');
-      }
+    if (stored.users.deleted_at !== null) {
+      throw new UnauthorizedException({
+        message: 'Account is disabled',
+        code: 'AUTH_ACCOUNT_DISABLED',
+      });
+    }
 
+    // Atomic rotation: the conditional updateMany guarantees that only one
+    // concurrent caller wins the rotation race; a loser sees count !== 1.
+    const result = await this.prisma.$transaction(async (tx) => {
       const revoked = await tx.refresh_tokens.updateMany({
         where: { id: stored.id, revoked_at: null },
         data: { revoked_at: new Date() },
       });
-      // Two concurrent rotations: only one updateMany affects a row.
       if (revoked.count !== 1) {
-        throw new UnauthorizedException('Refresh token already rotated');
+        throw new UnauthorizedException({
+          message: 'Refresh token already rotated',
+          code: 'AUTH_REFRESH_ALREADY_ROTATED',
+        });
       }
 
       const fullUser = await this.findUserWithPermissions(tx, { id: stored.user_id });
       if (!fullUser) {
-        throw new UnauthorizedException('Account is disabled');
+        throw new UnauthorizedException({
+          message: 'Account is disabled',
+          code: 'AUTH_ACCOUNT_DISABLED',
+        });
       }
 
       const permissions = this.flattenPermissions(fullUser);

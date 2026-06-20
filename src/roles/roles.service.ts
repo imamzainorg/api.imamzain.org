@@ -5,6 +5,7 @@ import { AuditService } from '../common/audit/audit.service';
 import { AUDIT_ACTIONS } from '../common/audit/audit.actions';
 import { buildPaginationMeta } from '../common/utils/pagination.util';
 import { resolveTranslation } from '../common/utils/translation.util';
+import { invalidateJwtUserCache } from '../auth/strategies/jwt.strategy';
 import { AssignPermissionDto, CreateRoleDto, UpdateRoleDto } from './dto/role.dto';
 
 const ROLE_DETAIL_INCLUDE = {
@@ -47,6 +48,28 @@ export class RolesService {
     private readonly prisma: PrismaService,
     private readonly audit: AuditService,
   ) {}
+
+  /**
+   * A change to a role's permission set alters the effective permissions of
+   * every user holding that role. Permissions are baked into outstanding
+   * access-token JWTs, so bump token_version for each affected user and drop
+   * their JWT cache entry — the change then takes effect on their next request
+   * (and refresh re-derives the corrected permission set from the DB).
+   */
+  private async invalidateRoleHolders(roleId: string): Promise<void> {
+    const holders = await this.prisma.user_roles.findMany({
+      where: { role_id: roleId },
+      select: { user_id: true },
+    });
+    if (holders.length === 0) return;
+
+    const userIds = holders.map((h) => h.user_id);
+    await this.prisma.users.updateMany({
+      where: { id: { in: userIds } },
+      data: { token_version: { increment: 1 } },
+    });
+    for (const id of userIds) invalidateJwtUserCache(id);
+  }
 
   private async hydrateRole(id: string, lang: string | null) {
     const role = await this.prisma.roles.findUnique({
@@ -184,6 +207,8 @@ export class RolesService {
       update: {},
     });
 
+    await this.invalidateRoleHolders(roleId);
+
     await this.audit.write({
       actorId,
       action: AUDIT_ACTIONS.PERMISSION_ASSIGNED_TO_ROLE,
@@ -205,6 +230,8 @@ export class RolesService {
     if (result.count === 0) {
       throw new NotFoundException('Permission is not assigned to this role');
     }
+
+    await this.invalidateRoleHolders(roleId);
 
     await this.audit.write({
       actorId,

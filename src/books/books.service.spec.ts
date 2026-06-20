@@ -239,10 +239,13 @@ describe("BooksService", () => {
   describe("softDelete", () => {
     it("sets deleted_at and frees up the isbn", async () => {
       prisma.books.findFirst.mockResolvedValue(baseBook);
+      // softDelete now suffixes per-translation slugs alongside the ISBN, so it
+      // runs inside a transaction — drive the callback with the mock tx client.
+      prisma.$transaction.mockImplementation((cb: any) => cb(mockTx));
 
       const result = await service.softDelete("book-1", "user-1");
 
-      expect(prisma.books.update).toHaveBeenCalledWith(
+      expect(mockTx.books.update).toHaveBeenCalledWith(
         expect.objectContaining({
           data: expect.objectContaining({
             deleted_at: expect.any(Date),

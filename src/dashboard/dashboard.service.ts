@@ -15,6 +15,12 @@ interface AggregatedCounts {
   posts_recent: bigint;
 }
 
+interface AggregatedAudioCounts {
+  audios_total: bigint;
+  audios_published: bigint;
+  audios_draft: bigint;
+}
+
 /**
  * Aggregates the small set of counts a CMS home screen needs in one request.
  *
@@ -37,6 +43,7 @@ export class DashboardService {
 
     const [
       postCounts,
+      audioCounts,
       booksTotal,
       papersTotal,
       galleryTotal,
@@ -63,6 +70,13 @@ export class DashboardService {
           COUNT(*) FILTER (WHERE deleted_at IS NULL AND is_published = FALSE) AS posts_draft,
           COUNT(*) FILTER (WHERE deleted_at IS NULL AND created_at >= ${recentSince}) AS posts_recent
         FROM posts
+      `,
+      this.prisma.$queryRaw<AggregatedAudioCounts[]>`
+        SELECT
+          COUNT(*) FILTER (WHERE deleted_at IS NULL) AS audios_total,
+          COUNT(*) FILTER (WHERE deleted_at IS NULL AND is_published = TRUE) AS audios_published,
+          COUNT(*) FILTER (WHERE deleted_at IS NULL AND is_published = FALSE) AS audios_draft
+        FROM audios
       `,
       this.prisma.books.count({ where: { deleted_at: null } }),
       this.prisma.academic_papers.count({ where: { deleted_at: null } }),
@@ -94,6 +108,7 @@ export class DashboardService {
     ]);
 
     const postRow = postCounts[0];
+    const audioRow = audioCounts[0];
 
     const response = {
       message: 'Dashboard stats',
@@ -104,6 +119,11 @@ export class DashboardService {
           published: Number(postRow?.posts_published ?? 0),
           drafts: Number(postRow?.posts_draft ?? 0),
           recent: Number(postRow?.posts_recent ?? 0),
+        },
+        audios: {
+          total: Number(audioRow?.audios_total ?? 0),
+          published: Number(audioRow?.audios_published ?? 0),
+          drafts: Number(audioRow?.audios_draft ?? 0),
         },
         library: {
           books: booksTotal,

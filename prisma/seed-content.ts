@@ -15,7 +15,7 @@ import * as fs from 'fs';
 
 const prisma = new PrismaClient();
 
-const DATA_DIR = path.join(__dirname, '../../../Web/imamzain-website/src/data');
+const DATA_DIR = path.join(__dirname, '../../imamzain.org/src/data');
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -48,10 +48,6 @@ function normalizeUrl(url: string): string {
   return `https://cdn.imamzain.org/${u}`;
 }
 
-function slugToTitle(slug: string): string {
-  return slug.split('-').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
-}
-
 function safeParseDate(dateStr: string | null | undefined): Date | null {
   if (!dateStr) return null;
   const cleaned = dateStr.trim().replace(/\s+/g, '');
@@ -75,62 +71,37 @@ async function upsertMedia(url: string, altText?: string): Promise<string> {
   return created.id;
 }
 
-// ── Category translation lookup tables ───────────────────────────────────────
+// ── Category Arabic-slug maps ─────────────────────────────────────────────────
+// Mapping is required: unmapped Arabic names throw, so new categories surface
+// loudly rather than silently producing empty slugs.
 
-const BOOK_CAT_MAP: Record<string, { ar_slug: string; en: string; en_slug: string }> = {
-  'الصحيفة السجادية':              { ar_slug: 'al-sahifa-al-sajjadiyya',    en: 'Al-Sahifa Al-Sajjadiyya',                 en_slug: 'al-sahifa-al-sajjadiyya' },
-  'الإصدارات':                     { ar_slug: 'al-isdaraat',                 en: 'Publications',                            en_slug: 'publications' },
-  'ما كتب عن الإمام زين العابدين': { ar_slug: 'about-imam-zain-al-abidin',   en: 'About Imam Zain Al-Abidin',               en_slug: 'about-imam-zain-al-abidin' },
-  'رسالة الحقوق':                  { ar_slug: 'risala-al-huquq',             en: 'Risala Al-Huquq (Treatise of Rights)',    en_slug: 'risala-al-huquq' },
-  'السيرة':                        { ar_slug: 'al-sira',                     en: 'Biography',                               en_slug: 'biography' },
+const BOOK_CAT_SLUG: Record<string, string> = {
+  'الصحيفة السجادية':              'al-sahifa-al-sajjadiyya',
+  'الإصدارات':                     'al-isdaraat',
+  'ما كتب عن الإمام زين العابدين': 'about-imam-zain-al-abidin',
+  'رسالة الحقوق':                  'risala-al-huquq',
 };
 
-const POST_CAT_MAP: Record<string, { ar_slug: string; en: string; en_slug: string }> = {
-  'نشاطات': { ar_slug: 'nashatat',  en: 'Activities',  en_slug: 'activities' },
-  'أخبار':  { ar_slug: 'akhbar',    en: 'News',        en_slug: 'news' },
-  'مقالات': { ar_slug: 'maqalat',   en: 'Articles',    en_slug: 'articles' },
-  'بيانات': { ar_slug: 'bayanat',   en: 'Statements',  en_slug: 'statements' },
+const POST_CAT_SLUG: Record<string, string> = {
+  'نشاطات':          'nashatat',
+  'فعاليات':         'faaliyat',
+  'مجالس':           'majalis',
+  'العتبة الحسينية': 'al-ataba-al-husayniyya',
 };
 
-const GALLERY_CAT_MAP: Record<string, { ar_slug: string; en: string; en_slug: string }> = {
-  'ندوات':   { ar_slug: 'nadawat',  en: 'Conferences & Seminars', en_slug: 'conferences-seminars' },
-  'فعاليات': { ar_slug: 'faaliyat', en: 'Events',                 en_slug: 'events' },
-  'زيارات':  { ar_slug: 'ziyarat',  en: 'Visits',                 en_slug: 'visits' },
-  'مراسيم':  { ar_slug: 'marasim',  en: 'Ceremonies',             en_slug: 'ceremonies' },
-  'معارض':   { ar_slug: 'maarid',   en: 'Exhibitions',            en_slug: 'exhibitions' },
-  'برامج':   { ar_slug: 'baramij',  en: 'Programs',               en_slug: 'programs' },
+const GALLERY_CAT_SLUG: Record<string, string> = {
+  'ندوات':   'nadawat',
+  'نشاطات':  'nashatat',
+  'اخبار':   'akhbar',
+  'مسابقات': 'musabaqat',
+  'مناسبات': 'munasabat',
 };
 
 const ACADEMIC_CATS = [
-  { key: 'conference', ar: 'بحوث المؤتمرات العلمية',   ar_slug: 'buhuth-al-mutamarat', en: 'Conference Research Papers',  en_slug: 'conference-research-papers' },
-  { key: 'journals',   ar: 'بحوث في دوريات علمية',     ar_slug: 'buhuth-fi-dawriyyat', en: 'Academic Journal Articles',   en_slug: 'academic-journal-articles' },
-  { key: 'student',    ar: 'رسائل جامعية',              ar_slug: 'rasail-jamiiyya',     en: 'University Theses',           en_slug: 'university-theses' },
+  { key: 'conference', ar: 'بحوث المؤتمرات العلمية', ar_slug: 'buhuth-al-mutamarat' },
+  { key: 'journals',   ar: 'بحوث في دوريات علمية',   ar_slug: 'buhuth-fi-dawriyyat' },
+  { key: 'student',    ar: 'رسائل جامعية',           ar_slug: 'rasail-jamiiyya' },
 ];
-
-// ── English title overrides for known Arabic books ────────────────────────────
-
-const BOOK_TITLE_EN: Record<string, string> = {
-  'al-faraid-al-tarifa':                                       "Al-Fara'id Al-Tarifa: Commentary on Al-Sahifa Al-Sharifa",
-  'al-fawaid-al-sharifa-part-1':                               "Al-Fawa'id Al-Sharifa: Commentary on Al-Sahifa (Part 1)",
-  'al-fawaid-al-sharifa-part-2':                               "Al-Fawa'id Al-Sharifa: Commentary on Al-Sahifa (Part 2)",
-  'riadh-al-salqeen':                                          "Benefits of Riyad Al-Salikeen",
-  'al-sharh-al-kabeer':                                        "Al-Sharh Al-Kabeer (The Great Commentary)",
-  'sirah-al-imam-al-sajad':                                    "Biography of Imam Al-Sajjad (Peace Be Upon Him)",
-  'foundational-intellectual-methodology-legal-dimension':     "Intellectual and Methodological Foundations of Imam Al-Sajjad – Legal Dimension",
-  'building-inner-psychological-security':                     "Building Inner Psychological Security According to Imam Al-Sajjad",
-  'emancipation-imam-sajjad-president-lincoln':                "Emancipation of Slaves Between Imam Al-Sajjad (P.B.U.H.) and President Lincoln",
-  'canticles-of-the-pious':                                    "Canticles of the Pious (Tatratil Al-Qaniteen)",
-  'thirty-lessons-from-abu-hamza':                             "Thirty Lessons from the Prayer of Abu Hamza Al-Thumali",
-  'first-international-scientific-conference-guide':           "Guide to the First International Scientific Conference",
-  'insights-on-rights-treatise-part-1':                        "Glimpses from Risala Al-Huquq of Imam Al-Sajjad – Part 1",
-  'insights-on-rights-treatise-part-2':                        "Glimpses from Risala Al-Huquq of Imam Al-Sajjad – Part 2",
-  'insights-on-rights-treatise-part-3':                        "Glimpses from Risala Al-Huquq of Imam Al-Sajjad – Part 3",
-  'insights-on-rights-treatise-part-4':                        "Glimpses from Risala Al-Huquq of Imam Al-Sajjad – Part 4",
-  'insights-on-rights-treatise-part-5':                        "Glimpses from Risala Al-Huquq of Imam Al-Sajjad – Part 5",
-  'political-principles-of-imam-sajjad':                       "Imamate Political Principles According to Imam Al-Sajjad",
-  'foundational-intellectual-methodology-social-dimension':    "Intellectual and Methodological Foundations of Imam Al-Sajjad – Social Dimension",
-  'asaleeb-al-islahat-al-ijtimaieh':                           "Methods of Social Reform According to Imam Al-Sajjad",
-};
 
 // ── JSON types ────────────────────────────────────────────────────────────────
 
@@ -173,47 +144,61 @@ type StudentJson = {
   publishedYear?: string; pdfUrl?: string;
 };
 
+type HadithJson = { id: number; content: string };
+
+type StaticPageJson = { title: string; slug: string; content: string };
+
+type StoreJson = {
+  city: string;
+  sellpoints: {
+    id: number;
+    name: string;
+    location: string;
+    phone?: string;
+    gps?: string;
+    gpsLink?: string;
+  }[];
+};
+
 // ── Category helpers ──────────────────────────────────────────────────────────
 
 /**
- * Find-or-create a category and its ar/en translations, using the Arabic slug as
+ * Find-or-create a category and its Arabic translation, using the Arabic slug as
  * the idempotency key. Returns the category UUID.
  */
 async function findOrCreateCategory(
   tablePrefix: 'book' | 'post' | 'gallery' | 'academic_paper',
   arName: string,
   arSlug: string,
-  enName: string,
-  enSlug: string,
 ): Promise<string> {
-  // Each prefix maps to different Prisma models
   const translationModel = `${tablePrefix}_category_translations` as
     | 'book_category_translations'
     | 'post_category_translations'
     | 'gallery_category_translations'
     | 'academic_paper_category_translations';
 
-  // Check if this category was already seeded (by AR slug + lang)
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const existing = await (prisma[translationModel] as any).findFirst({
     where: { lang: 'ar', slug: arSlug },
   });
   if (existing) return existing.category_id as string;
 
-  // Create parent category
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const cat = await (prisma[`${tablePrefix}_categories` as keyof typeof prisma] as any).create({ data: {} });
   const catId: string = cat.id;
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  await (prisma[translationModel] as any).createMany({
-    data: [
-      { category_id: catId, lang: 'ar', title: arName, slug: arSlug },
-      { category_id: catId, lang: 'en', title: enName, slug: enSlug },
-    ],
+  await (prisma[translationModel] as any).create({
+    data: { category_id: catId, lang: 'ar', title: arName, slug: arSlug },
   });
 
   return catId;
+}
+
+function requireSlug(map: Record<string, string>, arName: string, kind: string): string {
+  const slug = map[arName];
+  if (!slug) throw new Error(`Unmapped ${kind} category "${arName}" — add it to the ${kind} slug map in seed-content.ts`);
+  return slug;
 }
 
 // ── Books ─────────────────────────────────────────────────────────────────────
@@ -221,17 +206,10 @@ async function findOrCreateCategory(
 async function seedBooks(): Promise<void> {
   const books = loadJson<BookJson[]>('books.json');
 
-  // Build category map on the fly
-  const catCache = new Map<string, string>(); // arName → UUID
-
+  const catCache = new Map<string, string>();
   async function getBookCatId(arName: string): Promise<string> {
     if (catCache.has(arName)) return catCache.get(arName)!;
-    const m = BOOK_CAT_MAP[arName] ?? {
-      ar_slug: arName.replace(/[\s()\[\]]+/g, '-').replace(/[^\w-]/g, '').replace(/-+/g, '-').toLowerCase(),
-      en: arName,
-      en_slug: arName.replace(/[\s()\[\]]+/g, '-').replace(/[^\w-]/g, '').replace(/-+/g, '-').toLowerCase(),
-    };
-    const id = await findOrCreateCategory('book', arName, m.ar_slug, m.en, m.en_slug);
+    const id = await findOrCreateCategory('book', arName, requireSlug(BOOK_CAT_SLUG, arName, 'book'));
     catCache.set(arName, id);
     return id;
   }
@@ -269,14 +247,16 @@ async function seedBooks(): Promise<void> {
       },
     });
 
-    const enTitle = BOOK_TITLE_EN[b.slug] ?? slugToTitle(b.slug);
-    const arSeries = b.series ?? null;
-
-    await prisma.book_translations.createMany({
-      data: [
-        { book_id: book.id, lang: 'ar', title: b.title ?? '', author: b.author ?? null, publisher: b.printHouse ?? null, series: arSeries, is_default: true },
-        { book_id: book.id, lang: 'en', title: enTitle, author: b.author ?? null, publisher: b.printHouse ?? null, series: arSeries, is_default: false },
-      ],
+    await prisma.book_translations.create({
+      data: {
+        book_id: book.id,
+        lang: 'ar',
+        title: b.title ?? '',
+        author: b.author ?? null,
+        publisher: b.printHouse ?? null,
+        series: b.series ?? null,
+        is_default: true,
+      },
     });
 
     created++;
@@ -291,15 +271,9 @@ async function seedPosts(): Promise<void> {
   const posts = loadJson<PostJson[]>('posts.json');
 
   const catCache = new Map<string, string>();
-
   async function getPostCatId(arName: string): Promise<string> {
     if (catCache.has(arName)) return catCache.get(arName)!;
-    const m = POST_CAT_MAP[arName] ?? {
-      ar_slug: arName.replace(/[\s()\[\]]+/g, '-').replace(/[^\w-]/g, '').replace(/-+/g, '-').toLowerCase(),
-      en: arName,
-      en_slug: arName.replace(/[\s()\[\]]+/g, '-').replace(/[^\w-]/g, '').replace(/-+/g, '-').toLowerCase(),
-    };
-    const id = await findOrCreateCategory('post', arName, m.ar_slug, m.en, m.en_slug);
+    const id = await findOrCreateCategory('post', arName, requireSlug(POST_CAT_SLUG, arName, 'post'));
     catCache.set(arName, id);
     return id;
   }
@@ -317,10 +291,9 @@ async function seedPosts(): Promise<void> {
     if (existingTranslation) { skipped++; continue; }
 
     const catName = p.category?.trim() ?? '';
-    const categoryId = catName ? await getPostCatId(catName) : null;
-    if (!categoryId) { skipped++; continue; }
+    if (!catName) { skipped++; continue; }
+    const categoryId = await getPostCatId(catName);
 
-    // Optional cover image
     let coverId: string | null = null;
     if (p.image) {
       const imgUrl = normalizeUrl(p.image);
@@ -337,14 +310,18 @@ async function seedPosts(): Promise<void> {
       },
     });
 
-    await prisma.post_translations.createMany({
-      data: [
-        { post_id: post.id, lang: 'ar', title: p.title, summary: p.summary ?? null, body: p.content, slug: p.slug, is_default: true },
-        { post_id: post.id, lang: 'en', title: slugToTitle(p.slug), summary: p.summary ?? null, body: p.content, slug: p.slug, is_default: false },
-      ],
+    await prisma.post_translations.create({
+      data: {
+        post_id: post.id,
+        lang: 'ar',
+        title: p.title,
+        summary: p.summary ?? null,
+        body: p.content,
+        slug: p.slug,
+        is_default: true,
+      },
     });
 
-    // Attachments
     for (let i = 0; i < (p.attachments?.length ?? 0); i++) {
       const att = p.attachments![i];
       const attUrl = normalizeUrl(att.path);
@@ -369,15 +346,9 @@ async function seedGallery(): Promise<void> {
   const images = loadJson<GalleryJson[]>('gallery.json');
 
   const catCache = new Map<string, string>();
-
   async function getGalleryCatId(arName: string): Promise<string> {
     if (catCache.has(arName)) return catCache.get(arName)!;
-    const m = GALLERY_CAT_MAP[arName] ?? {
-      ar_slug: arName.replace(/[\s()\[\]]+/g, '-').replace(/[^\w-]/g, '').replace(/-+/g, '-').toLowerCase(),
-      en: arName,
-      en_slug: arName.replace(/[\s()\[\]]+/g, '-').replace(/[^\w-]/g, '').replace(/-+/g, '-').toLowerCase(),
-    };
-    const id = await findOrCreateCategory('gallery', arName, m.ar_slug, m.en, m.en_slug);
+    const id = await findOrCreateCategory('gallery', arName, requireSlug(GALLERY_CAT_SLUG, arName, 'gallery'));
     catCache.set(arName, id);
     return id;
   }
@@ -391,7 +362,6 @@ async function seedGallery(): Promise<void> {
 
     const mediaId = await upsertMedia(imgUrl, g.name);
 
-    // gallery_images.media_id is the PK — idempotent by design
     const existingGalleryImage = await prisma.gallery_images.findUnique({ where: { media_id: mediaId } });
     if (existingGalleryImage) { skipped++; continue; }
 
@@ -410,11 +380,8 @@ async function seedGallery(): Promise<void> {
 
     const title = g.name ?? extractFilename(imgUrl);
 
-    await prisma.gallery_image_translations.createMany({
-      data: [
-        { media_id: mediaId, lang: 'ar', title, description: g.description ?? null },
-        { media_id: mediaId, lang: 'en', title, description: g.description ?? null },
-      ],
+    await prisma.gallery_image_translations.create({
+      data: { media_id: mediaId, lang: 'ar', title, description: g.description ?? null },
     });
 
     created++;
@@ -428,7 +395,7 @@ async function seedGallery(): Promise<void> {
 async function seedAcademicCategories(): Promise<Map<string, string>> {
   const catMap = new Map<string, string>();
   for (const c of ACADEMIC_CATS) {
-    const id = await findOrCreateCategory('academic_paper', c.ar, c.ar_slug, c.en, c.en_slug);
+    const id = await findOrCreateCategory('academic_paper', c.ar, c.ar_slug);
     catMap.set(c.key, id);
   }
   console.log(`  ✓ ${ACADEMIC_CATS.length} academic paper categories`);
@@ -441,7 +408,6 @@ async function seedResearchPapers(categoryId: string): Promise<void> {
   let skipped = 0;
 
   for (const p of papers) {
-    // Idempotency: check by PDF URL
     if (p.pdfUrl) {
       const existing = await prisma.academic_papers.findFirst({ where: { pdf_url: p.pdfUrl, category_id: categoryId } });
       if (existing) { skipped++; continue; }
@@ -455,22 +421,17 @@ async function seedResearchPapers(categoryId: string): Promise<void> {
       ? p.author.split(/[،,–-]+/).map(a => a.trim()).filter(Boolean)
       : [];
 
-    await prisma.academic_paper_translations.createMany({
-      data: [
-        {
-          paper_id: paper.id, lang: 'ar', title: p.title ?? '', abstract: p.abstract ?? null,
-          authors, keywords: [], publication_venue: p.conference ?? null, is_default: true,
-        },
-        {
-          paper_id: paper.id, lang: 'en',
-          title: p.slug ? slugToTitle(p.slug) : p.title ?? '',
-          abstract: null, authors: [], keywords: [],
-          publication_venue: p.conference
-            ? "First International Scientific Conference on the Educational and Social Dimensions of Imam Zain Al-Abidin's Legacy"
-            : null,
-          is_default: false,
-        },
-      ],
+    await prisma.academic_paper_translations.create({
+      data: {
+        paper_id: paper.id,
+        lang: 'ar',
+        title: p.title ?? '',
+        abstract: p.abstract ?? null,
+        authors,
+        keywords: [],
+        publication_venue: p.conference ?? null,
+        is_default: true,
+      },
     });
 
     created++;
@@ -498,11 +459,18 @@ async function seedJournals(categoryId: string): Promise<void> {
     const arTitle = t?.title?.trim() ?? '';
     const authors = (t?.authors ?? []).filter(Boolean);
 
-    await prisma.academic_paper_translations.createMany({
-      data: [
-        { paper_id: paper.id, lang: 'ar', title: arTitle, abstract: null, authors, keywords: [], publication_venue: t?.publicationVenue ?? null, page_count: t?.pagenam ?? null, is_default: true },
-        { paper_id: paper.id, lang: 'en', title: arTitle, abstract: null, authors: [], keywords: [], publication_venue: t?.publicationVenue ?? null, page_count: t?.pagenam ?? null, is_default: false },
-      ],
+    await prisma.academic_paper_translations.create({
+      data: {
+        paper_id: paper.id,
+        lang: 'ar',
+        title: arTitle,
+        abstract: null,
+        authors,
+        keywords: [],
+        publication_venue: t?.publicationVenue ?? null,
+        page_count: t?.pagenam ?? null,
+        is_default: true,
+      },
     });
 
     created++;
@@ -531,19 +499,279 @@ async function seedStudentTheses(categoryId: string): Promise<void> {
     const authors = (t?.authors ?? []).filter(Boolean);
     const degreeLabel = t?.category ?? null; // e.g. "بكالوريوس", "دكتوراه"
     const venue = t?.publicationVenue ?? null;
-    const enVenue = degreeLabel ? `${degreeLabel} Thesis — ${venue ?? ''}`.replace(/\s+/g, ' ').trim() : venue ?? null;
+    const arVenue = degreeLabel ? `${degreeLabel} — ${venue ?? ''}`.replace(/\s+/g, ' ').trim() : venue ?? null;
 
-    await prisma.academic_paper_translations.createMany({
-      data: [
-        { paper_id: paper.id, lang: 'ar', title: arTitle, abstract: null, authors, keywords: [], publication_venue: venue, page_count: t?.pagenam ?? null, is_default: true },
-        { paper_id: paper.id, lang: 'en', title: arTitle, abstract: null, authors: [], keywords: [], publication_venue: enVenue, page_count: t?.pagenam ?? null, is_default: false },
-      ],
+    await prisma.academic_paper_translations.create({
+      data: {
+        paper_id: paper.id,
+        lang: 'ar',
+        title: arTitle,
+        abstract: null,
+        authors,
+        keywords: [],
+        publication_venue: arVenue,
+        page_count: t?.pagenam ?? null,
+        is_default: true,
+      },
     });
 
     created++;
   }
 
   console.log(`  ✓ ${created} student theses seeded, ${skipped} skipped`);
+}
+
+// ── Daily hadiths ─────────────────────────────────────────────────────────────
+
+async function seedHadiths(): Promise<void> {
+  const hadiths = loadJson<HadithJson[]>('hadiths.json');
+  let created = 0;
+  let skipped = 0;
+
+  for (let i = 0; i < hadiths.length; i++) {
+    const h = hadiths[i];
+    const content = h.content?.trim();
+    if (!content) { skipped++; continue; }
+
+    // Idempotency: skip if any hadith already has this exact Arabic content
+    const existing = await prisma.daily_hadith_translations.findFirst({
+      where: { lang: 'ar', content },
+    });
+    if (existing) { skipped++; continue; }
+
+    const hadith = await prisma.daily_hadiths.create({
+      data: { display_order: i, is_active: true },
+    });
+
+    await prisma.daily_hadith_translations.create({
+      data: { hadith_id: hadith.id, lang: 'ar', content, is_default: true },
+    });
+
+    created++;
+  }
+
+  console.log(`  ✓ ${created} hadiths seeded, ${skipped} skipped`);
+}
+
+// ── Static pages ──────────────────────────────────────────────────────────────
+
+async function seedStaticPages(): Promise<void> {
+  const pages = loadJson<StaticPageJson[]>('imamzain.json');
+  let created = 0;
+  let skipped = 0;
+
+  for (let i = 0; i < pages.length; i++) {
+    const p = pages[i];
+    if (!p.slug) { skipped++; continue; }
+
+    // Idempotency: Arabic slug is the natural key
+    const existing = await prisma.static_page_translations.findFirst({
+      where: { lang: 'ar', slug: p.slug },
+    });
+    if (existing) { skipped++; continue; }
+
+    const page = await prisma.static_pages.create({
+      data: { display_order: i, is_published: true },
+    });
+
+    await prisma.static_page_translations.create({
+      data: {
+        page_id: page.id,
+        lang: 'ar',
+        title: p.title ?? '',
+        slug: p.slug,
+        body: p.content ?? '',
+        is_default: true,
+      },
+    });
+
+    created++;
+  }
+
+  console.log(`  ✓ ${created} static pages seeded, ${skipped} skipped`);
+}
+
+// ── Stores ────────────────────────────────────────────────────────────────────
+
+async function seedStores(): Promise<void> {
+  const stores = loadJson<StoreJson[]>('store-locations.json');
+  let created = 0;
+  let skipped = 0;
+  let createdLocations = 0;
+
+  for (let i = 0; i < stores.length; i++) {
+    const s = stores[i];
+    const cityName = s.city?.trim();
+    if (!cityName) { skipped++; continue; }
+
+    // Idempotency: skip the entire store if this Arabic city name already exists
+    const existing = await prisma.store_translations.findFirst({
+      where: { lang: 'ar', city_name: cityName },
+    });
+    if (existing) { skipped++; continue; }
+
+    const store = await prisma.stores.create({ data: { display_order: i } });
+    await prisma.store_translations.create({
+      data: { store_id: store.id, lang: 'ar', city_name: cityName },
+    });
+
+    for (let j = 0; j < (s.sellpoints?.length ?? 0); j++) {
+      const sp = s.sellpoints[j];
+      const name = sp.name?.trim();
+      if (!name) continue;
+
+      const loc = await prisma.store_locations.create({
+        data: {
+          store_id: store.id,
+          phone: sp.phone?.trim() || null,
+          gps_embed_url: sp.gps?.trim() || null,
+          gps_link: sp.gpsLink?.trim() || null,
+          display_order: j,
+        },
+      });
+      await prisma.store_location_translations.create({
+        data: {
+          location_id: loc.id,
+          lang: 'ar',
+          name,
+          address: sp.location?.trim() ?? '',
+        },
+      });
+      createdLocations++;
+    }
+
+    created++;
+  }
+
+  console.log(`  ✓ ${created} stores (${createdLocations} locations) seeded, ${skipped} skipped`);
+}
+
+// ── Audios ──────────────────────────────────────────────────────────────────
+// i18n: each audio gets an `ar` audio_translation (title). Speaker is a
+// first-class entity, deduped by its Arabic name (an `ar` speaker_translation).
+// Idempotency key for audios: audio_url (unique) — re-running updates the
+// language-agnostic analysis fields in place and never duplicates. On update we
+// deliberately leave CMS-owned fields (is_published, slug, deleted_at) untouched
+// so operator edits persist across re-seeds.
+
+type AudioJson = {
+  id: number;
+  title: string;
+  speaker: string;
+  audio: string; // mp3 CDN url -> audio_url
+  pdf?: string; // -> pdf_url (absent in the current export)
+  durationSeconds?: number; // -> duration_seconds
+  sizeMB?: number; // -> size_mb
+  peaks?: number[]; // 300 floats -> peaks (jsonb)
+};
+
+// The API caps peaks at 300 (DTO ArrayMaxSize), but the seed writes through
+// Prisma and bypasses that validation. Older AudioItemAnalyzed.json exports
+// carry 423–1500-point arrays; block-max downsample them to ≤300 here so seeded
+// rows honour the same contract the detail endpoint advertises. Arrays already
+// ≤300 (the current extractor emits exactly 300) pass through untouched.
+const MAX_SEED_PEAKS = 300;
+function downsamplePeaks(peaks: number[] | undefined): number[] | undefined {
+  if (!Array.isArray(peaks) || peaks.length === 0) return undefined;
+  if (peaks.length <= MAX_SEED_PEAKS) return peaks;
+  const block = peaks.length / MAX_SEED_PEAKS;
+  const out: number[] = [];
+  for (let i = 0; i < MAX_SEED_PEAKS; i++) {
+    const start = Math.floor(i * block);
+    const end = Math.floor((i + 1) * block);
+    let max = 0;
+    for (let j = start; j < end && j < peaks.length; j++) {
+      const v = Math.abs(peaks[j]);
+      if (v > max) max = v;
+    }
+    out.push(parseFloat(max.toFixed(4)));
+  }
+  return out;
+}
+
+/**
+ * Find or create a speaker by its Arabic name. Caches within a run so the same
+ * lecturer across many audios resolves to one row. Exact-name match only —
+ * near-duplicate spellings produce distinct speakers an admin can merge later.
+ */
+async function getOrCreateSpeaker(cache: Map<string, string>, rawName: string): Promise<string | null> {
+  const name = rawName?.trim();
+  if (!name) return null;
+  const cached = cache.get(name);
+  if (cached) return cached;
+
+  const existing = await prisma.speaker_translations.findFirst({
+    where: { lang: 'ar', name, speakers: { deleted_at: null } },
+    select: { speaker_id: true },
+  });
+  if (existing) {
+    cache.set(name, existing.speaker_id);
+    return existing.speaker_id;
+  }
+
+  const speaker = await prisma.speakers.create({
+    data: { speaker_translations: { create: { lang: 'ar', name, is_default: true } } },
+  });
+  cache.set(name, speaker.id);
+  return speaker.id;
+}
+
+async function seedAudios(): Promise<void> {
+  const items = loadJson<AudioJson[]>('AudioItemAnalyzed.json');
+  const speakerCache = new Map<string, string>();
+  let created = 0;
+  let updated = 0;
+  let skipped = 0;
+
+  for (const a of items) {
+    if (!a.title?.trim() || !a.audio?.trim()) {
+      skipped++;
+      continue;
+    }
+    const audioUrl = normalizeUrl(a.audio);
+    if (!audioUrl) {
+      skipped++;
+      continue;
+    }
+
+    const speakerId = await getOrCreateSpeaker(speakerCache, a.speaker);
+    const title = a.title.trim();
+
+    // Language-agnostic columns refreshed on every re-seed. audio_url is the
+    // idempotency key (unique) — re-running updates in place, never duplicates.
+    const analysis = {
+      speaker_id: speakerId,
+      pdf_url: a.pdf ? normalizeUrl(a.pdf) : null,
+      duration_seconds: a.durationSeconds ?? null,
+      size_mb: a.sizeMB ?? null,
+      peaks: downsamplePeaks(a.peaks), // jsonb; ≤300 points (undefined => null)
+    };
+
+    const existing = await prisma.audios.findUnique({ where: { audio_url: audioUrl }, select: { id: true } });
+
+    if (existing) {
+      await prisma.audios.update({ where: { id: existing.id }, data: analysis });
+      // Refresh the Arabic title but never clobber an editor-set slug.
+      await prisma.audio_translations.upsert({
+        where: { audio_id_lang: { audio_id: existing.id, lang: 'ar' } },
+        create: { audio_id: existing.id, lang: 'ar', title, is_default: true },
+        update: { title },
+      });
+      updated++;
+    } else {
+      await prisma.audios.create({
+        data: {
+          audio_url: audioUrl,
+          is_published: true,
+          ...analysis,
+          audio_translations: { create: { lang: 'ar', title, is_default: true } },
+        },
+      });
+      created++;
+    }
+  }
+
+  console.log(`  ✓ ${created} audios seeded, ${updated} updated, ${skipped} skipped (${speakerCache.size} speakers)`);
 }
 
 // ── Main ──────────────────────────────────────────────────────────────────────
@@ -553,19 +781,15 @@ async function seedStudentTheses(categoryId: string): Promise<void> {
 async function main() {
   console.log('Seeding content…\n');
 
-  // 1. Books
   console.log('→ Books (with categories)');
   await seedBooks();
 
-  // 2. Posts
   console.log('\n→ Posts (with categories and attachments)');
   await seedPosts();
 
-  // 3. Gallery
   console.log('\n→ Gallery images (with categories)');
   await seedGallery();
 
-  // 4. Academic papers
   console.log('\n→ Academic paper categories');
   const academicCatMap = await seedAcademicCategories();
 
@@ -577,6 +801,18 @@ async function main() {
 
   console.log('→ Student theses (student.json)');
   await seedStudentTheses(academicCatMap.get('student')!);
+
+  console.log('\n→ Daily hadiths');
+  await seedHadiths();
+
+  console.log('\n→ Static pages (imamzain.json)');
+  await seedStaticPages();
+
+  console.log('\n→ Stores (store-locations.json)');
+  await seedStores();
+
+  console.log('\n→ Audios (AudioItemAnalyzed.json)');
+  await seedAudios();
 
   console.log('\nContent seed complete.');
 }

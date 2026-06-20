@@ -153,15 +153,26 @@ export class ContestService implements OnApplicationBootstrap {
       throw new BadRequestException("Invalid email format");
     }
 
-    const phone = dto.contactType === "phone" ? dto.contact : null;
-    const email = dto.contactType === "email" ? dto.contact : null;
+    // Normalise to a canonical identity before dedup/insert so case and
+    // formatting variants of the same person (Test@x.com vs test@x.com,
+    // "+964 780 123" vs "+964780123") collapse to one. Both the fast-path
+    // check and the stored column use the canonical value, so the partial
+    // unique index enforces the same identity.
+    const normalizedContact =
+      dto.contactType === "email"
+        ? dto.contact.trim().toLowerCase()
+        : dto.contact.replace(/[\s-]/g, "");
 
-    // The DB has no unique index on (phone) or (email), so enforce
-    // one-attempt-per-identity at the service level. Search both columns
-    // for the supplied value so the same string submitted as both
-    // contactType=phone and contactType=email is still caught.
+    const phone = dto.contactType === "phone" ? normalizedContact : null;
+    const email = dto.contactType === "email" ? normalizedContact : null;
+
+    // The partial unique indexes uniq_contest_attempts_phone /
+    // uniq_contest_attempts_email (migration 20260525120000_contest_contact_unique)
+    // are the atomic backstop; this findFirst is a fast-path that returns the
+    // friendly Arabic message before the insert. Search both columns so the
+    // same string submitted as both contactType=phone and =email is caught.
     const existing = await this.prisma.qutuf_sajjadiya_contest_attempts.findFirst({
-      where: { OR: [{ phone: dto.contact }, { email: dto.contact }] },
+      where: { OR: [{ phone: normalizedContact }, { email: normalizedContact }] },
       select: { id: true },
     });
     if (existing) {
@@ -170,20 +181,33 @@ export class ContestService implements OnApplicationBootstrap {
       );
     }
 
-    const rows: { id: string }[] = await this.prisma.$queryRaw`
-      INSERT INTO qutuf_sajjadiya_contest_attempts
-      (name, phone, email, started_at, submitted_at, ip, user_agent)
-      VALUES (
-        ${dto.name},
-        ${phone},
-        ${email},
-        NOW(),
-        NULL,
-        ${ip},
-        ${userAgent}
-      )
-      RETURNING id
-    `;
+    let rows: { id: string }[];
+    try {
+      rows = await this.prisma.$queryRaw`
+        INSERT INTO qutuf_sajjadiya_contest_attempts
+        (name, phone, email, started_at, submitted_at, ip, user_agent)
+        VALUES (
+          ${dto.name},
+          ${phone},
+          ${email},
+          NOW(),
+          NULL,
+          ${ip},
+          ${userAgent}
+        )
+        RETURNING id
+      `;
+    } catch (err) {
+      // Concurrent /start with the same identity: the partial unique index
+      // rejects the loser with P2002. Surface the same friendly Arabic message
+      // the fast-path returns instead of the generic 409.
+      if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === "P2002") {
+        throw new ConflictException(
+          "لقد شاركتَ في المسابقة مسبقاً، لا يمكنك المشاركة مرة أخرى.",
+        );
+      }
+      throw err;
+    }
 
     const attemptId = rows[0].id;
     return {
@@ -212,10 +236,6 @@ export class ContestService implements OnApplicationBootstrap {
     }
 
     const questionMap = await this.getCorrectAnswers();
-
-    if (dto.answers.length !== questionMap.size) {
-      throw new ConflictException("All questions must be answered");
-    }
 
     // Score by unique question_id only, so duplicate entries pointing at the
     // same question can't inflate the score (the previous bug let an attacker
@@ -246,8 +266,14 @@ export class ContestService implements OnApplicationBootstrap {
       });
     }
 
-    if (insertValues.length === 0) {
-      throw new BadRequestException("No valid answers provided");
+    // Completeness check on the de-duplicated, VALID set — not the raw array.
+    // insertValues holds one entry per unique known question_id, so requiring
+    // it to equal the question count is the true "every question answered once
+    // with a known id" gate. This closes the bypass where duplicate or unknown
+    // question_ids padded the raw array to the right length while leaving real
+    // questions unanswered.
+    if (questionMap.size === 0 || insertValues.length !== questionMap.size) {
+      throw new ConflictException("All questions must be answered");
     }
 
     const answerRows = Prisma.join(

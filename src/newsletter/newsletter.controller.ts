@@ -120,6 +120,41 @@ export class NewsletterController {
     return this.newsletterService.resubscribeAsAdmin(id, user.id);
   }
 
+  @Get('subscribers/trash')
+  @UseGuards(JwtAuthGuard, PermissionGuard)
+  @ApiBearerAuth('jwt')
+  @RequirePermission('newsletter:delete')
+  @ApiOperation({
+    summary: 'List soft-deleted subscribers (CMS trash view)',
+    description: 'Paginated list of subscriber records whose `deleted_at` is set. Requires permission: `newsletter:delete`.',
+  })
+  @ApiQuery({ name: 'page', required: false, type: Number, example: 1 })
+  @ApiQuery({ name: 'limit', required: false, type: Number, example: 20 })
+  @ApiOkResponse({ type: SubscriberListResponseDto, description: 'Paginated list of trashed subscribers' })
+  @ApiUnauthorizedResponse({ type: UnauthorizedErrorDto, description: 'Missing or invalid JWT' })
+  @ApiForbiddenResponse({ type: ForbiddenErrorDto, description: 'Insufficient permissions' })
+  findTrash(@Query() query: SubscriberQueryDto) {
+    return this.newsletterService.findTrash(query.page ?? 1, query.limit ?? 20);
+  }
+
+  @Post('subscribers/:id/restore')
+  @HttpCode(200)
+  @UseGuards(JwtAuthGuard, PermissionGuard)
+  @ApiBearerAuth('jwt')
+  @RequirePermission('newsletter:delete')
+  @ApiOperation({
+    summary: 'Restore a soft-deleted subscriber (admin)',
+    description: 'Clears `deleted_at` and reactivates the subscriber. Requires permission: `newsletter:delete`.',
+  })
+  @ApiParam({ name: 'id', format: 'uuid' })
+  @ApiOkResponse({ type: SubscriberResponseDto, description: 'Subscriber restored and reactivated' })
+  @ApiNotFoundResponse({ type: NotFoundErrorDto, description: 'No soft-deleted subscriber with that ID exists' })
+  @ApiUnauthorizedResponse({ type: UnauthorizedErrorDto, description: 'Missing or invalid JWT' })
+  @ApiForbiddenResponse({ type: ForbiddenErrorDto, description: 'Insufficient permissions' })
+  restore(@Param('id', new ParseUUIDPipe()) id: string, @CurrentUser() user: CurrentUserPayload) {
+    return this.newsletterService.restore(id, user.id);
+  }
+
   @Delete('subscribers/:id')
   @UseGuards(JwtAuthGuard, PermissionGuard)
   @ApiBearerAuth('jwt')

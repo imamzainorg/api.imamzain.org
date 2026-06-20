@@ -7,6 +7,7 @@ export enum SearchResourceType {
   Book = 'book',
   AcademicPaper = 'academic_paper',
   GalleryImage = 'gallery_image',
+  Audio = 'audio',
 }
 
 export class SearchQueryDto {

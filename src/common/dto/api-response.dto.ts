@@ -4,6 +4,13 @@ export class ErrorResponseDto {
   @ApiProperty({ example: false })
   success: boolean;
 
+  @ApiProperty({
+    example: 'NOT_FOUND',
+    description:
+      'Stable, machine-readable error code. Defaults to a status-derived value (BAD_REQUEST, UNAUTHORIZED, FORBIDDEN, NOT_FOUND, CONFLICT, RATE_LIMITED, INTERNAL_ERROR, …); some endpoints return a more specific code (e.g. VALIDATION_FAILED, AUTH_TOKEN_REUSED, AUTH_ACCOUNT_DISABLED). Branch on this for error i18n / retry logic instead of parsing the human `error` string.',
+  })
+  code: string;
+
   @ApiProperty({ example: 'Human-readable description of the error' })
   error: string;
 
