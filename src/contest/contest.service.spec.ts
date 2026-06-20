@@ -3,6 +3,14 @@ import { Test, TestingModule } from "@nestjs/testing";
 import { ContestService } from "./contest.service";
 import { PrismaService } from "../prisma/prisma.service";
 
+// ContestService resolves its HMAC secret in a field initializer at construction
+// time, so the secret must exist before the service is instantiated. CI has no
+// .env — set a deterministic test secret here so the suite is independent of the
+// ambient environment. (Don't clobber a real JWT_SECRET if one is present.)
+if (!process.env.CONTEST_ATTEMPT_SECRET && !process.env.JWT_SECRET) {
+  process.env.CONTEST_ATTEMPT_SECRET = "test-contest-secret";
+}
+
 const ATTEMPT_ID = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee";
 
 const mockQuestions = [

@@ -95,6 +95,7 @@ const GALLERY_CAT_SLUG: Record<string, string> = {
   'اخبار':   'akhbar',
   'مسابقات': 'musabaqat',
   'مناسبات': 'munasabat',
+  'فعاليات': 'faaliyat',
 };
 
 const ACADEMIC_CATS = [
@@ -346,9 +347,22 @@ async function seedGallery(): Promise<void> {
   const images = loadJson<GalleryJson[]>('gallery.json');
 
   const catCache = new Map<string, string>();
-  async function getGalleryCatId(arName: string): Promise<string> {
+  const unmapped = new Set<string>();
+  async function getGalleryCatId(arName: string): Promise<string | null> {
     if (catCache.has(arName)) return catCache.get(arName)!;
-    const id = await findOrCreateCategory('gallery', arName, requireSlug(GALLERY_CAT_SLUG, arName, 'gallery'));
+    const slug = GALLERY_CAT_SLUG[arName];
+    if (!slug) {
+      // Don't abort the whole seed (and block audios, which runs after) over a
+      // single unmapped gallery category — warn once and leave the image
+      // uncategorized (category_id is nullable). Add it to GALLERY_CAT_SLUG to
+      // categorize it properly.
+      if (!unmapped.has(arName)) {
+        console.warn(`  ⚠ unmapped gallery category "${arName}" — images left uncategorized`);
+        unmapped.add(arName);
+      }
+      return null;
+    }
+    const id = await findOrCreateCategory('gallery', arName, slug);
     catCache.set(arName, id);
     return id;
   }
