@@ -1,4 +1,4 @@
-import { Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuditService } from '../common/audit/audit.service';
@@ -54,8 +54,6 @@ const GALLERY_LIST_SELECT = {
 
 @Injectable()
 export class GalleryService {
-  private readonly logger = new Logger(GalleryService.name);
-
   constructor(
     private readonly prisma: PrismaService,
     private readonly audit: AuditService,

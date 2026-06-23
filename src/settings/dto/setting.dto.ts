@@ -1,6 +1,6 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { site_setting_type } from '@prisma/client';
-import { IsBoolean, IsEnum, IsOptional, IsString, MaxLength, MinLength } from 'class-validator';
+import { IsBoolean, IsEnum, IsOptional, IsString, MaxLength } from 'class-validator';
 
 export class UpsertSettingDto {
   @ApiProperty({
@@ -37,15 +37,4 @@ export class UpsertSettingDto {
   @IsOptional()
   @IsBoolean()
   is_public?: boolean;
-}
-
-export class SettingKeyParamDto {
-  @ApiProperty({
-    example: 'site_name',
-    description: 'Setting key — lowercase letters, digits, and underscores. Cannot be changed after creation.',
-  })
-  @IsString()
-  @MinLength(1)
-  @MaxLength(100)
-  key!: string;
 }

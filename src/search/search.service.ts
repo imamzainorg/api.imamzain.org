@@ -104,8 +104,7 @@ export class SearchService {
 
     if (matches.length === 0) return [];
 
-    const ranked = [...matches].sort((a, b) => b.score - a.score).slice(0, limit);
-    const ids = ranked.map((m) => m.post_id);
+    const ids = matches.map((m) => m.post_id);
 
     const rows = await this.prisma.posts.findMany({
       where: { id: { in: ids } },
@@ -151,8 +150,7 @@ export class SearchService {
     `);
 
     if (matches.length === 0) return [];
-    const ranked = [...matches].sort((a, b) => b.score - a.score).slice(0, limit);
-    const ids = ranked.map((m) => m.book_id);
+    const ids = matches.map((m) => m.book_id);
 
     const rows = await this.prisma.books.findMany({
       where: { id: { in: ids } },
@@ -194,8 +192,7 @@ export class SearchService {
     `);
 
     if (matches.length === 0) return [];
-    const ranked = [...matches].sort((a, b) => b.score - a.score).slice(0, limit);
-    const ids = ranked.map((m) => m.paper_id);
+    const ids = matches.map((m) => m.paper_id);
 
     const rows = await this.prisma.academic_papers.findMany({
       where: { id: { in: ids } },
@@ -237,8 +234,7 @@ export class SearchService {
     `);
 
     if (matches.length === 0) return [];
-    const ranked = [...matches].sort((a, b) => b.score - a.score).slice(0, limit);
-    const ids = ranked.map((m) => m.media_id);
+    const ids = matches.map((m) => m.media_id);
 
     const rows = await this.prisma.gallery_images.findMany({
       where: { media_id: { in: ids } },
@@ -288,8 +284,7 @@ export class SearchService {
     `);
 
     if (matches.length === 0) return [];
-    const ranked = [...matches].sort((a, b) => b.score - a.score).slice(0, limit);
-    const ids = ranked.map((m) => m.id);
+    const ids = matches.map((m) => m.id);
 
     const rows = await this.prisma.audios.findMany({
       where: { id: { in: ids } },

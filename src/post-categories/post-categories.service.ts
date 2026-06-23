@@ -1,4 +1,4 @@
-import { ConflictException, Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuditService } from '../common/audit/audit.service';
@@ -10,8 +10,6 @@ import { CreatePostCategoryDto, UpdatePostCategoryDto } from './dto/post-categor
 
 @Injectable()
 export class PostCategoriesService {
-  private readonly logger = new Logger(PostCategoriesService.name);
-
   constructor(
     private readonly prisma: PrismaService,
     private readonly audit: AuditService,

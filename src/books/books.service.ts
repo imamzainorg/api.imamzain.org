@@ -1,4 +1,4 @@
-import { BadRequestException, ConflictException, Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuditService } from '../common/audit/audit.service';
@@ -82,8 +82,6 @@ const BOOK_LIST_SELECT = {
 
 @Injectable()
 export class BooksService {
-  private readonly logger = new Logger(BooksService.name);
-
   constructor(
     private readonly prisma: PrismaService,
     private readonly audit: AuditService,
