@@ -1,5 +1,5 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { PaginationMetaDto } from '../../common/dto/api-response.dto';
+import { ApiEnvelope, ApiPaginatedData } from '../../common/dto/api-envelope';
 
 class SpeakerTranslationViewDto {
   @ApiProperty({ example: 'ar' })
@@ -32,66 +32,12 @@ class SpeakerDto {
   audio_count: number;
 }
 
-class SpeakerListDataDto {
-  @ApiProperty({ type: [SpeakerDto] })
-  items: SpeakerDto[];
+class SpeakerListDataDto extends ApiPaginatedData(SpeakerDto) {}
 
-  @ApiProperty({ type: PaginationMetaDto })
-  pagination: PaginationMetaDto;
-}
+export class SpeakerListResponseDto extends ApiEnvelope(SpeakerListDataDto, 'Speakers fetched') {}
 
-export class SpeakerListResponseDto {
-  @ApiProperty({ example: true })
-  success: boolean;
+export class SpeakerDetailResponseDto extends ApiEnvelope(SpeakerDto, 'Speaker fetched') {}
 
-  @ApiProperty({ example: '2026-01-01T00:00:00.000Z' })
-  timestamp: string;
+export class SpeakerCreatedResponseDto extends ApiEnvelope(SpeakerDto, 'Speaker created') {}
 
-  @ApiProperty({ example: 'Speakers fetched' })
-  message: string;
-
-  @ApiProperty({ type: SpeakerListDataDto })
-  data: SpeakerListDataDto;
-}
-
-export class SpeakerDetailResponseDto {
-  @ApiProperty({ example: true })
-  success: boolean;
-
-  @ApiProperty({ example: '2026-01-01T00:00:00.000Z' })
-  timestamp: string;
-
-  @ApiProperty({ example: 'Speaker fetched' })
-  message: string;
-
-  @ApiProperty({ type: SpeakerDto })
-  data: SpeakerDto;
-}
-
-export class SpeakerCreatedResponseDto {
-  @ApiProperty({ example: true })
-  success: boolean;
-
-  @ApiProperty({ example: '2026-01-01T00:00:00.000Z' })
-  timestamp: string;
-
-  @ApiProperty({ example: 'Speaker created' })
-  message: string;
-
-  @ApiProperty({ type: SpeakerDto })
-  data: SpeakerDto;
-}
-
-export class SpeakerMessageResponseDto {
-  @ApiProperty({ example: true })
-  success: boolean;
-
-  @ApiProperty({ example: '2026-01-01T00:00:00.000Z' })
-  timestamp: string;
-
-  @ApiProperty({ example: 'Speaker deleted' })
-  message: string;
-
-  @ApiProperty({ type: Object, nullable: true, example: null })
-  data: null;
-}
+export class SpeakerMessageResponseDto extends ApiEnvelope(null, 'Speaker deleted') {}

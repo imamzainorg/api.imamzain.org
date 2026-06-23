@@ -1,4 +1,5 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { ApiEnvelope } from '../../common/dto/api-envelope';
 
 class SettingDto {
   @ApiProperty({ example: 'site_name' })
@@ -23,44 +24,8 @@ class SettingDto {
   updated_by?: string;
 }
 
-export class SettingResponseDto {
-  @ApiProperty({ example: true })
-  success: boolean;
+export class SettingResponseDto extends ApiEnvelope(SettingDto, 'Setting fetched') {}
 
-  @ApiProperty({ example: '2026-05-11T10:00:00.000Z' })
-  timestamp: string;
+export class SettingListResponseDto extends ApiEnvelope([SettingDto], 'Settings fetched') {}
 
-  @ApiProperty({ example: 'Setting fetched' })
-  message: string;
-
-  @ApiProperty({ type: SettingDto })
-  data: SettingDto;
-}
-
-export class SettingListResponseDto {
-  @ApiProperty({ example: true })
-  success: boolean;
-
-  @ApiProperty({ example: '2026-05-11T10:00:00.000Z' })
-  timestamp: string;
-
-  @ApiProperty({ example: 'Settings fetched' })
-  message: string;
-
-  @ApiProperty({ type: [SettingDto] })
-  data: SettingDto[];
-}
-
-export class SettingMessageResponseDto {
-  @ApiProperty({ example: true })
-  success: boolean;
-
-  @ApiProperty({ example: '2026-05-11T10:00:00.000Z' })
-  timestamp: string;
-
-  @ApiProperty({ example: 'Setting deleted' })
-  message: string;
-
-  @ApiProperty({ type: Object, nullable: true, example: null })
-  data: null;
-}
+export class SettingMessageResponseDto extends ApiEnvelope(null, 'Setting deleted') {}

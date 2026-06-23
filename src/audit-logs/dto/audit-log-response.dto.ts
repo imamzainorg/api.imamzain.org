@@ -1,5 +1,5 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { PaginationMetaDto } from '../../common/dto/api-response.dto';
+import { ApiEnvelope, ApiPaginatedData } from '../../common/dto/api-envelope';
 
 class AuditLogUserDto {
   @ApiProperty({ example: 'uuid-...' })
@@ -41,38 +41,8 @@ class AuditLogDto {
   users: AuditLogUserDto | null;
 }
 
-class AuditLogListDataDto {
-  @ApiProperty({ type: [AuditLogDto] })
-  items: AuditLogDto[];
+class AuditLogListDataDto extends ApiPaginatedData(AuditLogDto) {}
 
-  @ApiProperty({ type: PaginationMetaDto })
-  pagination: PaginationMetaDto;
-}
+export class AuditLogListResponseDto extends ApiEnvelope(AuditLogListDataDto, 'Audit logs fetched') {}
 
-export class AuditLogListResponseDto {
-  @ApiProperty({ example: true })
-  success: boolean;
-
-  @ApiProperty({ example: '2024-01-01T00:00:00.000Z' })
-  timestamp: string;
-
-  @ApiProperty({ example: 'Audit logs fetched' })
-  message: string;
-
-  @ApiProperty({ type: AuditLogListDataDto })
-  data: AuditLogListDataDto;
-}
-
-export class AuditLogResponseDto {
-  @ApiProperty({ example: true })
-  success: boolean;
-
-  @ApiProperty({ example: '2024-01-01T00:00:00.000Z' })
-  timestamp: string;
-
-  @ApiProperty({ example: 'Audit log entry fetched' })
-  message: string;
-
-  @ApiProperty({ type: AuditLogDto })
-  data: AuditLogDto;
-}
+export class AuditLogResponseDto extends ApiEnvelope(AuditLogDto, 'Audit log entry fetched') {}

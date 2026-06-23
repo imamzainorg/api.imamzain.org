@@ -1,5 +1,5 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { PaginationMetaDto } from '../../common/dto/api-response.dto';
+import { ApiEnvelope, ApiPaginatedData } from '../../common/dto/api-envelope';
 
 class StaticPageTranslationDto {
   @ApiProperty({ example: 'ar' })
@@ -46,66 +46,24 @@ class StaticPageDto {
   translation: StaticPageTranslationDto | null;
 }
 
-class StaticPageListDataDto {
-  @ApiProperty({ type: [StaticPageDto] })
-  items: StaticPageDto[];
+class StaticPageListDataDto extends ApiPaginatedData(StaticPageDto) {}
 
-  @ApiProperty({ type: PaginationMetaDto })
-  pagination: PaginationMetaDto;
-}
+export class StaticPageListResponseDto extends ApiEnvelope(
+  StaticPageListDataDto,
+  'Static pages fetched',
+) {}
 
-export class StaticPageListResponseDto {
-  @ApiProperty({ example: true })
-  success: boolean;
+export class StaticPageDetailResponseDto extends ApiEnvelope(
+  StaticPageDto,
+  'Static page fetched',
+) {}
 
-  @ApiProperty({ example: '2026-01-01T00:00:00.000Z' })
-  timestamp: string;
+export class StaticPageCreatedResponseDto extends ApiEnvelope(
+  StaticPageDto,
+  'Static page created',
+) {}
 
-  @ApiProperty({ example: 'Static pages fetched' })
-  message: string;
-
-  @ApiProperty({ type: StaticPageListDataDto })
-  data: StaticPageListDataDto;
-}
-
-export class StaticPageDetailResponseDto {
-  @ApiProperty({ example: true })
-  success: boolean;
-
-  @ApiProperty({ example: '2026-01-01T00:00:00.000Z' })
-  timestamp: string;
-
-  @ApiProperty({ example: 'Static page fetched' })
-  message: string;
-
-  @ApiProperty({ type: StaticPageDto })
-  data: StaticPageDto;
-}
-
-export class StaticPageCreatedResponseDto {
-  @ApiProperty({ example: true })
-  success: boolean;
-
-  @ApiProperty({ example: '2026-01-01T00:00:00.000Z' })
-  timestamp: string;
-
-  @ApiProperty({ example: 'Static page created' })
-  message: string;
-
-  @ApiProperty({ type: StaticPageDto })
-  data: StaticPageDto;
-}
-
-export class StaticPageMessageResponseDto {
-  @ApiProperty({ example: true })
-  success: boolean;
-
-  @ApiProperty({ example: '2026-01-01T00:00:00.000Z' })
-  timestamp: string;
-
-  @ApiProperty({ example: 'Static page deleted' })
-  message: string;
-
-  @ApiProperty({ type: Object, nullable: true, example: null })
-  data: null;
-}
+export class StaticPageMessageResponseDto extends ApiEnvelope(
+  null,
+  'Static page deleted',
+) {}

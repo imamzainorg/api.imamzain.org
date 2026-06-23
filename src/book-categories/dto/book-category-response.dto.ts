@@ -1,5 +1,5 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { PaginationMetaDto } from '../../common/dto/api-response.dto';
+import { ApiEnvelope, ApiPaginatedData } from '../../common/dto/api-envelope';
 
 class BookCategoryTranslationItemDto {
   @ApiProperty({ example: 'ar' })
@@ -34,66 +34,12 @@ class BookCategoryDto {
   translation: BookCategoryTranslationItemDto | null;
 }
 
-class BookCategoryListDataDto {
-  @ApiProperty({ type: [BookCategoryDto] })
-  items: BookCategoryDto[];
+class BookCategoryListDataDto extends ApiPaginatedData(BookCategoryDto) {}
 
-  @ApiProperty({ type: PaginationMetaDto })
-  pagination: PaginationMetaDto;
-}
+export class BookCategoryListResponseDto extends ApiEnvelope(BookCategoryListDataDto, 'Book categories fetched') {}
 
-export class BookCategoryListResponseDto {
-  @ApiProperty({ example: true })
-  success: boolean;
+export class BookCategoryDetailResponseDto extends ApiEnvelope(BookCategoryDto, 'Book category fetched') {}
 
-  @ApiProperty({ example: '2024-01-01T00:00:00.000Z' })
-  timestamp: string;
+export class BookCategoryCreatedResponseDto extends ApiEnvelope(BookCategoryDto, 'Book category created') {}
 
-  @ApiProperty({ example: 'Book categories fetched' })
-  message: string;
-
-  @ApiProperty({ type: BookCategoryListDataDto })
-  data: BookCategoryListDataDto;
-}
-
-export class BookCategoryDetailResponseDto {
-  @ApiProperty({ example: true })
-  success: boolean;
-
-  @ApiProperty({ example: '2024-01-01T00:00:00.000Z' })
-  timestamp: string;
-
-  @ApiProperty({ example: 'Book category fetched' })
-  message: string;
-
-  @ApiProperty({ type: BookCategoryDto })
-  data: BookCategoryDto;
-}
-
-export class BookCategoryCreatedResponseDto {
-  @ApiProperty({ example: true })
-  success: boolean;
-
-  @ApiProperty({ example: '2024-01-01T00:00:00.000Z' })
-  timestamp: string;
-
-  @ApiProperty({ example: 'Book category created' })
-  message: string;
-
-  @ApiProperty({ type: BookCategoryDto })
-  data: BookCategoryDto;
-}
-
-export class BookCategoryMessageResponseDto {
-  @ApiProperty({ example: true })
-  success: boolean;
-
-  @ApiProperty({ example: '2024-01-01T00:00:00.000Z' })
-  timestamp: string;
-
-  @ApiProperty({ example: 'Book category deleted' })
-  message: string;
-
-  @ApiProperty({ type: Object, nullable: true, example: null })
-  data: null;
-}
+export class BookCategoryMessageResponseDto extends ApiEnvelope(null, 'Book category deleted') {}

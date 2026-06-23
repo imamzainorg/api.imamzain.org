@@ -1,5 +1,5 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { PaginationMetaDto } from '../../common/dto/api-response.dto';
+import { ApiEnvelope, ApiPaginatedData } from '../../common/dto/api-envelope';
 
 class YoutubeVideoItemDto {
   @ApiProperty({ example: 'dQw4w9WgXcQ', description: 'YouTube 11-char video ID' })
@@ -36,27 +36,9 @@ class YoutubeVideoItemDto {
   last_synced_at!: string;
 }
 
-class YoutubeVideoListDataDto {
-  @ApiProperty({ type: [YoutubeVideoItemDto] })
-  items!: YoutubeVideoItemDto[];
+class YoutubeVideoListDataDto extends ApiPaginatedData(YoutubeVideoItemDto) {}
 
-  @ApiProperty({ type: PaginationMetaDto })
-  pagination!: PaginationMetaDto;
-}
-
-export class YoutubeVideoListResponseDto {
-  @ApiProperty({ example: true })
-  success!: boolean;
-
-  @ApiProperty({ example: '2026-05-12T10:00:00.000Z' })
-  timestamp!: string;
-
-  @ApiProperty({ example: 'Videos fetched' })
-  message!: string;
-
-  @ApiProperty({ type: YoutubeVideoListDataDto })
-  data!: YoutubeVideoListDataDto;
-}
+export class YoutubeVideoListResponseDto extends ApiEnvelope(YoutubeVideoListDataDto, 'Videos fetched') {}
 
 class YoutubePlaylistItemDto {
   @ApiProperty({ example: 'PLxxxxxxxxxx', description: 'YouTube playlist ID' })
@@ -84,27 +66,9 @@ class YoutubePlaylistItemDto {
   last_synced_at!: string;
 }
 
-class YoutubePlaylistListDataDto {
-  @ApiProperty({ type: [YoutubePlaylistItemDto] })
-  items!: YoutubePlaylistItemDto[];
+class YoutubePlaylistListDataDto extends ApiPaginatedData(YoutubePlaylistItemDto) {}
 
-  @ApiProperty({ type: PaginationMetaDto })
-  pagination!: PaginationMetaDto;
-}
-
-export class YoutubePlaylistListResponseDto {
-  @ApiProperty({ example: true })
-  success!: boolean;
-
-  @ApiProperty({ example: '2026-05-12T10:00:00.000Z' })
-  timestamp!: string;
-
-  @ApiProperty({ example: 'Playlists fetched' })
-  message!: string;
-
-  @ApiProperty({ type: YoutubePlaylistListDataDto })
-  data!: YoutubePlaylistListDataDto;
-}
+export class YoutubePlaylistListResponseDto extends ApiEnvelope(YoutubePlaylistListDataDto, 'Playlists fetched') {}
 
 class YoutubePlaylistVideosDataDto {
   @ApiProperty({ type: YoutubePlaylistItemDto })
@@ -114,16 +78,4 @@ class YoutubePlaylistVideosDataDto {
   videos!: YoutubeVideoItemDto[];
 }
 
-export class YoutubePlaylistVideosResponseDto {
-  @ApiProperty({ example: true })
-  success!: boolean;
-
-  @ApiProperty({ example: '2026-05-12T10:00:00.000Z' })
-  timestamp!: string;
-
-  @ApiProperty({ example: 'Playlist videos fetched' })
-  message!: string;
-
-  @ApiProperty({ type: YoutubePlaylistVideosDataDto })
-  data!: YoutubePlaylistVideosDataDto;
-}
+export class YoutubePlaylistVideosResponseDto extends ApiEnvelope(YoutubePlaylistVideosDataDto, 'Playlist videos fetched') {}

@@ -1,5 +1,5 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { PaginationMetaDto } from '../../common/dto/api-response.dto';
+import { ApiEnvelope, ApiPaginatedData } from '../../common/dto/api-envelope';
 
 class ProxyVisitDto {
   @ApiProperty({ example: 'uuid-...' })
@@ -21,41 +21,11 @@ class ProxyVisitDto {
   created_at: string;
 }
 
-export class ProxyVisitResponseDto {
-  @ApiProperty({ example: true })
-  success: boolean;
+export class ProxyVisitResponseDto extends ApiEnvelope(ProxyVisitDto, 'Proxy visit request submitted') {}
 
-  @ApiProperty({ example: '2024-01-01T00:00:00.000Z' })
-  timestamp: string;
+class ProxyVisitListDataDto extends ApiPaginatedData(ProxyVisitDto) {}
 
-  @ApiProperty({ example: 'Proxy visit request submitted' })
-  message: string;
-
-  @ApiProperty({ type: ProxyVisitDto })
-  data: ProxyVisitDto;
-}
-
-class ProxyVisitListDataDto {
-  @ApiProperty({ type: [ProxyVisitDto] })
-  items: ProxyVisitDto[];
-
-  @ApiProperty({ type: PaginationMetaDto })
-  pagination: PaginationMetaDto;
-}
-
-export class ProxyVisitListResponseDto {
-  @ApiProperty({ example: true })
-  success: boolean;
-
-  @ApiProperty({ example: '2024-01-01T00:00:00.000Z' })
-  timestamp: string;
-
-  @ApiProperty({ example: 'Proxy visit requests fetched' })
-  message: string;
-
-  @ApiProperty({ type: ProxyVisitListDataDto })
-  data: ProxyVisitListDataDto;
-}
+export class ProxyVisitListResponseDto extends ApiEnvelope(ProxyVisitListDataDto, 'Proxy visit requests fetched') {}
 
 class ContactDto {
   @ApiProperty({ example: 'uuid-...' })
@@ -77,52 +47,10 @@ class ContactDto {
   created_at: string;
 }
 
-export class ContactResponseDto {
-  @ApiProperty({ example: true })
-  success: boolean;
+export class ContactResponseDto extends ApiEnvelope(ContactDto, 'Contact request submitted') {}
 
-  @ApiProperty({ example: '2024-01-01T00:00:00.000Z' })
-  timestamp: string;
+class ContactListDataDto extends ApiPaginatedData(ContactDto) {}
 
-  @ApiProperty({ example: 'Contact request submitted' })
-  message: string;
+export class ContactListResponseDto extends ApiEnvelope(ContactListDataDto, 'Contact requests fetched') {}
 
-  @ApiProperty({ type: ContactDto })
-  data: ContactDto;
-}
-
-class ContactListDataDto {
-  @ApiProperty({ type: [ContactDto] })
-  items: ContactDto[];
-
-  @ApiProperty({ type: PaginationMetaDto })
-  pagination: PaginationMetaDto;
-}
-
-export class ContactListResponseDto {
-  @ApiProperty({ example: true })
-  success: boolean;
-
-  @ApiProperty({ example: '2024-01-01T00:00:00.000Z' })
-  timestamp: string;
-
-  @ApiProperty({ example: 'Contact requests fetched' })
-  message: string;
-
-  @ApiProperty({ type: ContactListDataDto })
-  data: ContactListDataDto;
-}
-
-export class FormsMessageResponseDto {
-  @ApiProperty({ example: true })
-  success: boolean;
-
-  @ApiProperty({ example: '2024-01-01T00:00:00.000Z' })
-  timestamp: string;
-
-  @ApiProperty({ example: 'Request deleted' })
-  message: string;
-
-  @ApiProperty({ type: Object, nullable: true, example: null })
-  data: null;
-}
+export class FormsMessageResponseDto extends ApiEnvelope(null, 'Request deleted') {}

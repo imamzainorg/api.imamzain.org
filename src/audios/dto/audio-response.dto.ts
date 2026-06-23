@@ -1,5 +1,5 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { PaginationMetaDto } from '../../common/dto/api-response.dto';
+import { ApiEnvelope, ApiPaginatedData } from '../../common/dto/api-envelope';
 
 class AudioTranslationViewDto {
   @ApiProperty({ example: 'ar' })
@@ -84,69 +84,15 @@ class AudioDto extends AudioListItemDto {
   peaks: number[] | null;
 }
 
-class AudioListDataDto {
-  @ApiProperty({ type: [AudioListItemDto] })
-  items: AudioListItemDto[];
+class AudioListDataDto extends ApiPaginatedData(AudioListItemDto) {}
 
-  @ApiProperty({ type: PaginationMetaDto })
-  pagination: PaginationMetaDto;
-}
+export class AudioListResponseDto extends ApiEnvelope(AudioListDataDto, 'Audios fetched') {}
 
-export class AudioListResponseDto {
-  @ApiProperty({ example: true })
-  success: boolean;
+export class AudioDetailResponseDto extends ApiEnvelope(AudioDto, 'Audio fetched') {}
 
-  @ApiProperty({ example: '2026-01-01T00:00:00.000Z' })
-  timestamp: string;
+export class AudioCreatedResponseDto extends ApiEnvelope(AudioDto, 'Audio created') {}
 
-  @ApiProperty({ example: 'Audios fetched' })
-  message: string;
-
-  @ApiProperty({ type: AudioListDataDto })
-  data: AudioListDataDto;
-}
-
-export class AudioDetailResponseDto {
-  @ApiProperty({ example: true })
-  success: boolean;
-
-  @ApiProperty({ example: '2026-01-01T00:00:00.000Z' })
-  timestamp: string;
-
-  @ApiProperty({ example: 'Audio fetched' })
-  message: string;
-
-  @ApiProperty({ type: AudioDto })
-  data: AudioDto;
-}
-
-export class AudioCreatedResponseDto {
-  @ApiProperty({ example: true })
-  success: boolean;
-
-  @ApiProperty({ example: '2026-01-01T00:00:00.000Z' })
-  timestamp: string;
-
-  @ApiProperty({ example: 'Audio created' })
-  message: string;
-
-  @ApiProperty({ type: AudioDto })
-  data: AudioDto;
-}
-
-export class AudioMessageResponseDto {
-  @ApiProperty({ example: true })
-  success: boolean;
-
-  @ApiProperty({ example: '2026-01-01T00:00:00.000Z' })
-  timestamp: string;
-
-  @ApiProperty({ example: 'Audio deleted' })
-  message: string;
-
-  @ApiProperty({ type: Object, nullable: true, example: null })
-  data: null;
-}
+export class AudioMessageResponseDto extends ApiEnvelope(null, 'Audio deleted') {}
 
 class AudioUploadUrlDataDto {
   @ApiProperty({ example: 'https://<account>.r2.cloudflarestorage.com/...&X-Amz-Signature=...' })
@@ -162,16 +108,4 @@ class AudioUploadUrlDataDto {
   maxBytes: number;
 }
 
-export class AudioUploadUrlResponseDto {
-  @ApiProperty({ example: true })
-  success: boolean;
-
-  @ApiProperty({ example: '2026-01-01T00:00:00.000Z' })
-  timestamp: string;
-
-  @ApiProperty({ example: 'Upload URL generated' })
-  message: string;
-
-  @ApiProperty({ type: AudioUploadUrlDataDto })
-  data: AudioUploadUrlDataDto;
-}
+export class AudioUploadUrlResponseDto extends ApiEnvelope(AudioUploadUrlDataDto, 'Upload URL generated') {}

@@ -1,5 +1,5 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { PaginationMetaDto } from '../../common/dto/api-response.dto';
+import { ApiEnvelope, ApiPaginatedData } from '../../common/dto/api-envelope';
 
 class UploadUrlDataDto {
   @ApiProperty({ example: 'https://bucket.r2.cloudflarestorage.com/upload?...' })
@@ -23,19 +23,7 @@ class UploadUrlDataDto {
   maxBytes: number;
 }
 
-export class UploadUrlResponseDto {
-  @ApiProperty({ example: true })
-  success: boolean;
-
-  @ApiProperty({ example: '2024-01-01T00:00:00.000Z' })
-  timestamp: string;
-
-  @ApiProperty({ example: 'Upload URL generated' })
-  message: string;
-
-  @ApiProperty({ type: UploadUrlDataDto })
-  data: UploadUrlDataDto;
-}
+export class UploadUrlResponseDto extends ApiEnvelope(UploadUrlDataDto, 'Upload URL generated') {}
 
 class MediaVariantDto {
   @ApiProperty({ example: 768, description: 'Output width in pixels' })
@@ -87,41 +75,11 @@ class MediaDto {
   variants: MediaVariantDto[];
 }
 
-class MediaListDataDto {
-  @ApiProperty({ type: [MediaDto] })
-  items: MediaDto[];
+class MediaListDataDto extends ApiPaginatedData(MediaDto) {}
 
-  @ApiProperty({ type: PaginationMetaDto })
-  pagination: PaginationMetaDto;
-}
+export class MediaListResponseDto extends ApiEnvelope(MediaListDataDto, 'Media fetched') {}
 
-export class MediaListResponseDto {
-  @ApiProperty({ example: true })
-  success: boolean;
-
-  @ApiProperty({ example: '2024-01-01T00:00:00.000Z' })
-  timestamp: string;
-
-  @ApiProperty({ example: 'Media fetched' })
-  message: string;
-
-  @ApiProperty({ type: MediaListDataDto })
-  data: MediaListDataDto;
-}
-
-export class MediaDetailResponseDto {
-  @ApiProperty({ example: true })
-  success: boolean;
-
-  @ApiProperty({ example: '2024-01-01T00:00:00.000Z' })
-  timestamp: string;
-
-  @ApiProperty({ example: 'Media fetched' })
-  message: string;
-
-  @ApiProperty({ type: MediaDto })
-  data: MediaDto;
-}
+export class MediaDetailResponseDto extends ApiEnvelope(MediaDto, 'Media fetched') {}
 
 /**
  * Response from `POST /media/confirm`. The media row is created and the
@@ -132,30 +90,6 @@ export class MediaDetailResponseDto {
  * `variants.length === 4`; if it stays empty past ~10 s, call
  * `POST /media/:id/regenerate-variants`.
  */
-export class MediaCreatedResponseDto {
-  @ApiProperty({ example: true })
-  success: boolean;
+export class MediaCreatedResponseDto extends ApiEnvelope(MediaDto, 'Media created') {}
 
-  @ApiProperty({ example: '2024-01-01T00:00:00.000Z' })
-  timestamp: string;
-
-  @ApiProperty({ example: 'Media created' })
-  message: string;
-
-  @ApiProperty({ type: MediaDto })
-  data: MediaDto;
-}
-
-export class MediaMessageResponseDto {
-  @ApiProperty({ example: true })
-  success: boolean;
-
-  @ApiProperty({ example: '2024-01-01T00:00:00.000Z' })
-  timestamp: string;
-
-  @ApiProperty({ example: 'Media deleted' })
-  message: string;
-
-  @ApiProperty({ type: Object, nullable: true, example: null })
-  data: null;
-}
+export class MediaMessageResponseDto extends ApiEnvelope(null, 'Media deleted') {}

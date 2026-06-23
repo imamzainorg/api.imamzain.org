@@ -1,5 +1,5 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { PaginationMetaDto } from '../../common/dto/api-response.dto';
+import { ApiEnvelope, ApiPaginatedData } from '../../common/dto/api-envelope';
 
 class AcademicPaperCategoryTranslationItemDto {
   @ApiProperty({ example: 'ar' })
@@ -34,66 +34,26 @@ class AcademicPaperCategoryDto {
   translation: AcademicPaperCategoryTranslationItemDto | null;
 }
 
-class AcademicPaperCategoryListDataDto {
-  @ApiProperty({ type: [AcademicPaperCategoryDto] })
-  items: AcademicPaperCategoryDto[];
+class AcademicPaperCategoryListDataDto extends ApiPaginatedData(
+  AcademicPaperCategoryDto,
+) {}
 
-  @ApiProperty({ type: PaginationMetaDto })
-  pagination: PaginationMetaDto;
-}
+export class AcademicPaperCategoryListResponseDto extends ApiEnvelope(
+  AcademicPaperCategoryListDataDto,
+  'Academic paper categories fetched',
+) {}
 
-export class AcademicPaperCategoryListResponseDto {
-  @ApiProperty({ example: true })
-  success: boolean;
+export class AcademicPaperCategoryDetailResponseDto extends ApiEnvelope(
+  AcademicPaperCategoryDto,
+  'Academic paper category fetched',
+) {}
 
-  @ApiProperty({ example: '2024-01-01T00:00:00.000Z' })
-  timestamp: string;
+export class AcademicPaperCategoryCreatedResponseDto extends ApiEnvelope(
+  AcademicPaperCategoryDto,
+  'Academic paper category created',
+) {}
 
-  @ApiProperty({ example: 'Academic paper categories fetched' })
-  message: string;
-
-  @ApiProperty({ type: AcademicPaperCategoryListDataDto })
-  data: AcademicPaperCategoryListDataDto;
-}
-
-export class AcademicPaperCategoryDetailResponseDto {
-  @ApiProperty({ example: true })
-  success: boolean;
-
-  @ApiProperty({ example: '2024-01-01T00:00:00.000Z' })
-  timestamp: string;
-
-  @ApiProperty({ example: 'Academic paper category fetched' })
-  message: string;
-
-  @ApiProperty({ type: AcademicPaperCategoryDto })
-  data: AcademicPaperCategoryDto;
-}
-
-export class AcademicPaperCategoryCreatedResponseDto {
-  @ApiProperty({ example: true })
-  success: boolean;
-
-  @ApiProperty({ example: '2024-01-01T00:00:00.000Z' })
-  timestamp: string;
-
-  @ApiProperty({ example: 'Academic paper category created' })
-  message: string;
-
-  @ApiProperty({ type: AcademicPaperCategoryDto })
-  data: AcademicPaperCategoryDto;
-}
-
-export class AcademicPaperCategoryMessageResponseDto {
-  @ApiProperty({ example: true })
-  success: boolean;
-
-  @ApiProperty({ example: '2024-01-01T00:00:00.000Z' })
-  timestamp: string;
-
-  @ApiProperty({ example: 'Academic paper category deleted' })
-  message: string;
-
-  @ApiProperty({ type: Object, nullable: true, example: null })
-  data: null;
-}
+export class AcademicPaperCategoryMessageResponseDto extends ApiEnvelope(
+  null,
+  'Academic paper category deleted',
+) {}

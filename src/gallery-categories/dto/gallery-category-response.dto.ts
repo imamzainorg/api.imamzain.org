@@ -1,5 +1,5 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { PaginationMetaDto } from '../../common/dto/api-response.dto';
+import { ApiEnvelope, ApiPaginatedData } from '../../common/dto/api-envelope';
 
 class GalleryCategoryTranslationItemDto {
   @ApiProperty({ example: 'ar' })
@@ -34,66 +34,24 @@ class GalleryCategoryDto {
   translation: GalleryCategoryTranslationItemDto | null;
 }
 
-class GalleryCategoryListDataDto {
-  @ApiProperty({ type: [GalleryCategoryDto] })
-  items: GalleryCategoryDto[];
+class GalleryCategoryListDataDto extends ApiPaginatedData(GalleryCategoryDto) {}
 
-  @ApiProperty({ type: PaginationMetaDto })
-  pagination: PaginationMetaDto;
-}
+export class GalleryCategoryListResponseDto extends ApiEnvelope(
+  GalleryCategoryListDataDto,
+  'Gallery categories fetched',
+) {}
 
-export class GalleryCategoryListResponseDto {
-  @ApiProperty({ example: true })
-  success: boolean;
+export class GalleryCategoryDetailResponseDto extends ApiEnvelope(
+  GalleryCategoryDto,
+  'Gallery category fetched',
+) {}
 
-  @ApiProperty({ example: '2024-01-01T00:00:00.000Z' })
-  timestamp: string;
+export class GalleryCategoryCreatedResponseDto extends ApiEnvelope(
+  GalleryCategoryDto,
+  'Gallery category created',
+) {}
 
-  @ApiProperty({ example: 'Gallery categories fetched' })
-  message: string;
-
-  @ApiProperty({ type: GalleryCategoryListDataDto })
-  data: GalleryCategoryListDataDto;
-}
-
-export class GalleryCategoryDetailResponseDto {
-  @ApiProperty({ example: true })
-  success: boolean;
-
-  @ApiProperty({ example: '2024-01-01T00:00:00.000Z' })
-  timestamp: string;
-
-  @ApiProperty({ example: 'Gallery category fetched' })
-  message: string;
-
-  @ApiProperty({ type: GalleryCategoryDto })
-  data: GalleryCategoryDto;
-}
-
-export class GalleryCategoryCreatedResponseDto {
-  @ApiProperty({ example: true })
-  success: boolean;
-
-  @ApiProperty({ example: '2024-01-01T00:00:00.000Z' })
-  timestamp: string;
-
-  @ApiProperty({ example: 'Gallery category created' })
-  message: string;
-
-  @ApiProperty({ type: GalleryCategoryDto })
-  data: GalleryCategoryDto;
-}
-
-export class GalleryCategoryMessageResponseDto {
-  @ApiProperty({ example: true })
-  success: boolean;
-
-  @ApiProperty({ example: '2024-01-01T00:00:00.000Z' })
-  timestamp: string;
-
-  @ApiProperty({ example: 'Gallery category deleted' })
-  message: string;
-
-  @ApiProperty({ type: Object, nullable: true, example: null })
-  data: null;
-}
+export class GalleryCategoryMessageResponseDto extends ApiEnvelope(
+  null,
+  'Gallery category deleted',
+) {}

@@ -1,5 +1,5 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { PaginationMetaDto } from '../../common/dto/api-response.dto';
+import { ApiEnvelope, ApiPaginatedData } from '../../common/dto/api-envelope';
 
 class ContestAttemptDto {
   @ApiProperty({ example: 'uuid-...' })
@@ -21,27 +21,9 @@ class ContestAttemptDto {
   created_at: string;
 }
 
-class AttemptListDataDto {
-  @ApiProperty({ type: [ContestAttemptDto] })
-  items: ContestAttemptDto[];
+class AttemptListDataDto extends ApiPaginatedData(ContestAttemptDto) {}
 
-  @ApiProperty({ type: PaginationMetaDto })
-  pagination: PaginationMetaDto;
-}
-
-export class AttemptListResponseDto {
-  @ApiProperty({ example: true })
-  success: boolean;
-
-  @ApiProperty({ example: '2024-01-01T00:00:00.000Z' })
-  timestamp: string;
-
-  @ApiProperty({ example: 'Attempts fetched' })
-  message: string;
-
-  @ApiProperty({ type: AttemptListDataDto })
-  data: AttemptListDataDto;
-}
+export class AttemptListResponseDto extends ApiEnvelope(AttemptListDataDto, 'Attempts fetched') {}
 
 class ContestQuestionDto {
   @ApiProperty({ example: 'uuid-...' })
@@ -54,19 +36,7 @@ class ContestQuestionDto {
   options: string[];
 }
 
-export class QuestionListResponseDto {
-  @ApiProperty({ example: true })
-  success: boolean;
-
-  @ApiProperty({ example: '2024-01-01T00:00:00.000Z' })
-  timestamp: string;
-
-  @ApiProperty({ example: 'Questions fetched' })
-  message: string;
-
-  @ApiProperty({ type: [ContestQuestionDto] })
-  data: ContestQuestionDto[];
-}
+export class QuestionListResponseDto extends ApiEnvelope([ContestQuestionDto], 'Questions fetched') {}
 
 class StartContestDataDto {
   @ApiProperty({ example: 'uuid-...' })
@@ -80,19 +50,7 @@ class StartContestDataDto {
   attempt_token: string;
 }
 
-export class StartContestResponseDto {
-  @ApiProperty({ example: true })
-  success: boolean;
-
-  @ApiProperty({ example: '2024-01-01T00:00:00.000Z' })
-  timestamp: string;
-
-  @ApiProperty({ example: 'Contest started' })
-  message: string;
-
-  @ApiProperty({ type: StartContestDataDto })
-  data: StartContestDataDto;
-}
+export class StartContestResponseDto extends ApiEnvelope(StartContestDataDto, 'Contest started') {}
 
 class SubmitContestDataDto {
   @ApiProperty({ example: 8 })
@@ -102,16 +60,4 @@ class SubmitContestDataDto {
   total_questions: number;
 }
 
-export class SubmitContestResponseDto {
-  @ApiProperty({ example: true })
-  success: boolean;
-
-  @ApiProperty({ example: '2024-01-01T00:00:00.000Z' })
-  timestamp: string;
-
-  @ApiProperty({ example: 'Contest submitted' })
-  message: string;
-
-  @ApiProperty({ type: SubmitContestDataDto })
-  data: SubmitContestDataDto;
-}
+export class SubmitContestResponseDto extends ApiEnvelope(SubmitContestDataDto, 'Contest submitted') {}
