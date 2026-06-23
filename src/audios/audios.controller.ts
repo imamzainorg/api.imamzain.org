@@ -1,10 +1,8 @@
-import { Body, Controller, Delete, Get, HttpCode, Param, Patch, Post, Query, UseGuards } from '@nestjs/common';
+import { Body, Controller, Delete, Get, HttpCode, Param, Patch, Post, Query } from '@nestjs/common';
 import {
   ApiBadRequestResponse,
-  ApiBearerAuth,
   ApiConflictResponse,
   ApiCreatedResponse,
-  ApiForbiddenResponse,
   ApiHeader,
   ApiNotFoundResponse,
   ApiOkResponse,
@@ -12,17 +10,14 @@ import {
   ApiParam,
   ApiQuery,
   ApiTags,
-  ApiUnauthorizedResponse,
 } from '@nestjs/swagger';
 import { Throttle } from '@nestjs/throttler';
-import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { Auth } from '../common/decorators/auth.decorator';
 import { CurrentUser, CurrentUserPayload } from '../common/decorators/current-user.decorator';
 import { Lang } from '../common/decorators/language.decorator';
-import { RequirePermission } from '../common/decorators/require-permission.decorator';
-import { ConflictErrorDto, ForbiddenErrorDto, NotFoundErrorDto, UnauthorizedErrorDto, ValidationErrorDto } from '../common/dto/api-response.dto';
+import { ConflictErrorDto, NotFoundErrorDto, ValidationErrorDto } from '../common/dto/api-response.dto';
 import { PaginationDto } from '../common/dto/pagination.dto';
 import { PublicCache } from '../common/decorators/public-cache.decorator';
-import { PermissionGuard } from '../common/guards/permission.guard';
 import {
   AudioAdminQueryDto,
   AudioQueryDto,
@@ -64,9 +59,7 @@ export class AudiosController {
   }
 
   @Get('admin')
-  @UseGuards(JwtAuthGuard, PermissionGuard)
-  @ApiBearerAuth('jwt')
-  @RequirePermission('audios:read')
+  @Auth('audios:read')
   @ApiOperation({
     summary: 'List audios (CMS — includes drafts)',
     description: 'Admin list returning published and unpublished audios. Optional `is_published`, `speaker_id`, `search` filters. Requires permission: `audios:read`.',
@@ -77,16 +70,12 @@ export class AudiosController {
   @ApiQuery({ name: 'search', required: false, type: String })
   @ApiQuery({ name: 'is_published', required: false, type: Boolean })
   @ApiOkResponse({ type: AudioListResponseDto })
-  @ApiUnauthorizedResponse({ type: UnauthorizedErrorDto, description: 'Missing or invalid JWT' })
-  @ApiForbiddenResponse({ type: ForbiddenErrorDto, description: 'Insufficient permissions' })
   findAllAdmin(@Query() query: AudioAdminQueryDto, @Lang() lang: string | null) {
     return this.service.findAllAdmin(query, lang);
   }
 
   @Get('admin/:id')
-  @UseGuards(JwtAuthGuard, PermissionGuard)
-  @ApiBearerAuth('jwt')
-  @RequirePermission('audios:read')
+  @Auth('audios:read')
   @ApiOperation({
     summary: 'Get a single audio by ID (CMS — includes drafts)',
     description: 'Admin detail that returns the audio regardless of its published state. Requires permission: `audios:read`.',
@@ -94,16 +83,12 @@ export class AudiosController {
   @ApiParam({ name: 'id', format: 'uuid' })
   @ApiOkResponse({ type: AudioDetailResponseDto })
   @ApiNotFoundResponse({ type: NotFoundErrorDto, description: 'No audio with that ID exists, or it has been deleted' })
-  @ApiUnauthorizedResponse({ type: UnauthorizedErrorDto, description: 'Missing or invalid JWT' })
-  @ApiForbiddenResponse({ type: ForbiddenErrorDto, description: 'Insufficient permissions' })
   findOneAdmin(@Param('id') id: string, @Lang() lang: string | null) {
     return this.service.findOne(id, lang, { allowUnpublished: true });
   }
 
   @Get('trash')
-  @UseGuards(JwtAuthGuard, PermissionGuard)
-  @ApiBearerAuth('jwt')
-  @RequirePermission('audios:delete')
+  @Auth('audios:delete')
   @ApiOperation({
     summary: 'List soft-deleted audios (CMS trash view)',
     description: 'Paginated list of audios whose `deleted_at` is set. Per-translation slugs are returned with the `__del_<timestamp>` suffix stripped. Requires permission: `audios:delete`.',
@@ -111,8 +96,6 @@ export class AudiosController {
   @ApiQuery({ name: 'page', required: false, type: Number, example: 1 })
   @ApiQuery({ name: 'limit', required: false, type: Number, example: 20 })
   @ApiOkResponse({ type: AudioListResponseDto })
-  @ApiUnauthorizedResponse({ type: UnauthorizedErrorDto, description: 'Missing or invalid JWT' })
-  @ApiForbiddenResponse({ type: ForbiddenErrorDto, description: 'Insufficient permissions' })
   findTrash(@Query() query: PaginationDto, @Lang() lang: string | null) {
     return this.service.findTrash(query.page ?? 1, query.limit ?? 20, lang);
   }
@@ -131,10 +114,8 @@ export class AudiosController {
   }
 
   @Post('upload-url')
-  @UseGuards(JwtAuthGuard, PermissionGuard)
-  @ApiBearerAuth('jwt')
+  @Auth('audios:create')
   @Throttle({ default: { limit: 60, ttl: 60_000 } })
-  @RequirePermission('audios:create')
   @ApiOperation({
     summary: 'Request a pre-signed R2 upload URL for an audio file or PDF',
     description:
@@ -144,32 +125,24 @@ export class AudiosController {
   })
   @ApiOkResponse({ type: AudioUploadUrlResponseDto })
   @ApiBadRequestResponse({ type: ValidationErrorDto, description: 'Disallowed MIME type or missing fields' })
-  @ApiUnauthorizedResponse({ type: UnauthorizedErrorDto, description: 'Missing or invalid JWT' })
-  @ApiForbiddenResponse({ type: ForbiddenErrorDto, description: 'Insufficient permissions' })
   requestUploadUrl(@Body() dto: RequestAudioUploadUrlDto) {
     return this.service.requestAudioUploadUrl(dto);
   }
 
   @Post()
-  @UseGuards(JwtAuthGuard, PermissionGuard)
-  @ApiBearerAuth('jwt')
-  @RequirePermission('audios:create')
+  @Auth('audios:create')
   @ApiOperation({ summary: 'Create an audio record', description: 'Requires permission: `audios:create`. Exactly one translation must have `is_default: true`.' })
   @ApiCreatedResponse({ type: AudioCreatedResponseDto })
   @ApiBadRequestResponse({ type: ValidationErrorDto, description: 'Validation failed' })
   @ApiNotFoundResponse({ type: NotFoundErrorDto, description: 'The provided speaker_id does not match a live speaker' })
   @ApiConflictResponse({ type: ConflictErrorDto, description: 'An audio translation slug is already in use' })
-  @ApiUnauthorizedResponse({ type: UnauthorizedErrorDto, description: 'Missing or invalid JWT' })
-  @ApiForbiddenResponse({ type: ForbiddenErrorDto, description: 'Insufficient permissions' })
   create(@Body() dto: CreateAudioDto, @CurrentUser() user: CurrentUserPayload, @Lang() lang: string | null) {
     return this.service.create(dto, user.id, lang);
   }
 
   @Post(':id/restore')
   @HttpCode(200)
-  @UseGuards(JwtAuthGuard, PermissionGuard)
-  @ApiBearerAuth('jwt')
-  @RequirePermission('audios:delete')
+  @Auth('audios:delete')
   @ApiOperation({
     summary: 'Restore a soft-deleted audio',
     description: 'Clears `deleted_at` and reverses each translation slug suffix. 409 if an original slug was claimed meanwhile. Requires permission: `audios:delete`.',
@@ -178,8 +151,6 @@ export class AudiosController {
   @ApiOkResponse({ type: AudioMessageResponseDto })
   @ApiNotFoundResponse({ type: NotFoundErrorDto, description: 'No soft-deleted audio with that ID exists' })
   @ApiConflictResponse({ type: ConflictErrorDto, description: 'A live audio has taken the restored slug' })
-  @ApiUnauthorizedResponse({ type: UnauthorizedErrorDto, description: 'Missing or invalid JWT' })
-  @ApiForbiddenResponse({ type: ForbiddenErrorDto, description: 'Insufficient permissions' })
   restore(@Param('id') id: string, @CurrentUser() user: CurrentUserPayload) {
     return this.service.restore(id, user.id);
   }
@@ -198,45 +169,33 @@ export class AudiosController {
   }
 
   @Patch(':id')
-  @UseGuards(JwtAuthGuard, PermissionGuard)
-  @ApiBearerAuth('jwt')
-  @RequirePermission('audios:update')
+  @Auth('audios:update')
   @ApiOperation({ summary: 'Update an audio record and upsert translations', description: 'Requires permission: `audios:update`.' })
   @ApiParam({ name: 'id', format: 'uuid' })
   @ApiOkResponse({ type: AudioDetailResponseDto })
   @ApiBadRequestResponse({ type: ValidationErrorDto, description: 'Validation failed' })
   @ApiNotFoundResponse({ type: NotFoundErrorDto, description: 'No audio with that ID exists, the speaker_id is unknown, or it has been deleted' })
   @ApiConflictResponse({ type: ConflictErrorDto, description: 'An audio translation slug is already in use' })
-  @ApiUnauthorizedResponse({ type: UnauthorizedErrorDto, description: 'Missing or invalid JWT' })
-  @ApiForbiddenResponse({ type: ForbiddenErrorDto, description: 'Insufficient permissions' })
   update(@Param('id') id: string, @Body() dto: UpdateAudioDto, @CurrentUser() user: CurrentUserPayload, @Lang() lang: string | null) {
     return this.service.update(id, dto, user.id, lang);
   }
 
   @Patch(':id/publish')
-  @UseGuards(JwtAuthGuard, PermissionGuard)
-  @ApiBearerAuth('jwt')
-  @RequirePermission('audios:update')
+  @Auth('audios:update')
   @ApiOperation({ summary: 'Publish or unpublish an audio', description: 'Requires permission: `audios:update`.' })
   @ApiParam({ name: 'id', format: 'uuid' })
   @ApiOkResponse({ type: AudioDetailResponseDto })
   @ApiNotFoundResponse({ type: NotFoundErrorDto, description: 'No audio with that ID exists, or it has been deleted' })
-  @ApiUnauthorizedResponse({ type: UnauthorizedErrorDto, description: 'Missing or invalid JWT' })
-  @ApiForbiddenResponse({ type: ForbiddenErrorDto, description: 'Insufficient permissions' })
   togglePublish(@Param('id') id: string, @Body() dto: ToggleAudioPublishDto, @CurrentUser() user: CurrentUserPayload, @Lang() lang: string | null) {
     return this.service.togglePublish(id, dto, user.id, lang);
   }
 
   @Delete(':id')
-  @UseGuards(JwtAuthGuard, PermissionGuard)
-  @ApiBearerAuth('jwt')
-  @RequirePermission('audios:delete')
+  @Auth('audios:delete')
   @ApiOperation({ summary: 'Soft-delete an audio', description: 'Sets `deleted_at` and suffixes each translation slug so it can be reused. Restore is reversible. Requires permission: `audios:delete`.' })
   @ApiParam({ name: 'id', format: 'uuid' })
   @ApiOkResponse({ type: AudioMessageResponseDto })
   @ApiNotFoundResponse({ type: NotFoundErrorDto, description: 'No audio with that ID exists, or it has already been deleted' })
-  @ApiUnauthorizedResponse({ type: UnauthorizedErrorDto, description: 'Missing or invalid JWT' })
-  @ApiForbiddenResponse({ type: ForbiddenErrorDto, description: 'Insufficient permissions' })
   remove(@Param('id') id: string, @CurrentUser() user: CurrentUserPayload) {
     return this.service.softDelete(id, user.id);
   }

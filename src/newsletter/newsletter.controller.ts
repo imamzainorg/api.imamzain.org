@@ -1,9 +1,7 @@
-import { Body, Controller, Delete, Get, HttpCode, Param, ParseUUIDPipe, Post, Query, UseGuards } from '@nestjs/common';
+import { Body, Controller, Delete, Get, HttpCode, Param, ParseUUIDPipe, Post, Query } from '@nestjs/common';
 import {
   ApiBadRequestResponse,
-  ApiBearerAuth,
   ApiConflictResponse,
-  ApiForbiddenResponse,
   ApiNotFoundResponse,
   ApiOkResponse,
   ApiOperation,
@@ -14,11 +12,9 @@ import {
   ApiUnauthorizedResponse,
 } from '@nestjs/swagger';
 import { Throttle } from '@nestjs/throttler';
-import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { Auth } from '../common/decorators/auth.decorator';
 import { CurrentUser, CurrentUserPayload } from '../common/decorators/current-user.decorator';
-import { RequirePermission } from '../common/decorators/require-permission.decorator';
-import { ConflictErrorDto, ForbiddenErrorDto, NotFoundErrorDto, TooManyRequestsErrorDto, UnauthorizedErrorDto, ValidationErrorDto } from '../common/dto/api-response.dto';
-import { PermissionGuard } from '../common/guards/permission.guard';
+import { ConflictErrorDto, NotFoundErrorDto, TooManyRequestsErrorDto, UnauthorizedErrorDto, ValidationErrorDto } from '../common/dto/api-response.dto';
 import { SubscriberQueryDto, SubscribeDto, UnsubscribeDto } from './dto/newsletter.dto';
 import {
   NewsletterMessageResponseDto,
@@ -61,9 +57,7 @@ export class NewsletterController {
   }
 
   @Get('subscribers')
-  @UseGuards(JwtAuthGuard, PermissionGuard)
-  @ApiBearerAuth('jwt')
-  @RequirePermission('newsletter:read')
+  @Auth('newsletter:read')
   @ApiOperation({ summary: 'List newsletter subscribers (paginated)', description: 'Requires permission: `newsletter:read`. Defaults to active subscribers only; pass `is_active=false` to list inactive ones.' })
   @ApiQuery({ name: 'page', required: false, type: Number, example: 1, description: 'Page number (default: 1)' })
   @ApiQuery({ name: 'limit', required: false, type: Number, example: 20, description: 'Items per page (default: 20, max: 100)' })
@@ -71,17 +65,13 @@ export class NewsletterController {
   @ApiQuery({ name: 'is_active', required: false, type: Boolean, example: true, description: 'Filter by active status. Omit to return all.' })
   @ApiOkResponse({ type: SubscriberListResponseDto, description: 'Paginated list of subscribers' })
   @ApiBadRequestResponse({ type: ValidationErrorDto, description: 'Invalid query parameters (page < 1, limit out of 1–100, or non-integer values)' })
-  @ApiUnauthorizedResponse({ type: UnauthorizedErrorDto, description: 'Missing or invalid JWT' })
-  @ApiForbiddenResponse({ type: ForbiddenErrorDto, description: 'Insufficient permissions' })
   findAll(@Query() query: SubscriberQueryDto) {
     return this.newsletterService.findAll(query.page ?? 1, query.limit ?? 20, { search: query.search, is_active: query.is_active });
   }
 
   @Post('subscribers/:id/unsubscribe')
   @HttpCode(200)
-  @UseGuards(JwtAuthGuard, PermissionGuard)
-  @ApiBearerAuth('jwt')
-  @RequirePermission('newsletter:update')
+  @Auth('newsletter:update')
   @ApiOperation({
     summary: 'Unsubscribe a subscriber (admin)',
     description:
@@ -90,8 +80,6 @@ export class NewsletterController {
   @ApiParam({ name: 'id', format: 'uuid' })
   @ApiOkResponse({ type: SubscriberResponseDto, description: 'Subscriber set to inactive; their email is preserved' })
   @ApiNotFoundResponse({ type: NotFoundErrorDto, description: 'No subscriber with that ID exists' })
-  @ApiUnauthorizedResponse({ type: UnauthorizedErrorDto, description: 'Missing or invalid JWT' })
-  @ApiForbiddenResponse({ type: ForbiddenErrorDto, description: 'Insufficient permissions' })
   unsubscribeAsAdmin(
     @Param('id', new ParseUUIDPipe()) id: string,
     @CurrentUser() user: CurrentUserPayload,
@@ -101,9 +89,7 @@ export class NewsletterController {
 
   @Post('subscribers/:id/resubscribe')
   @HttpCode(200)
-  @UseGuards(JwtAuthGuard, PermissionGuard)
-  @ApiBearerAuth('jwt')
-  @RequirePermission('newsletter:update')
+  @Auth('newsletter:update')
   @ApiOperation({
     summary: 'Reactivate an inactive subscriber (admin)',
     description: 'Flips an unsubscribed subscriber back to active. Idempotent. Requires permission: `newsletter:update`.',
@@ -111,8 +97,6 @@ export class NewsletterController {
   @ApiParam({ name: 'id', format: 'uuid' })
   @ApiOkResponse({ type: SubscriberResponseDto, description: 'Subscriber set back to active' })
   @ApiNotFoundResponse({ type: NotFoundErrorDto, description: 'No subscriber with that ID exists' })
-  @ApiUnauthorizedResponse({ type: UnauthorizedErrorDto, description: 'Missing or invalid JWT' })
-  @ApiForbiddenResponse({ type: ForbiddenErrorDto, description: 'Insufficient permissions' })
   resubscribeAsAdmin(
     @Param('id', new ParseUUIDPipe()) id: string,
     @CurrentUser() user: CurrentUserPayload,
@@ -121,9 +105,7 @@ export class NewsletterController {
   }
 
   @Get('subscribers/trash')
-  @UseGuards(JwtAuthGuard, PermissionGuard)
-  @ApiBearerAuth('jwt')
-  @RequirePermission('newsletter:delete')
+  @Auth('newsletter:delete')
   @ApiOperation({
     summary: 'List soft-deleted subscribers (CMS trash view)',
     description: 'Paginated list of subscriber records whose `deleted_at` is set. Requires permission: `newsletter:delete`.',
@@ -131,17 +113,13 @@ export class NewsletterController {
   @ApiQuery({ name: 'page', required: false, type: Number, example: 1 })
   @ApiQuery({ name: 'limit', required: false, type: Number, example: 20 })
   @ApiOkResponse({ type: SubscriberListResponseDto, description: 'Paginated list of trashed subscribers' })
-  @ApiUnauthorizedResponse({ type: UnauthorizedErrorDto, description: 'Missing or invalid JWT' })
-  @ApiForbiddenResponse({ type: ForbiddenErrorDto, description: 'Insufficient permissions' })
   findTrash(@Query() query: SubscriberQueryDto) {
     return this.newsletterService.findTrash(query.page ?? 1, query.limit ?? 20);
   }
 
   @Post('subscribers/:id/restore')
   @HttpCode(200)
-  @UseGuards(JwtAuthGuard, PermissionGuard)
-  @ApiBearerAuth('jwt')
-  @RequirePermission('newsletter:delete')
+  @Auth('newsletter:delete')
   @ApiOperation({
     summary: 'Restore a soft-deleted subscriber (admin)',
     description: 'Clears `deleted_at` and reactivates the subscriber. Requires permission: `newsletter:delete`.',
@@ -149,16 +127,12 @@ export class NewsletterController {
   @ApiParam({ name: 'id', format: 'uuid' })
   @ApiOkResponse({ type: SubscriberResponseDto, description: 'Subscriber restored and reactivated' })
   @ApiNotFoundResponse({ type: NotFoundErrorDto, description: 'No soft-deleted subscriber with that ID exists' })
-  @ApiUnauthorizedResponse({ type: UnauthorizedErrorDto, description: 'Missing or invalid JWT' })
-  @ApiForbiddenResponse({ type: ForbiddenErrorDto, description: 'Insufficient permissions' })
   restore(@Param('id', new ParseUUIDPipe()) id: string, @CurrentUser() user: CurrentUserPayload) {
     return this.newsletterService.restore(id, user.id);
   }
 
   @Delete('subscribers/:id')
-  @UseGuards(JwtAuthGuard, PermissionGuard)
-  @ApiBearerAuth('jwt')
-  @RequirePermission('newsletter:delete')
+  @Auth('newsletter:delete')
   @ApiOperation({
     summary: 'Soft-delete a subscriber record (admin)',
     description:
@@ -167,8 +141,6 @@ export class NewsletterController {
   @ApiParam({ name: 'id', format: 'uuid' })
   @ApiOkResponse({ type: NewsletterMessageResponseDto, description: 'Subscriber record soft-deleted; the email address can re-subscribe in the future' })
   @ApiNotFoundResponse({ type: NotFoundErrorDto, description: 'No subscriber with that ID exists, or it has already been deleted' })
-  @ApiUnauthorizedResponse({ type: UnauthorizedErrorDto, description: 'Missing or invalid JWT' })
-  @ApiForbiddenResponse({ type: ForbiddenErrorDto, description: 'Insufficient permissions' })
   remove(@Param('id', new ParseUUIDPipe()) id: string, @CurrentUser() user: CurrentUserPayload) {
     return this.newsletterService.softDelete(id, user.id);
   }

@@ -8,14 +8,11 @@ import {
   Patch,
   Post,
   Query,
-  UseGuards,
 } from '@nestjs/common';
 import {
   ApiBadRequestResponse,
-  ApiBearerAuth,
   ApiConflictResponse,
   ApiCreatedResponse,
-  ApiForbiddenResponse,
   ApiHeader,
   ApiNotFoundResponse,
   ApiOkResponse,
@@ -23,17 +20,14 @@ import {
   ApiParam,
   ApiQuery,
   ApiTags,
-  ApiUnauthorizedResponse,
 } from '@nestjs/swagger';
 import { Throttle } from '@nestjs/throttler';
-import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { Auth } from '../common/decorators/auth.decorator';
 import { CurrentUser, CurrentUserPayload } from '../common/decorators/current-user.decorator';
 import { Lang } from '../common/decorators/language.decorator';
-import { RequirePermission } from '../common/decorators/require-permission.decorator';
-import { ConflictErrorDto, ForbiddenErrorDto, NotFoundErrorDto, UnauthorizedErrorDto, ValidationErrorDto } from '../common/dto/api-response.dto';
+import { ConflictErrorDto, NotFoundErrorDto, ValidationErrorDto } from '../common/dto/api-response.dto';
 import { PaginationDto } from '../common/dto/pagination.dto';
 import { PublicCache } from '../common/decorators/public-cache.decorator';
-import { PermissionGuard } from '../common/guards/permission.guard';
 import { BulkIdsDto, BulkPublishDto, CreatePostDto, PostQueryDto, TogglePublishDto, UpdatePostDto } from './dto/post.dto';
 import {
   PostBulkResponseDto,
@@ -76,9 +70,7 @@ export class PostsController {
   }
 
   @Get('admin')
-  @UseGuards(JwtAuthGuard, PermissionGuard)
-  @ApiBearerAuth('jwt')
-  @RequirePermission('posts:read')
+  @Auth('posts:read')
   @ApiOperation({
     summary: 'List all posts including unpublished (admin)',
     description:
@@ -99,30 +91,22 @@ export class PostsController {
   })
   @ApiOkResponse({ type: PostListResponseDto, description: 'Paginated list of all posts' })
   @ApiBadRequestResponse({ type: ValidationErrorDto, description: 'Invalid query parameters (page < 1, limit out of 1–100, or non-integer values)' })
-  @ApiUnauthorizedResponse({ type: UnauthorizedErrorDto, description: 'Missing or invalid JWT' })
-  @ApiForbiddenResponse({ type: ForbiddenErrorDto, description: 'Insufficient permissions' })
   findAdmin(@Query() query: PostQueryDto, @Lang() lang: string | null) {
     return this.postsService.findAll(query, lang, true);
   }
 
   @Get('admin/:id')
-  @UseGuards(JwtAuthGuard, PermissionGuard)
-  @ApiBearerAuth('jwt')
-  @RequirePermission('posts:read')
+  @Auth('posts:read')
   @ApiOperation({ summary: 'Get a single post by ID including unpublished (admin)', description: 'Requires permission: `posts:read`. Returns drafts and unpublished posts.' })
   @ApiParam({ name: 'id', format: 'uuid' })
   @ApiOkResponse({ type: PostDetailResponseDto, description: 'Post detail with all translations and attached media records (regardless of publish state)' })
   @ApiNotFoundResponse({ type: NotFoundErrorDto, description: 'No post with that ID exists, or it has been deleted' })
-  @ApiUnauthorizedResponse({ type: UnauthorizedErrorDto, description: 'Missing or invalid JWT' })
-  @ApiForbiddenResponse({ type: ForbiddenErrorDto, description: 'Insufficient permissions' })
   findAdminOne(@Param('id') id: string, @Lang() lang: string | null) {
     return this.postsService.findOne(id, lang, true);
   }
 
   @Get('trash')
-  @UseGuards(JwtAuthGuard, PermissionGuard)
-  @ApiBearerAuth('jwt')
-  @RequirePermission('posts:delete')
+  @Auth('posts:delete')
   @ApiOperation({
     summary: 'List soft-deleted posts (CMS trash view)',
     description:
@@ -132,17 +116,13 @@ export class PostsController {
   @ApiQuery({ name: 'limit', required: false, type: Number, example: 20 })
   @ApiOkResponse({ type: PostListResponseDto, description: 'Paginated list of trashed posts' })
   @ApiBadRequestResponse({ type: ValidationErrorDto, description: 'Invalid query parameters (page < 1, limit out of 1–100, or non-integer values)' })
-  @ApiUnauthorizedResponse({ type: UnauthorizedErrorDto, description: 'Missing or invalid JWT' })
-  @ApiForbiddenResponse({ type: ForbiddenErrorDto, description: 'Insufficient permissions' })
   findTrash(@Query() query: PaginationDto) {
     return this.postsService.findTrash(query.page ?? 1, query.limit ?? 20);
   }
 
   @Post(':id/restore')
   @HttpCode(200)
-  @UseGuards(JwtAuthGuard, PermissionGuard)
-  @ApiBearerAuth('jwt')
-  @RequirePermission('posts:delete')
+  @Auth('posts:delete')
   @ApiOperation({
     summary: 'Restore a soft-deleted post',
     description:
@@ -152,8 +132,6 @@ export class PostsController {
   @ApiOkResponse({ type: PostMessageResponseDto, description: 'Post restored' })
   @ApiNotFoundResponse({ type: NotFoundErrorDto, description: 'No soft-deleted post with that ID exists' })
   @ApiConflictResponse({ type: ConflictErrorDto, description: 'A live post has taken one of the restored slugs' })
-  @ApiUnauthorizedResponse({ type: UnauthorizedErrorDto, description: 'Missing or invalid JWT' })
-  @ApiForbiddenResponse({ type: ForbiddenErrorDto, description: 'Insufficient permissions' })
   restore(@Param('id') id: string, @CurrentUser() user: CurrentUserPayload) {
     return this.postsService.restore(id, user.id);
   }
@@ -179,32 +157,24 @@ export class PostsController {
   }
 
   @Post()
-  @UseGuards(JwtAuthGuard, PermissionGuard)
-  @ApiBearerAuth('jwt')
-  @RequirePermission('posts:create')
+  @Auth('posts:create')
   @ApiOperation({ summary: 'Create a new post with translations and optional attachments', description: 'Requires permission: `posts:create`. Exactly one translation must have `is_default: true`.' })
   @ApiCreatedResponse({ type: PostCreatedResponseDto, description: 'Post created with all provided translations; returns the full post object including translation records and attachment list' })
   @ApiBadRequestResponse({ type: ValidationErrorDto, description: 'Validation failed, or translations did not contain exactly one is_default entry' })
   @ApiNotFoundResponse({ type: NotFoundErrorDto, description: 'No post category with that category_id exists, or the cover_image_id does not match any media record' })
   @ApiConflictResponse({ type: ConflictErrorDto, description: 'A translation slug is already used by another post in the same language' })
-  @ApiUnauthorizedResponse({ type: UnauthorizedErrorDto, description: 'Missing or invalid JWT' })
-  @ApiForbiddenResponse({ type: ForbiddenErrorDto, description: 'Insufficient permissions' })
   create(@Body() dto: CreatePostDto, @CurrentUser() user: CurrentUserPayload, @Lang() lang: string | null) {
     return this.postsService.create(dto, user.id, lang);
   }
 
   @Patch(':id')
-  @UseGuards(JwtAuthGuard, PermissionGuard)
-  @ApiBearerAuth('jwt')
-  @RequirePermission('posts:update')
+  @Auth('posts:update')
   @ApiOperation({ summary: 'Update a post and upsert translations', description: 'Requires permission: `posts:update`. Providing `attachment_ids` replaces all existing attachments.' })
   @ApiParam({ name: 'id', format: 'uuid' })
   @ApiOkResponse({ type: PostDetailResponseDto, description: 'Updated post with all translations; if attachment_ids was provided the attachment list reflects the replacement' })
   @ApiBadRequestResponse({ type: ValidationErrorDto, description: 'Validation failed, or the resulting translations did not contain exactly one is_default entry' })
   @ApiNotFoundResponse({ type: NotFoundErrorDto, description: 'No post with that ID exists, or the new category_id / cover_image_id does not exist or has been soft-deleted' })
   @ApiConflictResponse({ type: ConflictErrorDto, description: 'A translation slug is already used by another post in the same language' })
-  @ApiUnauthorizedResponse({ type: UnauthorizedErrorDto, description: 'Missing or invalid JWT' })
-  @ApiForbiddenResponse({ type: ForbiddenErrorDto, description: 'Insufficient permissions' })
   update(
     @Param('id') id: string,
     @Body() dto: UpdatePostDto,
@@ -215,15 +185,11 @@ export class PostsController {
   }
 
   @Patch(':id/publish')
-  @UseGuards(JwtAuthGuard, PermissionGuard)
-  @ApiBearerAuth('jwt')
-  @RequirePermission('posts:update')
+  @Auth('posts:update')
   @ApiOperation({ summary: 'Publish or unpublish a post', description: 'Sets `published_at` automatically on first publish. Requires permission: `posts:update`.' })
   @ApiParam({ name: 'id', format: 'uuid' })
   @ApiOkResponse({ type: PostDetailResponseDto, description: 'Post publish state updated; published_at is set automatically on the first publish and is never overwritten on subsequent publishes' })
   @ApiNotFoundResponse({ type: NotFoundErrorDto, description: 'No post with that ID exists, or it has been deleted' })
-  @ApiUnauthorizedResponse({ type: UnauthorizedErrorDto, description: 'Missing or invalid JWT' })
-  @ApiForbiddenResponse({ type: ForbiddenErrorDto, description: 'Insufficient permissions' })
   togglePublish(
     @Param('id') id: string,
     @Body() dto: TogglePublishDto,
@@ -235,9 +201,7 @@ export class PostsController {
 
   @Post('bulk/publish')
   @HttpCode(200)
-  @UseGuards(JwtAuthGuard, PermissionGuard)
-  @ApiBearerAuth('jwt')
-  @RequirePermission('posts:update')
+  @Auth('posts:update')
   @ApiOperation({
     summary: 'Bulk publish / unpublish posts',
     description:
@@ -245,17 +209,13 @@ export class PostsController {
   })
   @ApiOkResponse({ type: PostBulkResponseDto, description: 'Counts of updated and skipped posts' })
   @ApiBadRequestResponse({ type: ValidationErrorDto, description: 'Validation failed (empty ids, more than 200 ids, etc.)' })
-  @ApiUnauthorizedResponse({ type: UnauthorizedErrorDto, description: 'Missing or invalid JWT' })
-  @ApiForbiddenResponse({ type: ForbiddenErrorDto, description: 'Insufficient permissions' })
   bulkPublish(@Body() dto: BulkPublishDto, @CurrentUser() user: CurrentUserPayload) {
     return this.postsService.bulkSetPublish(dto, user.id);
   }
 
   @Post('bulk/delete')
   @HttpCode(200)
-  @UseGuards(JwtAuthGuard, PermissionGuard)
-  @ApiBearerAuth('jwt')
-  @RequirePermission('posts:delete')
+  @Auth('posts:delete')
   @ApiOperation({
     summary: 'Bulk soft-delete posts',
     description:
@@ -263,22 +223,16 @@ export class PostsController {
   })
   @ApiOkResponse({ type: PostBulkResponseDto, description: 'Counts of deleted and skipped posts' })
   @ApiBadRequestResponse({ type: ValidationErrorDto, description: 'Validation failed (empty ids, more than 200 ids, etc.)' })
-  @ApiUnauthorizedResponse({ type: UnauthorizedErrorDto, description: 'Missing or invalid JWT' })
-  @ApiForbiddenResponse({ type: ForbiddenErrorDto, description: 'Insufficient permissions' })
   bulkDelete(@Body() dto: BulkIdsDto, @CurrentUser() user: CurrentUserPayload) {
     return this.postsService.bulkDelete(dto, user.id);
   }
 
   @Delete(':id')
-  @UseGuards(JwtAuthGuard, PermissionGuard)
-  @ApiBearerAuth('jwt')
-  @RequirePermission('posts:delete')
+  @Auth('posts:delete')
   @ApiOperation({ summary: 'Soft-delete a post', description: 'Sets `deleted_at` — the post is hidden from all queries. Requires permission: `posts:delete`.' })
   @ApiParam({ name: 'id', format: 'uuid' })
   @ApiOkResponse({ type: PostMessageResponseDto, description: 'Post soft-deleted; immediately hidden from all public and admin list queries — data is preserved in the database' })
   @ApiNotFoundResponse({ type: NotFoundErrorDto, description: 'No post with that ID exists, or it has already been deleted' })
-  @ApiUnauthorizedResponse({ type: UnauthorizedErrorDto, description: 'Missing or invalid JWT' })
-  @ApiForbiddenResponse({ type: ForbiddenErrorDto, description: 'Insufficient permissions' })
   remove(@Param('id') id: string, @CurrentUser() user: CurrentUserPayload) {
     return this.postsService.softDelete(id, user.id);
   }

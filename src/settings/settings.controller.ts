@@ -1,28 +1,21 @@
-import { Body, Controller, Delete, Get, HttpCode, Param, Put, UseGuards } from '@nestjs/common';
+import { Body, Controller, Delete, Get, HttpCode, Param, Put } from '@nestjs/common';
 import {
   ApiBadRequestResponse,
-  ApiBearerAuth,
   ApiConflictResponse,
-  ApiForbiddenResponse,
   ApiNotFoundResponse,
   ApiOkResponse,
   ApiOperation,
   ApiParam,
   ApiTags,
-  ApiUnauthorizedResponse,
 } from '@nestjs/swagger';
-import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { Auth } from '../common/decorators/auth.decorator';
 import { CurrentUser, CurrentUserPayload } from '../common/decorators/current-user.decorator';
-import { RequirePermission } from '../common/decorators/require-permission.decorator';
 import {
   ConflictErrorDto,
-  ForbiddenErrorDto,
   NotFoundErrorDto,
-  UnauthorizedErrorDto,
   ValidationErrorDto,
 } from '../common/dto/api-response.dto';
 import { PublicCache } from '../common/decorators/public-cache.decorator';
-import { PermissionGuard } from '../common/guards/permission.guard';
 import { UpsertSettingDto } from './dto/setting.dto';
 import {
   SettingListResponseDto,
@@ -54,36 +47,26 @@ export class SettingsController {
   }
 
   @Get()
-  @UseGuards(JwtAuthGuard, PermissionGuard)
-  @ApiBearerAuth('jwt')
-  @RequirePermission('settings:read')
+  @Auth('settings:read')
   @ApiOperation({ summary: 'List all site settings (admin)', description: 'Requires permission: `settings:read`.' })
   @ApiOkResponse({ type: SettingListResponseDto, description: 'Full settings list' })
-  @ApiUnauthorizedResponse({ type: UnauthorizedErrorDto, description: 'Missing or invalid JWT' })
-  @ApiForbiddenResponse({ type: ForbiddenErrorDto, description: 'Insufficient permissions' })
   findAll() {
     return this.service.findAll();
   }
 
   @Get(':key')
-  @UseGuards(JwtAuthGuard, PermissionGuard)
-  @ApiBearerAuth('jwt')
-  @RequirePermission('settings:read')
+  @Auth('settings:read')
   @ApiOperation({ summary: 'Get a single setting (admin)', description: 'Requires permission: `settings:read`.' })
   @ApiParam({ name: 'key' })
   @ApiOkResponse({ type: SettingResponseDto, description: 'Setting detail' })
   @ApiNotFoundResponse({ type: NotFoundErrorDto, description: 'No setting with that key exists' })
-  @ApiUnauthorizedResponse({ type: UnauthorizedErrorDto, description: 'Missing or invalid JWT' })
-  @ApiForbiddenResponse({ type: ForbiddenErrorDto, description: 'Insufficient permissions' })
   findOne(@Param('key') key: string) {
     return this.service.findOne(key);
   }
 
   @Put(':key')
   @HttpCode(200)
-  @UseGuards(JwtAuthGuard, PermissionGuard)
-  @ApiBearerAuth('jwt')
-  @RequirePermission('settings:update')
+  @Auth('settings:update')
   @ApiOperation({
     summary: 'Create or update a setting (admin)',
     description:
@@ -93,8 +76,6 @@ export class SettingsController {
   @ApiOkResponse({ type: SettingResponseDto, description: 'Setting created or updated' })
   @ApiBadRequestResponse({ type: ValidationErrorDto, description: 'Validation failed, or value did not match declared type' })
   @ApiConflictResponse({ type: ConflictErrorDto, description: 'Attempted to change the type of an existing setting' })
-  @ApiUnauthorizedResponse({ type: UnauthorizedErrorDto, description: 'Missing or invalid JWT' })
-  @ApiForbiddenResponse({ type: ForbiddenErrorDto, description: 'Insufficient permissions' })
   upsert(
     @Param('key') key: string,
     @Body() dto: UpsertSettingDto,
@@ -104,15 +85,11 @@ export class SettingsController {
   }
 
   @Delete(':key')
-  @UseGuards(JwtAuthGuard, PermissionGuard)
-  @ApiBearerAuth('jwt')
-  @RequirePermission('settings:delete')
+  @Auth('settings:delete')
   @ApiOperation({ summary: 'Delete a setting (admin)', description: 'Hard-delete. Requires permission: `settings:delete`.' })
   @ApiParam({ name: 'key' })
   @ApiOkResponse({ type: SettingMessageResponseDto, description: 'Setting deleted' })
   @ApiNotFoundResponse({ type: NotFoundErrorDto, description: 'No setting with that key exists' })
-  @ApiUnauthorizedResponse({ type: UnauthorizedErrorDto, description: 'Missing or invalid JWT' })
-  @ApiForbiddenResponse({ type: ForbiddenErrorDto, description: 'Insufficient permissions' })
   delete(@Param('key') key: string, @CurrentUser() user: CurrentUserPayload) {
     return this.service.delete(key, user.id);
   }

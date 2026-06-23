@@ -1,9 +1,7 @@
-import { Body, Controller, Delete, Get, HttpCode, Param, Patch, Post, Query, UseGuards } from '@nestjs/common';
+import { Body, Controller, Delete, Get, HttpCode, Param, Patch, Post, Query } from '@nestjs/common';
 import {
   ApiBadRequestResponse,
-  ApiBearerAuth,
   ApiCreatedResponse,
-  ApiForbiddenResponse,
   ApiHeader,
   ApiNotFoundResponse,
   ApiOkResponse,
@@ -11,16 +9,13 @@ import {
   ApiParam,
   ApiQuery,
   ApiTags,
-  ApiUnauthorizedResponse,
 } from '@nestjs/swagger';
-import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { Auth } from '../common/decorators/auth.decorator';
 import { CurrentUser, CurrentUserPayload } from '../common/decorators/current-user.decorator';
 import { Lang } from '../common/decorators/language.decorator';
-import { RequirePermission } from '../common/decorators/require-permission.decorator';
-import { ForbiddenErrorDto, NotFoundErrorDto, UnauthorizedErrorDto, ValidationErrorDto } from '../common/dto/api-response.dto';
+import { NotFoundErrorDto, ValidationErrorDto } from '../common/dto/api-response.dto';
 import { PaginationDto } from '../common/dto/pagination.dto';
 import { PublicCache } from '../common/decorators/public-cache.decorator';
-import { PermissionGuard } from '../common/guards/permission.guard';
 import { CreateGalleryImageDto, GalleryQueryDto, UpdateGalleryImageDto } from './dto/gallery.dto';
 import {
   GalleryCreatedResponseDto,
@@ -51,9 +46,7 @@ export class GalleryController {
   }
 
   @Get('trash')
-  @UseGuards(JwtAuthGuard, PermissionGuard)
-  @ApiBearerAuth('jwt')
-  @RequirePermission('gallery:delete')
+  @Auth('gallery:delete')
   @ApiOperation({
     summary: 'List soft-deleted gallery images (CMS trash view)',
     description:
@@ -63,17 +56,13 @@ export class GalleryController {
   @ApiQuery({ name: 'limit', required: false, type: Number, example: 20 })
   @ApiOkResponse({ type: GalleryListResponseDto, description: 'Paginated list of trashed gallery images' })
   @ApiBadRequestResponse({ type: ValidationErrorDto, description: 'Invalid query parameters (page < 1, limit out of 1–100, or non-integer values)' })
-  @ApiUnauthorizedResponse({ type: UnauthorizedErrorDto, description: 'Missing or invalid JWT' })
-  @ApiForbiddenResponse({ type: ForbiddenErrorDto, description: 'Insufficient permissions' })
   findTrash(@Query() query: PaginationDto) {
     return this.galleryService.findTrash(query.page ?? 1, query.limit ?? 20);
   }
 
   @Post(':id/restore')
   @HttpCode(200)
-  @UseGuards(JwtAuthGuard, PermissionGuard)
-  @ApiBearerAuth('jwt')
-  @RequirePermission('gallery:delete')
+  @Auth('gallery:delete')
   @ApiOperation({
     summary: 'Restore a soft-deleted gallery image',
     description:
@@ -82,8 +71,6 @@ export class GalleryController {
   @ApiParam({ name: 'id', format: 'uuid', description: 'Media ID (serves as the gallery image primary key)' })
   @ApiOkResponse({ type: GalleryMessageResponseDto, description: 'Gallery image restored' })
   @ApiNotFoundResponse({ type: NotFoundErrorDto, description: 'No soft-deleted gallery image with that media ID exists' })
-  @ApiUnauthorizedResponse({ type: UnauthorizedErrorDto, description: 'Missing or invalid JWT' })
-  @ApiForbiddenResponse({ type: ForbiddenErrorDto, description: 'Insufficient permissions' })
   restore(@Param('id') id: string, @CurrentUser() user: CurrentUserPayload) {
     return this.galleryService.restore(id, user.id);
   }
@@ -99,44 +86,32 @@ export class GalleryController {
   }
 
   @Post()
-  @UseGuards(JwtAuthGuard, PermissionGuard)
-  @ApiBearerAuth('jwt')
-  @RequirePermission('gallery:create')
+  @Auth('gallery:create')
   @ApiOperation({ summary: 'Add an image to the gallery', description: 'The `media_id` must reference an existing media record. Requires permission: `gallery:create`.' })
   @ApiCreatedResponse({ type: GalleryCreatedResponseDto, description: 'Gallery image entry created; returns the full record including the linked media details and translations' })
   @ApiBadRequestResponse({ type: ValidationErrorDto, description: 'Validation failed' })
   @ApiNotFoundResponse({ type: NotFoundErrorDto, description: 'No media record with that media_id exists' })
-  @ApiUnauthorizedResponse({ type: UnauthorizedErrorDto, description: 'Missing or invalid JWT' })
-  @ApiForbiddenResponse({ type: ForbiddenErrorDto, description: 'Insufficient permissions' })
   create(@Body() dto: CreateGalleryImageDto, @CurrentUser() user: CurrentUserPayload, @Lang() lang: string | null) {
     return this.galleryService.create(dto, user.id, lang);
   }
 
   @Patch(':id')
-  @UseGuards(JwtAuthGuard, PermissionGuard)
-  @ApiBearerAuth('jwt')
-  @RequirePermission('gallery:update')
+  @Auth('gallery:update')
   @ApiOperation({ summary: 'Update a gallery image and upsert translations', description: 'Requires permission: `gallery:update`.' })
   @ApiParam({ name: 'id', format: 'uuid', description: 'Media ID' })
   @ApiOkResponse({ type: GalleryDetailResponseDto, description: 'Updated gallery image with all translations' })
   @ApiBadRequestResponse({ type: ValidationErrorDto, description: 'Validation failed' })
   @ApiNotFoundResponse({ type: NotFoundErrorDto, description: 'No gallery image with that media ID exists, or it has been deleted' })
-  @ApiUnauthorizedResponse({ type: UnauthorizedErrorDto, description: 'Missing or invalid JWT' })
-  @ApiForbiddenResponse({ type: ForbiddenErrorDto, description: 'Insufficient permissions' })
   update(@Param('id') id: string, @Body() dto: UpdateGalleryImageDto, @CurrentUser() user: CurrentUserPayload, @Lang() lang: string | null) {
     return this.galleryService.update(id, dto, user.id, lang);
   }
 
   @Delete(':id')
-  @UseGuards(JwtAuthGuard, PermissionGuard)
-  @ApiBearerAuth('jwt')
-  @RequirePermission('gallery:delete')
+  @Auth('gallery:delete')
   @ApiOperation({ summary: 'Soft-delete a gallery image', description: 'Requires permission: `gallery:delete`.' })
   @ApiParam({ name: 'id', format: 'uuid', description: 'Media ID' })
   @ApiOkResponse({ type: GalleryMessageResponseDto, description: 'Gallery image soft-deleted; immediately hidden from the public gallery — the underlying media record in R2 is NOT deleted' })
   @ApiNotFoundResponse({ type: NotFoundErrorDto, description: 'No gallery image with that media ID exists, or it has already been deleted' })
-  @ApiUnauthorizedResponse({ type: UnauthorizedErrorDto, description: 'Missing or invalid JWT' })
-  @ApiForbiddenResponse({ type: ForbiddenErrorDto, description: 'Insufficient permissions' })
   remove(@Param('id') id: string, @CurrentUser() user: CurrentUserPayload) {
     return this.galleryService.softDelete(id, user.id);
   }

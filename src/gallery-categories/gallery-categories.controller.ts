@@ -1,10 +1,8 @@
-import { Body, Controller, Delete, Get, HttpCode, Param, Patch, Post, Query, UseGuards } from '@nestjs/common';
+import { Body, Controller, Delete, Get, HttpCode, Param, Patch, Post, Query } from '@nestjs/common';
 import {
   ApiBadRequestResponse,
-  ApiBearerAuth,
   ApiConflictResponse,
   ApiCreatedResponse,
-  ApiForbiddenResponse,
   ApiHeader,
   ApiNotFoundResponse,
   ApiOkResponse,
@@ -12,16 +10,13 @@ import {
   ApiParam,
   ApiQuery,
   ApiTags,
-  ApiUnauthorizedResponse,
 } from '@nestjs/swagger';
-import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { Auth } from '../common/decorators/auth.decorator';
 import { CurrentUser, CurrentUserPayload } from '../common/decorators/current-user.decorator';
 import { Lang } from '../common/decorators/language.decorator';
-import { RequirePermission } from '../common/decorators/require-permission.decorator';
-import { ConflictErrorDto, ForbiddenErrorDto, NotFoundErrorDto, UnauthorizedErrorDto, ValidationErrorDto } from '../common/dto/api-response.dto';
+import { ConflictErrorDto, NotFoundErrorDto, ValidationErrorDto } from '../common/dto/api-response.dto';
 import { PaginationDto } from '../common/dto/pagination.dto';
 import { PublicCache } from '../common/decorators/public-cache.decorator';
-import { PermissionGuard } from '../common/guards/permission.guard';
 import { GalleryCategoriesService } from './gallery-categories.service';
 import { CreateGalleryCategoryDto, UpdateGalleryCategoryDto } from './dto/gallery-category.dto';
 import {
@@ -49,9 +44,7 @@ export class GalleryCategoriesController {
   }
 
   @Get('trash')
-  @UseGuards(JwtAuthGuard, PermissionGuard)
-  @ApiBearerAuth('jwt')
-  @RequirePermission('gallery-categories:delete')
+  @Auth('gallery-categories:delete')
   @ApiOperation({
     summary: 'List soft-deleted gallery categories (CMS trash view)',
     description:
@@ -61,17 +54,13 @@ export class GalleryCategoriesController {
   @ApiQuery({ name: 'limit', required: false, type: Number, example: 20 })
   @ApiOkResponse({ type: GalleryCategoryListResponseDto, description: 'Paginated list of trashed gallery categories' })
   @ApiBadRequestResponse({ type: ValidationErrorDto, description: 'Invalid query parameters (page < 1, limit out of 1–100, or non-integer values)' })
-  @ApiUnauthorizedResponse({ type: UnauthorizedErrorDto, description: 'Missing or invalid JWT' })
-  @ApiForbiddenResponse({ type: ForbiddenErrorDto, description: 'Insufficient permissions' })
   findTrash(@Query() query: PaginationDto) {
     return this.service.findTrash(query.page ?? 1, query.limit ?? 20);
   }
 
   @Post(':id/restore')
   @HttpCode(200)
-  @UseGuards(JwtAuthGuard, PermissionGuard)
-  @ApiBearerAuth('jwt')
-  @RequirePermission('gallery-categories:delete')
+  @Auth('gallery-categories:delete')
   @ApiOperation({
     summary: 'Restore a soft-deleted gallery category',
     description:
@@ -81,8 +70,6 @@ export class GalleryCategoriesController {
   @ApiOkResponse({ type: GalleryCategoryMessageResponseDto, description: 'Category restored' })
   @ApiNotFoundResponse({ type: NotFoundErrorDto, description: 'No soft-deleted category with that ID exists' })
   @ApiConflictResponse({ type: ConflictErrorDto, description: 'A live category has taken one of the restored translation slugs' })
-  @ApiUnauthorizedResponse({ type: UnauthorizedErrorDto, description: 'Missing or invalid JWT' })
-  @ApiForbiddenResponse({ type: ForbiddenErrorDto, description: 'Insufficient permissions' })
   restore(@Param('id') id: string, @CurrentUser() user: CurrentUserPayload) {
     return this.service.restore(id, user.id);
   }
@@ -98,37 +85,27 @@ export class GalleryCategoriesController {
   }
 
   @Post()
-  @UseGuards(JwtAuthGuard, PermissionGuard)
-  @ApiBearerAuth('jwt')
-  @RequirePermission('gallery-categories:create')
+  @Auth('gallery-categories:create')
   @ApiOperation({ summary: 'Create a gallery category with translations', description: 'Requires permission: `gallery-categories:create`.' })
   @ApiCreatedResponse({ type: GalleryCategoryCreatedResponseDto, description: 'Gallery category created with all provided translations' })
   @ApiBadRequestResponse({ type: ValidationErrorDto, description: 'Validation failed' })
-  @ApiUnauthorizedResponse({ type: UnauthorizedErrorDto, description: 'Missing or invalid JWT' })
-  @ApiForbiddenResponse({ type: ForbiddenErrorDto, description: 'Insufficient permissions' })
   create(@Body() dto: CreateGalleryCategoryDto, @CurrentUser() user: CurrentUserPayload) {
     return this.service.create(dto, user.id);
   }
 
   @Patch(':id')
-  @UseGuards(JwtAuthGuard, PermissionGuard)
-  @ApiBearerAuth('jwt')
-  @RequirePermission('gallery-categories:update')
+  @Auth('gallery-categories:update')
   @ApiOperation({ summary: 'Update gallery category translations', description: 'Requires permission: `gallery-categories:update`.' })
   @ApiParam({ name: 'id', format: 'uuid' })
   @ApiOkResponse({ type: GalleryCategoryDetailResponseDto, description: 'Updated gallery category with all translations' })
   @ApiBadRequestResponse({ type: ValidationErrorDto, description: 'Validation failed' })
   @ApiNotFoundResponse({ type: NotFoundErrorDto, description: 'No gallery category with that ID exists, or it has been deleted' })
-  @ApiUnauthorizedResponse({ type: UnauthorizedErrorDto, description: 'Missing or invalid JWT' })
-  @ApiForbiddenResponse({ type: ForbiddenErrorDto, description: 'Insufficient permissions' })
   update(@Param('id') id: string, @Body() dto: UpdateGalleryCategoryDto, @CurrentUser() user: CurrentUserPayload) {
     return this.service.update(id, dto, user.id);
   }
 
   @Delete(':id')
-  @UseGuards(JwtAuthGuard, PermissionGuard)
-  @ApiBearerAuth('jwt')
-  @RequirePermission('gallery-categories:delete')
+  @Auth('gallery-categories:delete')
   @ApiOperation({
     summary: 'Soft-delete a gallery category',
     description:
@@ -138,8 +115,6 @@ export class GalleryCategoriesController {
   @ApiOkResponse({ type: GalleryCategoryMessageResponseDto, description: 'Gallery category soft-deleted' })
   @ApiNotFoundResponse({ type: NotFoundErrorDto, description: 'No gallery category with that ID exists, or it has already been deleted' })
   @ApiConflictResponse({ type: ConflictErrorDto, description: 'Cannot delete: this gallery category still has live gallery images attached' })
-  @ApiUnauthorizedResponse({ type: UnauthorizedErrorDto, description: 'Missing or invalid JWT' })
-  @ApiForbiddenResponse({ type: ForbiddenErrorDto, description: 'Insufficient permissions' })
   remove(@Param('id') id: string, @CurrentUser() user: CurrentUserPayload) {
     return this.service.softDelete(id, user.id);
   }

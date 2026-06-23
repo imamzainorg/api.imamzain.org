@@ -10,6 +10,7 @@ import {
 } from '@nestjs/swagger';
 import { Throttle } from '@nestjs/throttler';
 import { Request } from 'express';
+import { AuthOnly } from '../common/decorators/auth.decorator';
 import { CurrentUser, CurrentUserPayload } from '../common/decorators/current-user.decorator';
 import { TooManyRequestsErrorDto, UnauthorizedErrorDto, ValidationErrorDto } from '../common/dto/api-response.dto';
 import { AuthService } from './auth.service';
@@ -66,25 +67,21 @@ export class AuthController {
 
   @Post('logout')
   @HttpCode(200)
-  @UseGuards(JwtAuthGuard)
-  @ApiBearerAuth('jwt')
+  @AuthOnly()
   @ApiOperation({
     summary: 'Revoke the current refresh token (or all tokens if none supplied)',
     description: 'Pass `refresh_token` in the body to revoke only that token; omit to revoke all active sessions.',
   })
   @ApiOkResponse({ type: LogoutResponseDto, description: 'Logged out successfully — idempotent regardless of whether the supplied refresh_token was active' })
   @ApiBadRequestResponse({ type: ValidationErrorDto, description: 'Validation failed — refresh_token was supplied but is not a string or exceeds 512 chars' })
-  @ApiUnauthorizedResponse({ type: UnauthorizedErrorDto, description: 'Missing or invalid JWT' })
   logout(@Body() dto: LogoutDto, @CurrentUser() user: CurrentUserPayload) {
     return this.authService.logout(user.id, dto.refresh_token);
   }
 
   @Get('me')
-  @UseGuards(JwtAuthGuard)
-  @ApiBearerAuth('jwt')
+  @AuthOnly()
   @ApiOperation({ summary: 'Get the current user profile with roles and permissions' })
   @ApiOkResponse({ type: MeResponseDto, description: 'Current user profile including all assigned roles and the full flattened permission list' })
-  @ApiUnauthorizedResponse({ type: UnauthorizedErrorDto, description: 'Missing or invalid JWT' })
   getMe(@CurrentUser() user: CurrentUserPayload) {
     return this.authService.getMe(user.id);
   }
