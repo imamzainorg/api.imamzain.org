@@ -1,5 +1,5 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { PaginationMetaDto } from '../../common/dto/api-response.dto';
+import { ApiEnvelope, ApiPaginatedData } from '../../common/dto/api-envelope';
 
 class PostCategoryTranslationDto {
   @ApiProperty({ example: 'ar' })
@@ -34,66 +34,24 @@ class PostCategoryDto {
   translation: PostCategoryTranslationDto | null;
 }
 
-class PostCategoryListDataDto {
-  @ApiProperty({ type: [PostCategoryDto] })
-  items: PostCategoryDto[];
+class PostCategoryListDataDto extends ApiPaginatedData(PostCategoryDto) {}
 
-  @ApiProperty({ type: PaginationMetaDto })
-  pagination: PaginationMetaDto;
-}
+export class PostCategoryListResponseDto extends ApiEnvelope(
+  PostCategoryListDataDto,
+  'Post categories fetched',
+) {}
 
-export class PostCategoryListResponseDto {
-  @ApiProperty({ example: true })
-  success: boolean;
+export class PostCategoryDetailResponseDto extends ApiEnvelope(
+  PostCategoryDto,
+  'Post category fetched',
+) {}
 
-  @ApiProperty({ example: '2024-01-01T00:00:00.000Z' })
-  timestamp: string;
+export class PostCategoryCreatedResponseDto extends ApiEnvelope(
+  PostCategoryDto,
+  'Post category created',
+) {}
 
-  @ApiProperty({ example: 'Post categories fetched' })
-  message: string;
-
-  @ApiProperty({ type: PostCategoryListDataDto })
-  data: PostCategoryListDataDto;
-}
-
-export class PostCategoryDetailResponseDto {
-  @ApiProperty({ example: true })
-  success: boolean;
-
-  @ApiProperty({ example: '2024-01-01T00:00:00.000Z' })
-  timestamp: string;
-
-  @ApiProperty({ example: 'Post category fetched' })
-  message: string;
-
-  @ApiProperty({ type: PostCategoryDto })
-  data: PostCategoryDto;
-}
-
-export class PostCategoryCreatedResponseDto {
-  @ApiProperty({ example: true })
-  success: boolean;
-
-  @ApiProperty({ example: '2024-01-01T00:00:00.000Z' })
-  timestamp: string;
-
-  @ApiProperty({ example: 'Post category created' })
-  message: string;
-
-  @ApiProperty({ type: PostCategoryDto })
-  data: PostCategoryDto;
-}
-
-export class PostCategoryMessageResponseDto {
-  @ApiProperty({ example: true })
-  success: boolean;
-
-  @ApiProperty({ example: '2024-01-01T00:00:00.000Z' })
-  timestamp: string;
-
-  @ApiProperty({ example: 'Post category deleted' })
-  message: string;
-
-  @ApiProperty({ type: Object, nullable: true, example: null })
-  data: null;
-}
+export class PostCategoryMessageResponseDto extends ApiEnvelope(
+  null,
+  'Post category deleted',
+) {}

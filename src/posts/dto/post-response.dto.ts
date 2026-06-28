@@ -1,5 +1,5 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { PaginationMetaDto } from '../../common/dto/api-response.dto';
+import { ApiEnvelope, ApiPaginatedData } from '../../common/dto/api-envelope';
 
 /**
  * Full translation row, returned by detail endpoints (`GET /posts/:id`,
@@ -259,69 +259,15 @@ class PostDetailDto {
   post_attachments: PostAttachmentDto[];
 }
 
-class PostListDataDto {
-  @ApiProperty({ type: [PostSummaryDto] })
-  items: PostSummaryDto[];
+class PostListDataDto extends ApiPaginatedData(PostSummaryDto) {}
 
-  @ApiProperty({ type: PaginationMetaDto })
-  pagination: PaginationMetaDto;
-}
+export class PostListResponseDto extends ApiEnvelope(PostListDataDto, 'Posts fetched') {}
 
-export class PostListResponseDto {
-  @ApiProperty({ example: true })
-  success: boolean;
+export class PostDetailResponseDto extends ApiEnvelope(PostDetailDto, 'Post fetched') {}
 
-  @ApiProperty({ example: '2024-01-01T00:00:00.000Z' })
-  timestamp: string;
+export class PostCreatedResponseDto extends ApiEnvelope(PostDetailDto, 'Post created') {}
 
-  @ApiProperty({ example: 'Posts fetched' })
-  message: string;
-
-  @ApiProperty({ type: PostListDataDto })
-  data: PostListDataDto;
-}
-
-export class PostDetailResponseDto {
-  @ApiProperty({ example: true })
-  success: boolean;
-
-  @ApiProperty({ example: '2024-01-01T00:00:00.000Z' })
-  timestamp: string;
-
-  @ApiProperty({ example: 'Post fetched' })
-  message: string;
-
-  @ApiProperty({ type: PostDetailDto })
-  data: PostDetailDto;
-}
-
-export class PostCreatedResponseDto {
-  @ApiProperty({ example: true })
-  success: boolean;
-
-  @ApiProperty({ example: '2024-01-01T00:00:00.000Z' })
-  timestamp: string;
-
-  @ApiProperty({ example: 'Post created' })
-  message: string;
-
-  @ApiProperty({ type: PostDetailDto })
-  data: PostDetailDto;
-}
-
-export class PostMessageResponseDto {
-  @ApiProperty({ example: true })
-  success: boolean;
-
-  @ApiProperty({ example: '2024-01-01T00:00:00.000Z' })
-  timestamp: string;
-
-  @ApiProperty({ example: 'Post deleted' })
-  message: string;
-
-  @ApiProperty({ type: Object, nullable: true, example: null })
-  data: null;
-}
+export class PostMessageResponseDto extends ApiEnvelope(null, 'Post deleted') {}
 
 class BulkActionDataDto {
   @ApiProperty({ example: 8, description: 'Number of rows that actually changed' })

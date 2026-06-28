@@ -1,4 +1,5 @@
-import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { ApiProperty } from '@nestjs/swagger';
+import { ApiEnvelope } from '../../common/dto/api-envelope';
 
 class LanguageDto {
   @ApiProperty({ example: 'ar' })
@@ -17,44 +18,8 @@ class LanguageDto {
   created_at: string;
 }
 
-export class LanguageListResponseDto {
-  @ApiProperty({ example: true })
-  success: boolean;
+export class LanguageListResponseDto extends ApiEnvelope([LanguageDto], 'Languages fetched') {}
 
-  @ApiProperty({ example: '2024-01-01T00:00:00.000Z' })
-  timestamp: string;
+export class LanguageDetailResponseDto extends ApiEnvelope(LanguageDto, 'Language created') {}
 
-  @ApiProperty({ example: 'Languages fetched' })
-  message: string;
-
-  @ApiProperty({ type: [LanguageDto] })
-  data: LanguageDto[];
-}
-
-export class LanguageDetailResponseDto {
-  @ApiProperty({ example: true })
-  success: boolean;
-
-  @ApiProperty({ example: '2024-01-01T00:00:00.000Z' })
-  timestamp: string;
-
-  @ApiProperty({ example: 'Language created' })
-  message: string;
-
-  @ApiProperty({ type: LanguageDto })
-  data: LanguageDto;
-}
-
-export class LanguageMessageResponseDto {
-  @ApiProperty({ example: true })
-  success: boolean;
-
-  @ApiProperty({ example: '2024-01-01T00:00:00.000Z' })
-  timestamp: string;
-
-  @ApiProperty({ example: 'Language deleted' })
-  message: string;
-
-  @ApiProperty({ type: Object, nullable: true, example: null })
-  data: null;
-}
+export class LanguageMessageResponseDto extends ApiEnvelope(null, 'Language deleted') {}

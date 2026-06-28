@@ -8,11 +8,6 @@
 
 const SUFFIX_RE = /__del_\d+$/;
 
-/** Returns true if the value carries a soft-delete suffix. */
-export function hasSoftDeleteSuffix(value: string): boolean {
-  return SUFFIX_RE.test(value);
-}
-
 /** Strip the `__del_<timestamp>` suffix, if any, from a slug or ISBN. */
 export function stripSoftDeleteSuffix(value: string): string {
   return value.replace(SUFFIX_RE, '');

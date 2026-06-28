@@ -1,5 +1,5 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { PaginationMetaDto } from '../../common/dto/api-response.dto';
+import { ApiEnvelope, ApiPaginatedData } from '../../common/dto/api-envelope';
 
 class RoleTranslationItemDto {
   @ApiProperty({ example: 'ar' })
@@ -62,41 +62,11 @@ class RoleDto {
   permissions: PermissionDto[];
 }
 
-class RoleListDataDto {
-  @ApiProperty({ type: [RoleDto] })
-  items: RoleDto[];
+class RoleListDataDto extends ApiPaginatedData(RoleDto) {}
 
-  @ApiProperty({ type: PaginationMetaDto })
-  pagination: PaginationMetaDto;
-}
+export class RoleListResponseDto extends ApiEnvelope(RoleListDataDto, 'Roles fetched') {}
 
-export class RoleListResponseDto {
-  @ApiProperty({ example: true })
-  success: boolean;
-
-  @ApiProperty({ example: '2024-01-01T00:00:00.000Z' })
-  timestamp: string;
-
-  @ApiProperty({ example: 'Roles fetched' })
-  message: string;
-
-  @ApiProperty({ type: RoleListDataDto })
-  data: RoleListDataDto;
-}
-
-export class RoleDetailResponseDto {
-  @ApiProperty({ example: true })
-  success: boolean;
-
-  @ApiProperty({ example: '2024-01-01T00:00:00.000Z' })
-  timestamp: string;
-
-  @ApiProperty({ example: 'Role fetched' })
-  message: string;
-
-  @ApiProperty({ type: RoleDto })
-  data: RoleDto;
-}
+export class RoleDetailResponseDto extends ApiEnvelope(RoleDto, 'Role fetched') {}
 
 export class RoleCreatedResponseDto {
   @ApiProperty({ example: true })
@@ -112,38 +82,8 @@ export class RoleCreatedResponseDto {
   data: RoleDto;
 }
 
-export class RoleMessageResponseDto {
-  @ApiProperty({ example: true })
-  success: boolean;
+export class RoleMessageResponseDto extends ApiEnvelope(null, 'Role deleted') {}
 
-  @ApiProperty({ example: '2024-01-01T00:00:00.000Z' })
-  timestamp: string;
+class PermissionListDataDto extends ApiPaginatedData(PermissionDto) {}
 
-  @ApiProperty({ example: 'Role deleted' })
-  message: string;
-
-  @ApiProperty({ type: Object, nullable: true, example: null })
-  data: null;
-}
-
-class PermissionListDataDto {
-  @ApiProperty({ type: [PermissionDto] })
-  items: PermissionDto[];
-
-  @ApiProperty({ type: PaginationMetaDto })
-  pagination: PaginationMetaDto;
-}
-
-export class PermissionListResponseDto {
-  @ApiProperty({ example: true })
-  success: boolean;
-
-  @ApiProperty({ example: '2024-01-01T00:00:00.000Z' })
-  timestamp: string;
-
-  @ApiProperty({ example: 'Permissions fetched' })
-  message: string;
-
-  @ApiProperty({ type: PermissionListDataDto })
-  data: PermissionListDataDto;
-}
+export class PermissionListResponseDto extends ApiEnvelope(PermissionListDataDto, 'Permissions fetched') {}

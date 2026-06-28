@@ -1,5 +1,5 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { PaginationMetaDto } from '../../common/dto/api-response.dto';
+import { ApiEnvelope, ApiPaginatedData } from '../../common/dto/api-envelope';
 
 /**
  * Full gallery-image translation, returned on detail endpoints. List
@@ -150,66 +150,12 @@ class GalleryImageListItemDto {
   gallery_categories: GalleryCategoryRefDto | null;
 }
 
-class GalleryListDataDto {
-  @ApiProperty({ type: [GalleryImageListItemDto] })
-  items: GalleryImageListItemDto[];
+class GalleryListDataDto extends ApiPaginatedData(GalleryImageListItemDto) {}
 
-  @ApiProperty({ type: PaginationMetaDto })
-  pagination: PaginationMetaDto;
-}
+export class GalleryListResponseDto extends ApiEnvelope(GalleryListDataDto, 'Gallery images fetched') {}
 
-export class GalleryListResponseDto {
-  @ApiProperty({ example: true })
-  success: boolean;
+export class GalleryDetailResponseDto extends ApiEnvelope(GalleryImageDto, 'Gallery image fetched') {}
 
-  @ApiProperty({ example: '2024-01-01T00:00:00.000Z' })
-  timestamp: string;
+export class GalleryCreatedResponseDto extends ApiEnvelope(GalleryImageDto, 'Gallery image created') {}
 
-  @ApiProperty({ example: 'Gallery images fetched' })
-  message: string;
-
-  @ApiProperty({ type: GalleryListDataDto })
-  data: GalleryListDataDto;
-}
-
-export class GalleryDetailResponseDto {
-  @ApiProperty({ example: true })
-  success: boolean;
-
-  @ApiProperty({ example: '2024-01-01T00:00:00.000Z' })
-  timestamp: string;
-
-  @ApiProperty({ example: 'Gallery image fetched' })
-  message: string;
-
-  @ApiProperty({ type: GalleryImageDto })
-  data: GalleryImageDto;
-}
-
-export class GalleryCreatedResponseDto {
-  @ApiProperty({ example: true })
-  success: boolean;
-
-  @ApiProperty({ example: '2024-01-01T00:00:00.000Z' })
-  timestamp: string;
-
-  @ApiProperty({ example: 'Gallery image created' })
-  message: string;
-
-  @ApiProperty({ type: GalleryImageDto })
-  data: GalleryImageDto;
-}
-
-export class GalleryMessageResponseDto {
-  @ApiProperty({ example: true })
-  success: boolean;
-
-  @ApiProperty({ example: '2024-01-01T00:00:00.000Z' })
-  timestamp: string;
-
-  @ApiProperty({ example: 'Gallery image deleted' })
-  message: string;
-
-  @ApiProperty({ type: Object, nullable: true, example: null })
-  data: null;
-}
+export class GalleryMessageResponseDto extends ApiEnvelope(null, 'Gallery image deleted') {}

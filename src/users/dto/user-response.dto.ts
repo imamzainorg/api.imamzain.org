@@ -1,5 +1,5 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { PaginationMetaDto } from '../../common/dto/api-response.dto';
+import { ApiEnvelope, ApiPaginatedData } from '../../common/dto/api-envelope';
 
 class RoleRefDto {
   @ApiProperty({ example: 'uuid-...' })
@@ -34,27 +34,9 @@ class UserSummaryDto {
   user_roles: UserRoleDto[];
 }
 
-class UserListDataDto {
-  @ApiProperty({ type: [UserSummaryDto] })
-  items: UserSummaryDto[];
+class UserListDataDto extends ApiPaginatedData(UserSummaryDto) {}
 
-  @ApiProperty({ type: PaginationMetaDto })
-  pagination: PaginationMetaDto;
-}
-
-export class UserListResponseDto {
-  @ApiProperty({ example: true })
-  success: boolean;
-
-  @ApiProperty({ example: '2024-01-01T00:00:00.000Z' })
-  timestamp: string;
-
-  @ApiProperty({ example: 'Users fetched' })
-  message: string;
-
-  @ApiProperty({ type: UserListDataDto })
-  data: UserListDataDto;
-}
+export class UserListResponseDto extends ApiEnvelope(UserListDataDto, 'Users fetched') {}
 
 class UserDetailDataDto {
   @ApiProperty({ example: 'uuid-...' })
@@ -79,19 +61,7 @@ class UserDetailDataDto {
   permissions: string[];
 }
 
-export class UserDetailResponseDto {
-  @ApiProperty({ example: true })
-  success: boolean;
-
-  @ApiProperty({ example: '2024-01-01T00:00:00.000Z' })
-  timestamp: string;
-
-  @ApiProperty({ example: 'User fetched' })
-  message: string;
-
-  @ApiProperty({ type: UserDetailDataDto })
-  data: UserDetailDataDto;
-}
+export class UserDetailResponseDto extends ApiEnvelope(UserDetailDataDto, 'User fetched') {}
 
 export class UserCreatedResponseDto {
   @ApiProperty({ example: true })
@@ -107,16 +77,4 @@ export class UserCreatedResponseDto {
   data: UserDetailDataDto;
 }
 
-export class UserMessageResponseDto {
-  @ApiProperty({ example: true })
-  success: boolean;
-
-  @ApiProperty({ example: '2024-01-01T00:00:00.000Z' })
-  timestamp: string;
-
-  @ApiProperty({ example: 'User updated' })
-  message: string;
-
-  @ApiProperty({ type: Object, nullable: true, example: null })
-  data: null;
-}
+export class UserMessageResponseDto extends ApiEnvelope(null, 'User updated') {}

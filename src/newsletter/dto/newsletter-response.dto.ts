@@ -1,5 +1,5 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { PaginationMetaDto } from '../../common/dto/api-response.dto';
+import { ApiEnvelope, ApiPaginatedData } from '../../common/dto/api-envelope';
 
 class SubscriberDto {
   @ApiProperty({ example: 'uuid-...' })
@@ -25,52 +25,19 @@ class SubscriberDto {
   unsubscribe_token?: string;
 }
 
-export class SubscriberResponseDto {
-  @ApiProperty({ example: true })
-  success: boolean;
+export class SubscriberResponseDto extends ApiEnvelope(
+  SubscriberDto,
+  'Successfully subscribed',
+) {}
 
-  @ApiProperty({ example: '2024-01-01T00:00:00.000Z' })
-  timestamp: string;
+class SubscriberListDataDto extends ApiPaginatedData(SubscriberDto) {}
 
-  @ApiProperty({ example: 'Successfully subscribed' })
-  message: string;
+export class SubscriberListResponseDto extends ApiEnvelope(
+  SubscriberListDataDto,
+  'Subscribers fetched',
+) {}
 
-  @ApiProperty({ type: SubscriberDto })
-  data: SubscriberDto;
-}
-
-class SubscriberListDataDto {
-  @ApiProperty({ type: [SubscriberDto] })
-  items: SubscriberDto[];
-
-  @ApiProperty({ type: PaginationMetaDto })
-  pagination: PaginationMetaDto;
-}
-
-export class SubscriberListResponseDto {
-  @ApiProperty({ example: true })
-  success: boolean;
-
-  @ApiProperty({ example: '2024-01-01T00:00:00.000Z' })
-  timestamp: string;
-
-  @ApiProperty({ example: 'Subscribers fetched' })
-  message: string;
-
-  @ApiProperty({ type: SubscriberListDataDto })
-  data: SubscriberListDataDto;
-}
-
-export class NewsletterMessageResponseDto {
-  @ApiProperty({ example: true })
-  success: boolean;
-
-  @ApiProperty({ example: '2024-01-01T00:00:00.000Z' })
-  timestamp: string;
-
-  @ApiProperty({ example: 'Successfully unsubscribed' })
-  message: string;
-
-  @ApiProperty({ type: Object, nullable: true, example: null })
-  data: null;
-}
+export class NewsletterMessageResponseDto extends ApiEnvelope(
+  null,
+  'Successfully unsubscribed',
+) {}

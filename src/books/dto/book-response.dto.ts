@@ -1,5 +1,5 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { PaginationMetaDto } from '../../common/dto/api-response.dto';
+import { ApiEnvelope, ApiPaginatedData } from '../../common/dto/api-envelope';
 
 /**
  * Full book translation, returned on detail endpoints (`GET /books/:id`,
@@ -204,66 +204,12 @@ class BookListItemDto {
   media: BookMediaRefDto;
 }
 
-class BookListDataDto {
-  @ApiProperty({ type: [BookListItemDto] })
-  items: BookListItemDto[];
+class BookListDataDto extends ApiPaginatedData(BookListItemDto) {}
 
-  @ApiProperty({ type: PaginationMetaDto })
-  pagination: PaginationMetaDto;
-}
+export class BookListResponseDto extends ApiEnvelope(BookListDataDto, 'Books fetched') {}
 
-export class BookListResponseDto {
-  @ApiProperty({ example: true })
-  success: boolean;
+export class BookDetailResponseDto extends ApiEnvelope(BookDto, 'Book fetched') {}
 
-  @ApiProperty({ example: '2024-01-01T00:00:00.000Z' })
-  timestamp: string;
+export class BookCreatedResponseDto extends ApiEnvelope(BookDto, 'Book created') {}
 
-  @ApiProperty({ example: 'Books fetched' })
-  message: string;
-
-  @ApiProperty({ type: BookListDataDto })
-  data: BookListDataDto;
-}
-
-export class BookDetailResponseDto {
-  @ApiProperty({ example: true })
-  success: boolean;
-
-  @ApiProperty({ example: '2024-01-01T00:00:00.000Z' })
-  timestamp: string;
-
-  @ApiProperty({ example: 'Book fetched' })
-  message: string;
-
-  @ApiProperty({ type: BookDto })
-  data: BookDto;
-}
-
-export class BookCreatedResponseDto {
-  @ApiProperty({ example: true })
-  success: boolean;
-
-  @ApiProperty({ example: '2024-01-01T00:00:00.000Z' })
-  timestamp: string;
-
-  @ApiProperty({ example: 'Book created' })
-  message: string;
-
-  @ApiProperty({ type: BookDto })
-  data: BookDto;
-}
-
-export class BookMessageResponseDto {
-  @ApiProperty({ example: true })
-  success: boolean;
-
-  @ApiProperty({ example: '2024-01-01T00:00:00.000Z' })
-  timestamp: string;
-
-  @ApiProperty({ example: 'Book deleted' })
-  message: string;
-
-  @ApiProperty({ type: Object, nullable: true, example: null })
-  data: null;
-}
+export class BookMessageResponseDto extends ApiEnvelope(null, 'Book deleted') {}

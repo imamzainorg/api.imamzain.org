@@ -1,5 +1,5 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { PaginationMetaDto } from '../../common/dto/api-response.dto';
+import { ApiEnvelope, ApiPaginatedData } from '../../common/dto/api-envelope';
 
 class StoreTranslationViewDto {
   @ApiProperty({ example: 'ar' })
@@ -71,52 +71,10 @@ class StoreDto {
   translation: StoreTranslationViewDto | null;
 }
 
-class StoreListDataDto {
-  @ApiProperty({ type: [StoreDto] })
-  items: StoreDto[];
+class StoreListDataDto extends ApiPaginatedData(StoreDto) {}
 
-  @ApiProperty({ type: PaginationMetaDto })
-  pagination: PaginationMetaDto;
-}
+export class StoreListResponseDto extends ApiEnvelope(StoreListDataDto, 'Stores fetched') {}
 
-export class StoreListResponseDto {
-  @ApiProperty({ example: true })
-  success: boolean;
+export class StoreDetailResponseDto extends ApiEnvelope(StoreDto, 'Store fetched') {}
 
-  @ApiProperty({ example: '2026-01-01T00:00:00.000Z' })
-  timestamp: string;
-
-  @ApiProperty({ example: 'Stores fetched' })
-  message: string;
-
-  @ApiProperty({ type: StoreListDataDto })
-  data: StoreListDataDto;
-}
-
-export class StoreDetailResponseDto {
-  @ApiProperty({ example: true })
-  success: boolean;
-
-  @ApiProperty({ example: '2026-01-01T00:00:00.000Z' })
-  timestamp: string;
-
-  @ApiProperty({ example: 'Store fetched' })
-  message: string;
-
-  @ApiProperty({ type: StoreDto })
-  data: StoreDto;
-}
-
-export class StoreMessageResponseDto {
-  @ApiProperty({ example: true })
-  success: boolean;
-
-  @ApiProperty({ example: '2026-01-01T00:00:00.000Z' })
-  timestamp: string;
-
-  @ApiProperty({ example: 'Store deleted' })
-  message: string;
-
-  @ApiProperty({ type: Object, nullable: true, example: null })
-  data: null;
-}
+export class StoreMessageResponseDto extends ApiEnvelope(null, 'Store deleted') {}

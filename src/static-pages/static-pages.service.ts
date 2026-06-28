@@ -1,4 +1,4 @@
-import { ConflictException, Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuditService } from '../common/audit/audit.service';
@@ -27,8 +27,6 @@ const OG_IMAGE_SELECT = {
 
 @Injectable()
 export class StaticPagesService {
-  private readonly logger = new Logger(StaticPagesService.name);
-
   constructor(
     private readonly prisma: PrismaService,
     private readonly audit: AuditService,

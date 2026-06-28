@@ -1,4 +1,5 @@
 import { ApiProperty } from '@nestjs/swagger';
+import { ApiEnvelope } from '../../common/dto/api-envelope';
 
 class LoginUserDto {
   @ApiProperty({ example: 'uuid-...' })
@@ -25,19 +26,7 @@ class LoginDataDto {
   user: LoginUserDto;
 }
 
-export class LoginResponseDto {
-  @ApiProperty({ example: true })
-  success: boolean;
-
-  @ApiProperty({ example: '2024-01-01T00:00:00.000Z' })
-  timestamp: string;
-
-  @ApiProperty({ example: 'Login successful' })
-  message: string;
-
-  @ApiProperty({ type: LoginDataDto })
-  data: LoginDataDto;
-}
+export class LoginResponseDto extends ApiEnvelope(LoginDataDto, 'Login successful') {}
 
 class MeDataDto {
   @ApiProperty({ example: 'uuid-...' })
@@ -56,33 +45,9 @@ class MeDataDto {
   permissions: string[];
 }
 
-export class MeResponseDto {
-  @ApiProperty({ example: true })
-  success: boolean;
+export class MeResponseDto extends ApiEnvelope(MeDataDto, 'Profile fetched') {}
 
-  @ApiProperty({ example: '2024-01-01T00:00:00.000Z' })
-  timestamp: string;
-
-  @ApiProperty({ example: 'Profile fetched' })
-  message: string;
-
-  @ApiProperty({ type: MeDataDto })
-  data: MeDataDto;
-}
-
-export class ChangePasswordResponseDto {
-  @ApiProperty({ example: true })
-  success: boolean;
-
-  @ApiProperty({ example: '2024-01-01T00:00:00.000Z' })
-  timestamp: string;
-
-  @ApiProperty({ example: 'Password changed successfully' })
-  message: string;
-
-  @ApiProperty({ type: Object, nullable: true, example: null })
-  data: null;
-}
+export class ChangePasswordResponseDto extends ApiEnvelope(null, 'Password changed successfully') {}
 
 class RefreshDataDto {
   @ApiProperty({ example: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...' })
@@ -92,30 +57,6 @@ class RefreshDataDto {
   refresh_token: string;
 }
 
-export class RefreshResponseDto {
-  @ApiProperty({ example: true })
-  success: boolean;
+export class RefreshResponseDto extends ApiEnvelope(RefreshDataDto, 'Tokens refreshed') {}
 
-  @ApiProperty({ example: '2024-01-01T00:00:00.000Z' })
-  timestamp: string;
-
-  @ApiProperty({ example: 'Tokens refreshed' })
-  message: string;
-
-  @ApiProperty({ type: RefreshDataDto })
-  data: RefreshDataDto;
-}
-
-export class LogoutResponseDto {
-  @ApiProperty({ example: true })
-  success: boolean;
-
-  @ApiProperty({ example: '2024-01-01T00:00:00.000Z' })
-  timestamp: string;
-
-  @ApiProperty({ example: 'Logged out successfully' })
-  message: string;
-
-  @ApiProperty({ type: Object, nullable: true, example: null })
-  data: null;
-}
+export class LogoutResponseDto extends ApiEnvelope(null, 'Logged out successfully') {}

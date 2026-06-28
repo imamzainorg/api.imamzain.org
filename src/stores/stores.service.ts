@@ -1,4 +1,4 @@
-import { Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuditService } from '../common/audit/audit.service';
@@ -36,8 +36,6 @@ type StoreWithRelations = Prisma.storesGetPayload<{ include: typeof STORE_INCLUD
  */
 @Injectable()
 export class StoresService {
-  private readonly logger = new Logger(StoresService.name);
-
   constructor(
     private readonly prisma: PrismaService,
     private readonly audit: AuditService,
