@@ -99,7 +99,9 @@ export class AuthService {
     const accessToken = this.jwtService.sign(payload);
     const refreshToken = await this.issueRefreshToken(user.id);
 
-    await this.audit.write({
+    // writeSync (not fire-and-forget): login is a compliance-trail event —
+    // the ip/agent row must exist once the response is out.
+    await this.audit.writeSync({
       actorId: user.id,
       action: AUDIT_ACTIONS.USER_LOGIN,
       resourceType: 'user',
@@ -318,7 +320,8 @@ export class AuthService {
 
     invalidateJwtUserCache(userId);
 
-    await this.audit.write({
+    // writeSync: password changes are compliance-trail events like logins.
+    await this.audit.writeSync({
       actorId: userId,
       action: AUDIT_ACTIONS.PASSWORD_CHANGED,
       resourceType: 'user',
