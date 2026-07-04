@@ -13,6 +13,7 @@ import { AUDIT_ACTIONS } from '../common/audit/audit.actions';
 import { resolveBcryptRounds } from '../common/utils/bcrypt.util';
 import { invalidateJwtUserCache } from '../auth/strategies/jwt.strategy';
 import { buildPaginationMeta } from '../common/utils/pagination.util';
+import { rethrowP2002AsConflict } from '../common/utils/prisma-error.util';
 import { softDeleteSuffix, stripSoftDeleteSuffix } from '../common/utils/soft-delete.util';
 import { AdminResetPasswordDto, AssignRoleDto, CreateUserDto, UpdateUserDto } from './dto/user.dto';
 
@@ -276,12 +277,7 @@ export class UsersService {
     } catch (err) {
       // The unique constraint is the real backstop if a concurrent create
       // grabbed the username between the check and the update.
-      if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002') {
-        throw new ConflictException(
-          `Cannot restore: username "${originalUsername}" is now used by another user`,
-        );
-      }
-      throw err;
+      rethrowP2002AsConflict(err, `Cannot restore: username "${originalUsername}" is now used by another user`);
     }
 
     await this.audit.write({

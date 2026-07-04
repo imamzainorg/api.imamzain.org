@@ -1,5 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { Cron } from '@nestjs/schedule';
+import { cronsDisabled } from '../common/utils/cron.util';
 import { PrismaService } from '../prisma/prisma.service';
 import { ADVISORY_LOCK_KEYS, withAdvisoryLock } from '../common/utils/advisory-lock.util';
 
@@ -106,6 +107,9 @@ export class YoutubeSyncService {
   async runGuardedSync(
     trigger: 'cron' | 'bootstrap' | 'manual',
   ): Promise<{ videos: number; playlists: number } | null> {
+    // Covers cron, bootstrap, and manual triggers alike — operator scripts
+    // set DISABLE_CRON so a maintenance run never burns YouTube API quota.
+    if (cronsDisabled()) return null;
     let result: { videos: number; playlists: number } | null = null;
     try {
       const ran = await withAdvisoryLock(

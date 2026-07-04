@@ -3,29 +3,12 @@ import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuditService } from '../common/audit/audit.service';
 import { AUDIT_ACTIONS } from '../common/audit/audit.actions';
+import { MEDIA_VARIANT_SELECT, OG_IMAGE_SELECT, PUBLIC_MEDIA_SELECT } from '../common/crud/media-selects';
 import { softDeleteSuffix, stripSoftDeleteSuffix } from '../common/utils/soft-delete.util';
-import { resolveTranslation } from '../common/utils/translation.util';
+import { rethrowP2002AsConflict } from '../common/utils/prisma-error.util';
+import { assertExactlyOneDefault, resolveTranslation } from '../common/utils/translation.util';
 import { buildPaginationMeta, resolvePagination } from '../common/utils/pagination.util';
 import { BookQueryDto, CreateBookDto, UpdateBookDto } from './dto/book.dto';
-
-// Public media variant shape — enough for the public site's `<img srcset>`.
-const MEDIA_VARIANT_SELECT = {
-  id: true,
-  width: true,
-  url: true,
-  format: true,
-} satisfies Prisma.media_variantsSelect;
-
-// Resolvable per-translation OG image for SEO meta tags (detail only).
-const OG_IMAGE_SELECT = {
-  id: true,
-  url: true,
-  filename: true,
-  alt_text: true,
-  mime_type: true,
-  width: true,
-  height: true,
-} satisfies Prisma.mediaSelect;
 
 // List queries drop the full description from translations (typically the
 // heaviest field) and slim the cover-image record.
@@ -36,6 +19,7 @@ const BOOK_LIST_SELECT = {
   isbn: true,
   pages: true,
   publish_year: true,
+  pdf_url: true,
   part_number: true,
   parts: true,
   views: true,
@@ -57,18 +41,7 @@ const BOOK_LIST_SELECT = {
       is_default: true,
     },
   },
-  media: {
-    select: {
-      id: true,
-      url: true,
-      filename: true,
-      alt_text: true,
-      mime_type: true,
-      width: true,
-      height: true,
-      media_variants: { select: MEDIA_VARIANT_SELECT, orderBy: { width: 'asc' } },
-    },
-  },
+  media: { select: PUBLIC_MEDIA_SELECT },
   book_categories: {
     select: {
       id: true,
@@ -187,8 +160,7 @@ export class BooksService {
       if (existing) throw new ConflictException('A book with that ISBN already exists');
     }
 
-    const defaultCount = dto.translations.filter((t) => t.is_default).length;
-    if (defaultCount !== 1) throw new BadRequestException('Exactly one translation must have is_default: true');
+    assertExactlyOneDefault(dto.translations, 'Exactly one translation must have is_default: true');
 
     await this.assertSlugsAvailable(dto.translations, null);
 
@@ -202,6 +174,7 @@ export class BooksService {
             isbn: dto.isbn ?? null,
             pages: dto.pages ?? null,
             publish_year: dto.publish_year ?? null,
+            pdf_url: dto.pdf_url ?? null,
             part_number: dto.part_number ?? null,
             parts: dto.parts ?? null,
             added_by: userId,
@@ -229,10 +202,7 @@ export class BooksService {
       // A concurrent insert could claim the same (lang, slug) between the
       // pre-check and the createMany — translate the partial-unique-index P2002
       // into the friendly 409.
-      if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002') {
-        throw new ConflictException('A book translation slug is already in use');
-      }
-      throw err;
+      rethrowP2002AsConflict(err, 'A book translation slug is already in use');
     }
 
     await this.audit.write({
@@ -281,6 +251,7 @@ export class BooksService {
       if (dto.isbn !== undefined) updateData.isbn = dto.isbn;
       if (dto.pages !== undefined) updateData.pages = dto.pages;
       if (dto.publish_year !== undefined) updateData.publish_year = dto.publish_year;
+      if (dto.pdf_url !== undefined) updateData.pdf_url = dto.pdf_url;
       if (dto.part_number !== undefined) updateData.part_number = dto.part_number;
       if (dto.parts !== undefined) updateData.parts = dto.parts;
 
@@ -314,10 +285,7 @@ export class BooksService {
       }
       });
     } catch (err) {
-      if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002') {
-        throw new ConflictException('A book translation slug is already in use');
-      }
-      throw err;
+      rethrowP2002AsConflict(err, 'A book translation slug is already in use');
     }
 
     await this.audit.write({
@@ -428,10 +396,7 @@ export class BooksService {
       });
     } catch (err) {
       // DB-level backstop for a concurrent claim between check and update.
-      if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002') {
-        throw new ConflictException('Cannot restore: a unique field (ISBN or slug) was claimed by another book');
-      }
-      throw err;
+      rethrowP2002AsConflict(err, 'Cannot restore: a unique field (ISBN or slug) was claimed by another book');
     }
 
     await this.audit.write({

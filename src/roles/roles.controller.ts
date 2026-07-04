@@ -7,14 +7,11 @@ import {
   Patch,
   Post,
   Query,
-  UseGuards,
 } from '@nestjs/common';
 import {
   ApiBadRequestResponse,
-  ApiBearerAuth,
   ApiConflictResponse,
   ApiCreatedResponse,
-  ApiForbiddenResponse,
   ApiHeader,
   ApiNotFoundResponse,
   ApiOkResponse,
@@ -22,15 +19,12 @@ import {
   ApiParam,
   ApiQuery,
   ApiTags,
-  ApiUnauthorizedResponse,
 } from '@nestjs/swagger';
-import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { Auth } from '../common/decorators/auth.decorator';
 import { CurrentUser, CurrentUserPayload } from '../common/decorators/current-user.decorator';
 import { Lang } from '../common/decorators/language.decorator';
-import { RequirePermission } from '../common/decorators/require-permission.decorator';
-import { ConflictErrorDto, ForbiddenErrorDto, NotFoundErrorDto, UnauthorizedErrorDto, ValidationErrorDto } from '../common/dto/api-response.dto';
+import { ConflictErrorDto, NotFoundErrorDto, ValidationErrorDto } from '../common/dto/api-response.dto';
 import { PaginationDto } from '../common/dto/pagination.dto';
-import { PermissionGuard } from '../common/guards/permission.guard';
 import { AssignPermissionDto, CreateRoleDto, UpdateRoleDto } from './dto/role.dto';
 import {
   PermissionListResponseDto,
@@ -42,17 +36,13 @@ import {
 import { RolesService } from './roles.service';
 
 @ApiTags('Roles & Permissions')
-@ApiBearerAuth('jwt')
 @ApiHeader({ name: 'Accept-Language', required: false, description: 'ISO 639-1 code for translated fields (e.g. ar, en)' })
 @Controller('roles')
-@UseGuards(JwtAuthGuard, PermissionGuard)
-@ApiUnauthorizedResponse({ type: UnauthorizedErrorDto, description: 'Missing or invalid JWT' })
-@ApiForbiddenResponse({ type: ForbiddenErrorDto, description: 'Insufficient permissions' })
 export class RolesController {
   constructor(private readonly rolesService: RolesService) {}
 
   @Get()
-  @RequirePermission('roles:read')
+  @Auth('roles:read')
   @ApiOperation({ summary: 'List all roles with translations (paginated)', description: 'Requires permission: `roles:read`' })
   @ApiQuery({ name: 'page', required: false, type: Number, example: 1, description: 'Page number (default: 1)' })
   @ApiQuery({ name: 'limit', required: false, type: Number, example: 20, description: 'Items per page (default: 20, max: 100)' })
@@ -63,7 +53,7 @@ export class RolesController {
   }
 
   @Get('permissions')
-  @RequirePermission('roles:read')
+  @Auth('roles:read')
   @ApiOperation({ summary: 'List all available permissions (paginated)', description: 'Requires permission: `roles:read`' })
   @ApiQuery({ name: 'page', required: false, type: Number, example: 1, description: 'Page number (default: 1)' })
   @ApiQuery({ name: 'limit', required: false, type: Number, example: 100, description: 'Items per page (default: 100, max: 100)' })
@@ -74,7 +64,7 @@ export class RolesController {
   }
 
   @Get(':id')
-  @RequirePermission('roles:read')
+  @Auth('roles:read')
   @ApiOperation({ summary: 'Get a role with its permissions', description: 'Requires permission: `roles:read`' })
   @ApiParam({ name: 'id', format: 'uuid' })
   @ApiOkResponse({ type: RoleDetailResponseDto, description: 'Role detail with all translations and the full permission list' })
@@ -84,7 +74,7 @@ export class RolesController {
   }
 
   @Post()
-  @RequirePermission('roles:create')
+  @Auth('roles:create')
   @ApiOperation({ summary: 'Create a new role with translations', description: 'Requires permission: `roles:create`' })
   @ApiCreatedResponse({ type: RoleCreatedResponseDto, description: 'Role created with all provided translations; returns the new role record' })
   @ApiBadRequestResponse({ type: ValidationErrorDto, description: 'Validation failed' })
@@ -94,7 +84,7 @@ export class RolesController {
   }
 
   @Patch(':id')
-  @RequirePermission('roles:update')
+  @Auth('roles:update')
   @ApiOperation({ summary: 'Update a role name or translations', description: 'Requires permission: `roles:update`' })
   @ApiParam({ name: 'id', format: 'uuid' })
   @ApiOkResponse({ type: RoleDetailResponseDto, description: 'Updated role with all translations' })
@@ -111,7 +101,7 @@ export class RolesController {
   }
 
   @Delete(':id')
-  @RequirePermission('roles:delete')
+  @Auth('roles:delete')
   @ApiOperation({ summary: 'Permanently delete a role', description: 'Fails with 409 if the role is currently assigned to any user — unassign it first. Requires permission: `roles:delete`' })
   @ApiParam({ name: 'id', format: 'uuid' })
   @ApiOkResponse({ type: RoleMessageResponseDto, description: 'Role permanently deleted along with all its permission assignments and translations' })
@@ -122,7 +112,7 @@ export class RolesController {
   }
 
   @Post(':id/permissions')
-  @RequirePermission('roles:update')
+  @Auth('roles:update')
   @ApiOperation({ summary: 'Assign a permission to a role', description: 'Requires permission: `roles:update`' })
   @ApiParam({ name: 'id', format: 'uuid', description: 'Role ID' })
   @ApiCreatedResponse({ type: RoleDetailResponseDto, description: 'Permission added to the role; returns the role with its updated permission list. Users holding this role gain the new access on their next request.' })
@@ -138,7 +128,7 @@ export class RolesController {
   }
 
   @Delete(':id/permissions/:permissionId')
-  @RequirePermission('roles:update')
+  @Auth('roles:update')
   @ApiOperation({ summary: 'Remove a permission from a role', description: 'Requires permission: `roles:update`' })
   @ApiParam({ name: 'id', format: 'uuid', description: 'Role ID' })
   @ApiParam({ name: 'permissionId', format: 'uuid', description: 'Permission ID' })

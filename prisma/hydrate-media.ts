@@ -27,24 +27,20 @@
  */
 
 import { PrismaClient } from "@prisma/client";
+import pLimit from "p-limit";
 
 const prisma = new PrismaClient();
 const CONCURRENCY = parseInt(process.env.HYDRATE_CONCURRENCY ?? "20", 10);
+// A stalled connection would otherwise pin a worker for undici's ~300 s default.
+const HEAD_TIMEOUT_MS = 15_000;
 
 async function mapWithConcurrency<T>(
   items: T[],
   limit: number,
   fn: (item: T) => Promise<void>,
 ): Promise<void> {
-  let cursor = 0;
-  const worker = async () => {
-    while (true) {
-      const i = cursor++;
-      if (i >= items.length) return;
-      await fn(items[i]);
-    }
-  };
-  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
+  const run = pLimit(limit);
+  await Promise.all(items.map((item) => run(() => fn(item))));
 }
 
 async function hydrateMedia(): Promise<{ hydrated: number; missing: number; errored: number }> {
@@ -66,7 +62,7 @@ async function hydrateMedia(): Promise<{ hydrated: number; missing: number; erro
 
   await mapWithConcurrency(records, CONCURRENCY, async (m) => {
     try {
-      const res = await fetch(m.url, { method: "HEAD" });
+      const res = await fetch(m.url, { method: "HEAD", signal: AbortSignal.timeout(HEAD_TIMEOUT_MS) });
       if (!res.ok) {
         missing++;
         console.warn(`  ✗ HTTP ${res.status}  ${m.url}`);
@@ -113,7 +109,7 @@ async function verifyVariants(): Promise<{ ok: number; missing: number; errored:
 
   await mapWithConcurrency(variants, CONCURRENCY, async (v) => {
     try {
-      const res = await fetch(v.url, { method: "HEAD" });
+      const res = await fetch(v.url, { method: "HEAD", signal: AbortSignal.timeout(HEAD_TIMEOUT_MS) });
       if (res.ok) {
         ok++;
       } else {
@@ -161,6 +157,7 @@ async function main() {
 main()
   .catch((err) => {
     console.error("Hydrate failed:", err);
-    process.exit(1);
+    // exitCode (not exit()) so the .finally disconnect below still runs.
+    process.exitCode = 1;
   })
   .finally(() => prisma.$disconnect());

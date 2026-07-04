@@ -66,43 +66,22 @@ export class HomepageService {
 
   /**
    * Prefer up to 4 featured posts, newest first. If fewer than 4 featured
-   * exist, fill the remainder with the most-recent non-featured published
-   * posts so the homepage block is never short. Posts already returned as
-   * featured are excluded from the fallback to avoid duplicates.
+   * exist, the remainder fills with the most-recent non-featured published
+   * posts so the homepage block is never short — one query, sorted
+   * featured-first then newest-first, yields exactly that.
    */
   private async news(lang: string | null) {
-    const featured = await this.prisma.posts.findMany({
-      where: { deleted_at: null, is_published: true, is_featured: true },
+    const combined = await this.prisma.posts.findMany({
+      where: { deleted_at: null, is_published: true },
       include: {
         // Only the fields the mapper/resolveTranslation read — NOT the heavy
         // post_translations.body, which was being fetched then discarded.
         post_translations: { select: { lang: true, is_default: true, slug: true, summary: true, title: true } },
         media: { select: { url: true } },
       },
-      orderBy: [{ published_at: 'desc' }, { id: 'asc' }],
+      orderBy: [{ is_featured: 'desc' }, { published_at: 'desc' }, { id: 'asc' }],
       take: NEWS_COUNT,
     });
-
-    let combined = featured;
-    if (featured.length < NEWS_COUNT) {
-      const featuredIds = new Set(featured.map((p) => p.id));
-      const fallback = await this.prisma.posts.findMany({
-        where: {
-          deleted_at: null,
-          is_published: true,
-          id: featuredIds.size > 0 ? { notIn: Array.from(featuredIds) } : undefined,
-        },
-        include: {
-        // Only the fields the mapper/resolveTranslation read — NOT the heavy
-        // post_translations.body, which was being fetched then discarded.
-        post_translations: { select: { lang: true, is_default: true, slug: true, summary: true, title: true } },
-        media: { select: { url: true } },
-      },
-        orderBy: [{ published_at: 'desc' }, { id: 'asc' }],
-        take: NEWS_COUNT - featured.length,
-      });
-      combined = [...featured, ...fallback];
-    }
 
     return combined.map((post) => {
       const t = resolveTranslation(post.post_translations, lang);
@@ -170,7 +149,7 @@ export class HomepageService {
   private async gallerySlider() {
     const images = await this.prisma.gallery_images.findMany({
       where: { deleted_at: null },
-      include: { media: true },
+      include: { media: { select: { url: true } } },
       orderBy: [{ created_at: 'desc' }, { media_id: 'asc' }],
       take: GALLERY_SLIDER_COUNT,
     });
@@ -186,7 +165,9 @@ export class HomepageService {
   private async galleryCategories(lang: string | null) {
     const categories = await this.prisma.gallery_categories.findMany({
       where: { deleted_at: null },
-      include: { gallery_category_translations: true },
+      include: {
+        gallery_category_translations: { select: { lang: true, is_default: true, title: true } },
+      },
       orderBy: { created_at: 'asc' },
     });
 

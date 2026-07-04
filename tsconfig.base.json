@@ -12,7 +12,6 @@
     "resolveJsonModule": true,
 
     "skipLibCheck": true,
-    "forceConsistentCasingInFileNames": false,
     "rootDir": "./",
     "noEmit": true
   }

@@ -5,15 +5,8 @@ import { AuditService } from '../common/audit/audit.service';
 import { AUDIT_ACTIONS } from '../common/audit/audit.actions';
 import { resolveTranslation } from '../common/utils/translation.util';
 import { buildPaginationMeta, resolvePagination } from '../common/utils/pagination.util';
+import { MEDIA_VARIANT_SELECT, PUBLIC_MEDIA_SELECT } from '../common/crud/media-selects';
 import { CreateGalleryImageDto, GalleryQueryDto, UpdateGalleryImageDto } from './dto/gallery.dto';
-
-// Public media variant shape — enough for the public site's `<img srcset>`.
-const MEDIA_VARIANT_SELECT = {
-  id: true,
-  width: true,
-  url: true,
-  format: true,
-} satisfies Prisma.media_variantsSelect;
 
 // List queries drop the description from translations.
 const GALLERY_LIST_SELECT = {
@@ -29,18 +22,7 @@ const GALLERY_LIST_SELECT = {
   gallery_image_translations: {
     select: { media_id: true, lang: true, title: true },
   },
-  media: {
-    select: {
-      id: true,
-      url: true,
-      filename: true,
-      alt_text: true,
-      mime_type: true,
-      width: true,
-      height: true,
-      media_variants: { select: MEDIA_VARIANT_SELECT, orderBy: { width: 'asc' } },
-    },
-  },
+  media: { select: PUBLIC_MEDIA_SELECT },
   gallery_categories: {
     select: {
       id: true,

@@ -1,34 +1,25 @@
-import { Controller, Get, Param, ParseUUIDPipe, Query, UseGuards } from '@nestjs/common';
+import { Controller, Get, Param, ParseUUIDPipe, Query } from '@nestjs/common';
 import {
   ApiBadRequestResponse,
-  ApiBearerAuth,
-  ApiForbiddenResponse,
   ApiNotFoundResponse,
   ApiOkResponse,
   ApiOperation,
   ApiParam,
   ApiTags,
-  ApiUnauthorizedResponse,
 } from '@nestjs/swagger';
-import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
-import { RequirePermission } from '../common/decorators/require-permission.decorator';
-import { ForbiddenErrorDto, NotFoundErrorDto, UnauthorizedErrorDto, ValidationErrorDto } from '../common/dto/api-response.dto';
-import { PermissionGuard } from '../common/guards/permission.guard';
+import { Auth } from '../common/decorators/auth.decorator';
+import { NotFoundErrorDto, ValidationErrorDto } from '../common/dto/api-response.dto';
 import { AuditLogsService } from './audit-logs.service';
 import { AuditLogQueryDto } from './dto/audit-log-query.dto';
 import { AuditLogListResponseDto, AuditLogResponseDto } from './dto/audit-log-response.dto';
 
 @ApiTags('Audit Logs')
 @Controller('audit-logs')
-@UseGuards(JwtAuthGuard, PermissionGuard)
-@ApiBearerAuth('jwt')
-@ApiUnauthorizedResponse({ type: UnauthorizedErrorDto, description: 'Missing or invalid JWT' })
-@ApiForbiddenResponse({ type: ForbiddenErrorDto, description: 'Insufficient permissions' })
 export class AuditLogsController {
   constructor(private readonly auditLogsService: AuditLogsService) {}
 
   @Get()
-  @RequirePermission('audit-logs:read')
+  @Auth('audit-logs:read')
   @ApiOperation({
     summary: 'List audit logs (paginated)',
     description:
@@ -48,7 +39,7 @@ export class AuditLogsController {
   }
 
   @Get(':id')
-  @RequirePermission('audit-logs:read')
+  @Auth('audit-logs:read')
   @ApiOperation({
     summary: 'Get a single audit log entry by ID',
     description:

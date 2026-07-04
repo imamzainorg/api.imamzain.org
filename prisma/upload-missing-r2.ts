@@ -33,26 +33,17 @@ import * as path from 'path';
 import { AppModule } from '../src/app.module';
 import { R2Service } from '../src/storage/r2.service';
 import { PrismaService } from '../src/prisma/prisma.service';
+import { detectMimeType } from './lib/seed-utils';
 
 const LEGACY_PUBLIC_DIR =
   process.env.LEGACY_PUBLIC_DIR ?? path.join(__dirname, '../../imamzain.org/public');
 
-const MIME_BY_EXT: Record<string, string> = {
-  jpg: 'image/jpeg', jpeg: 'image/jpeg',
-  png: 'image/png',
-  gif: 'image/gif',
-  webp: 'image/webp',
-  svg: 'image/svg+xml',
-  pdf: 'application/pdf',
-};
-
-function mimeForFile(filename: string): string {
-  const ext = filename.split('.').pop()?.toLowerCase() ?? '';
-  return MIME_BY_EXT[ext] ?? 'application/octet-stream';
-}
-
 async function main() {
   const logger = new Logger('UploadMissingR2');
+
+  // Operator script — never run production cron ticks from this process.
+  process.env.DISABLE_CRON = 'true';
+
   const app = await NestFactory.createApplicationContext(AppModule, {
     logger: ['log', 'warn', 'error'],
   });
@@ -107,7 +98,7 @@ async function main() {
         }
 
         const buffer = fs.readFileSync(localPath);
-        const mime = mimeForFile(filename);
+        const mime = detectMimeType(filename);
         await r2.putObjectBuffer(key, buffer, mime);
         uploaded++;
         logger.log(`  ✓ uploaded ${key} (${buffer.length} bytes)`);
@@ -135,5 +126,5 @@ async function main() {
 main().catch((err) => {
   // eslint-disable-next-line no-console
   console.error('Upload failed:', err);
-  process.exit(1);
+  process.exitCode = 1;
 });

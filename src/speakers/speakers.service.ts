@@ -3,9 +3,10 @@ import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuditService } from '../common/audit/audit.service';
 import { AUDIT_ACTIONS } from '../common/audit/audit.actions';
-import { resolveTranslation } from '../common/utils/translation.util';
+import { rethrowP2002AsConflict } from '../common/utils/prisma-error.util';
+import { assertExactlyOneDefault, resolveTranslation } from '../common/utils/translation.util';
 import { buildPaginationMeta, resolvePagination } from '../common/utils/pagination.util';
-import { CreateSpeakerDto, SpeakerQueryDto, SpeakerTranslationDto, UpdateSpeakerDto } from './dto/speaker.dto';
+import { CreateSpeakerDto, SpeakerQueryDto, UpdateSpeakerDto } from './dto/speaker.dto';
 
 // Includes the per-language rows plus a filtered count of the speaker's live,
 // published audios — drives the "N lectures" badge on the public list.
@@ -36,11 +37,6 @@ export class SpeakersService {
       translation: resolveTranslation(row.speaker_translations, lang),
       audio_count: _count.audios,
     };
-  }
-
-  private validateDefault(translations: SpeakerTranslationDto[]) {
-    const defaultCount = translations.filter((t) => t.is_default).length;
-    if (defaultCount !== 1) throw new BadRequestException('Exactly one translation must have is_default: true');
   }
 
   // ── Public reads ────────────────────────────────────────────────────────────
@@ -74,7 +70,7 @@ export class SpeakersService {
   // ── Writes ──────────────────────────────────────────────────────────────────
 
   async create(dto: CreateSpeakerDto, actorId: string, lang: string | null) {
-    this.validateDefault(dto.translations);
+    assertExactlyOneDefault(dto.translations, 'Exactly one translation must have is_default: true');
 
     let created;
     try {
@@ -91,10 +87,7 @@ export class SpeakersService {
         return speaker;
       });
     } catch (err) {
-      if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002') {
-        throw new ConflictException('Duplicate translation language for this speaker');
-      }
-      throw err;
+      rethrowP2002AsConflict(err, 'Duplicate translation language for this speaker');
     }
 
     await this.audit.write({

@@ -6,7 +6,8 @@ import { AUDIT_ACTIONS } from '../common/audit/audit.actions';
 import { sanitizeEditorHtml } from '../common/utils/html-sanitize.util';
 import { softDeleteSuffix, stripSoftDeleteSuffix } from '../common/utils/soft-delete.util';
 import { resolveTranslation } from '../common/utils/translation.util';
-import { buildPaginationMeta } from '../common/utils/pagination.util';
+import { buildPaginationMeta, resolvePagination } from '../common/utils/pagination.util';
+import { rethrowP2002AsConflict } from '../common/utils/prisma-error.util';
 import {
   CreateStaticPageDto,
   StaticPageQueryDto,
@@ -47,8 +48,8 @@ export class StaticPagesService {
   }
 
   /** Public list: published pages only, ordered by display_order then id. */
-  async findAllPublic(lang: string | null, page: number, limit: number) {
-    const skip = (page - 1) * limit;
+  async findAllPublic(lang: string | null, pageInput: number, limitInput: number) {
+    const { page, limit, skip } = resolvePagination({ page: pageInput, limit: limitInput });
     const where: Prisma.static_pagesWhereInput = { deleted_at: null, is_published: true };
     const [pages, total] = await Promise.all([
       this.prisma.static_pages.findMany({
@@ -69,9 +70,7 @@ export class StaticPagesService {
 
   /** Admin list: includes drafts; optional `is_published` filter. */
   async findAllAdmin(lang: string | null, query: StaticPageQueryDto) {
-    const page = query.page ?? 1;
-    const limit = query.limit ?? 20;
-    const skip = (page - 1) * limit;
+    const { page, limit, skip } = resolvePagination(query);
     const where: Prisma.static_pagesWhereInput = { deleted_at: null };
     if (query.is_published !== undefined) where.is_published = query.is_published;
     const [pages, total] = await Promise.all([
@@ -360,12 +359,10 @@ export class StaticPagesService {
       // concurrent insert can still claim one of the (lang, slug) pairs between
       // the check and the update — the DB unique constraint is the real
       // backstop. Translate that raw P2002 into the same friendly 409.
-      if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002') {
-        throw new ConflictException(
-          'Cannot restore: one of the original translation slugs was claimed by another static page',
-        );
-      }
-      throw err;
+      rethrowP2002AsConflict(
+        err,
+        'Cannot restore: one of the original translation slugs was claimed by another static page',
+      );
     }
 
     await this.audit.write({

@@ -3,8 +3,9 @@ import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuditService } from '../common/audit/audit.service';
 import { AUDIT_ACTIONS, AuditAction } from '../common/audit/audit.actions';
-import { resolveTranslation } from '../common/utils/translation.util';
+import { assertExactlyOneDefault, resolveTranslation } from '../common/utils/translation.util';
 import { buildPaginationMeta, resolvePagination } from '../common/utils/pagination.util';
+import { PaginationDto } from '../common/dto/pagination.dto';
 import {
   CreateDailyHadithDto,
   DailyHadithQueryDto,
@@ -67,24 +68,28 @@ export class DailyHadithsService {
       };
     }
 
-    // 2. Natural rotation.
-    const activeHadiths = await this.prisma.daily_hadiths.findMany({
-      where: { deleted_at: null, is_active: true },
-      orderBy: [{ display_order: 'asc' }, { id: 'asc' }],
-      include: { daily_hadith_translations: true },
-    });
+    // 2. Natural rotation. Count + fetch the single row at the rotation
+    // index — the whole active corpus never needs to leave the database.
+    const rotationWhere: Prisma.daily_hadithsWhereInput = { deleted_at: null, is_active: true };
+    const activeCount = await this.prisma.daily_hadiths.count({ where: rotationWhere });
 
-    if (activeHadiths.length === 0) {
+    if (activeCount === 0) {
       return { message: "Today's hadith", data: null, meta: { date: todayDateOnly, source: 'empty' as const } };
     }
 
     const daysSinceEpoch = Math.floor(today.getTime() / MS_PER_DAY);
-    const index = Math.abs(daysSinceEpoch) % activeHadiths.length;
-    const chosen = activeHadiths[index];
+    const index = Math.abs(daysSinceEpoch) % activeCount;
+    const [chosen] = await this.prisma.daily_hadiths.findMany({
+      where: rotationWhere,
+      orderBy: [{ display_order: 'asc' }, { id: 'asc' }],
+      include: { daily_hadith_translations: true },
+      skip: index,
+      take: 1,
+    });
 
     return {
       message: "Today's hadith",
-      data: formatTodayHadith(chosen, lang, false),
+      data: chosen ? formatTodayHadith(chosen, lang, false) : null,
       meta: { date: todayDateOnly, source: 'rotation' as const },
     };
   }
@@ -133,10 +138,7 @@ export class DailyHadithsService {
   }
 
   async create(dto: CreateDailyHadithDto, userId: string) {
-    const defaultCount = dto.translations.filter((t) => t.is_default).length;
-    if (defaultCount !== 1) {
-      throw new BadRequestException('Exactly one translation must have is_default: true');
-    }
+    assertExactlyOneDefault(dto.translations, 'Exactly one translation must have is_default: true');
 
     // If display_order omitted, append to the end so new hadiths don't
     // collide with existing ones.
@@ -236,6 +238,50 @@ export class DailyHadithsService {
     });
 
     return { message: 'Hadith deleted', data: null };
+  }
+
+  async findTrash(query: PaginationDto, lang: string | null) {
+    const { page, limit, skip } = resolvePagination(query);
+    const where: Prisma.daily_hadithsWhereInput = { deleted_at: { not: null } };
+
+    const [items, total] = await Promise.all([
+      this.prisma.daily_hadiths.findMany({
+        where,
+        include: { daily_hadith_translations: true },
+        orderBy: [{ deleted_at: 'desc' }, { id: 'asc' }],
+        skip,
+        take: limit,
+      }),
+      this.prisma.daily_hadiths.count({ where }),
+    ]);
+
+    return {
+      message: 'Trash fetched',
+      data: {
+        items: items.map((h) => ({
+          ...h,
+          translation: resolveTranslation(h.daily_hadith_translations, lang),
+        })),
+        pagination: buildPaginationMeta(page, limit, total),
+      },
+    };
+  }
+
+  async restore(id: string, userId: string) {
+    const hadith = await this.prisma.daily_hadiths.findFirst({ where: { id, deleted_at: { not: null } } });
+    if (!hadith) throw new NotFoundException('Deleted hadith not found');
+
+    await this.prisma.daily_hadiths.update({
+      where: { id },
+      data: { deleted_at: null, updated_at: new Date() },
+    });
+
+    await this.writeAudit(userId, AUDIT_ACTIONS.DAILY_HADITH_RESTORED, id, {
+      method: 'POST',
+      path: `/api/v1/daily-hadiths/${id}/restore`,
+    });
+
+    return { message: 'Hadith restored', data: null };
   }
 
   // ── Pins ───────────────────────────────────────────────────────────────

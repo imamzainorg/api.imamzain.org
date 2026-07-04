@@ -13,5 +13,5 @@ test/**/*.js
 # AI helpers
 .claude/
 
-# vsocde settings
+# vscode settings
 .vscode/

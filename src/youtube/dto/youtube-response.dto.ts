@@ -76,6 +76,12 @@ class YoutubePlaylistVideosDataDto {
 
   @ApiProperty({ type: [YoutubeVideoItemDto], description: 'Videos in playlist order (server preserves YouTube\'s position).' })
   videos!: YoutubeVideoItemDto[];
+
+  @ApiPropertyOptional({
+    example: 24,
+    description: 'Total videos in the playlist per YouTube\'s item_count — may exceed `videos.length` when `limit` truncates.',
+  })
+  total?: number | null;
 }
 
 export class YoutubePlaylistVideosResponseDto extends ApiEnvelope(YoutubePlaylistVideosDataDto, 'Playlist videos fetched') {}

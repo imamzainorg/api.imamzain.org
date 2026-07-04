@@ -40,8 +40,10 @@ import {
   DailyHadithListResponseDto,
   DailyHadithMessageResponseDto,
   DailyHadithPinListResponseDto,
+  DailyHadithPinSavedResponseDto,
   TodayHadithResponseDto,
 } from './dto/daily-hadith-response.dto';
+import { PaginationDto } from '../common/dto/pagination.dto';
 
 @ApiTags('Daily Hadiths')
 @ApiHeader({ name: 'Accept-Language', required: false, description: 'ISO 639-1 code for translated fields (e.g. ar, en, fa).' })
@@ -92,6 +94,19 @@ export class DailyHadithsController {
   @ApiOkResponse({ type: DailyHadithPinListResponseDto, description: 'All pin entries' })
   listPins() {
     return this.service.listPins();
+  }
+
+  @Get('trash')
+  @Auth('daily-hadiths:delete')
+  @ApiOperation({
+    summary: 'List soft-deleted hadiths (CMS trash view)',
+    description: 'Paginated list of hadiths whose `deleted_at` is set. Requires permission: `daily-hadiths:delete`.',
+  })
+  @ApiQuery({ name: 'page', required: false, type: Number, example: 1 })
+  @ApiQuery({ name: 'limit', required: false, type: Number, example: 20 })
+  @ApiOkResponse({ type: DailyHadithListResponseDto, description: 'Paginated list of trashed hadiths' })
+  findTrash(@Query() query: PaginationDto, @Lang() lang: string | null) {
+    return this.service.findTrash(query, lang);
   }
 
   @Get(':id')
@@ -148,6 +163,20 @@ export class DailyHadithsController {
     return this.service.softDelete(id, user.id);
   }
 
+  @Post(':id/restore')
+  @HttpCode(200)
+  @Auth('daily-hadiths:delete')
+  @ApiOperation({
+    summary: 'Restore a soft-deleted hadith (admin)',
+    description: 'Clears `deleted_at`; the hadith rejoins the rotation immediately. Requires permission: `daily-hadiths:delete`.',
+  })
+  @ApiParam({ name: 'id', format: 'uuid' })
+  @ApiOkResponse({ type: DailyHadithMessageResponseDto, description: 'Hadith restored' })
+  @ApiNotFoundResponse({ type: NotFoundErrorDto, description: 'No soft-deleted hadith with that ID exists' })
+  restore(@Param('id') id: string, @CurrentUser() user: CurrentUserPayload) {
+    return this.service.restore(id, user.id);
+  }
+
   // ── Pins (admin) ───────────────────────────────────────────────────────
 
   @Post('pins')
@@ -158,24 +187,24 @@ export class DailyHadithsController {
     description:
       'Forces a specific hadith to be picked for a specific calendar date, overriding the natural rotation for that one day. Upsert semantics: re-pinning the same date replaces the previous mapping. Pinning an inactive hadith is allowed — the pin overrides `is_active` for that day. Requires permission: `daily-hadiths:update`.',
   })
-  @ApiOkResponse({ description: 'Pin created or updated' })
+  @ApiOkResponse({ type: DailyHadithPinSavedResponseDto, description: 'Pin created or updated' })
   @ApiBadRequestResponse({ type: ValidationErrorDto, description: 'Validation failed (pin_date must be YYYY-MM-DD)' })
   @ApiNotFoundResponse({ type: NotFoundErrorDto, description: 'No hadith with that ID exists' })
   pin(@Body() dto: PinDailyHadithDto, @CurrentUser() user: CurrentUserPayload) {
     return this.service.createPin(dto, user.id);
   }
 
-  @Delete('pins/:pin_date')
+  @Delete('pins/:pinDate')
   @Auth('daily-hadiths:update')
   @ApiOperation({
     summary: 'Remove a hadith pin (admin)',
     description: 'After removal the natural rotation resumes for that date. Requires permission: `daily-hadiths:update`.',
   })
-  @ApiParam({ name: 'pin_date', example: '2026-05-15', description: 'Calendar date (YYYY-MM-DD).' })
+  @ApiParam({ name: 'pinDate', example: '2026-05-15', description: 'Calendar date (YYYY-MM-DD).' })
   @ApiOkResponse({ type: DailyHadithMessageResponseDto, description: 'Pin removed' })
   @ApiNotFoundResponse({ type: NotFoundErrorDto, description: 'No pin exists for that date' })
   @ApiBadRequestResponse({ type: ValidationErrorDto, description: 'pin_date is not YYYY-MM-DD' })
-  unpin(@Param('pin_date') pinDate: string, @CurrentUser() user: CurrentUserPayload) {
+  unpin(@Param('pinDate') pinDate: string, @CurrentUser() user: CurrentUserPayload) {
     return this.service.deletePin(pinDate, user.id);
   }
 }

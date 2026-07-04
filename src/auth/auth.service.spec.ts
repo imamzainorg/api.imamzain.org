@@ -39,7 +39,7 @@ describe("AuthService", () => {
   let audit: any;
 
   beforeEach(async () => {
-    audit = { write: jest.fn().mockResolvedValue(true) };
+    audit = { write: jest.fn().mockResolvedValue(true), writeSync: jest.fn().mockResolvedValue(true) };
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         AuthService,
@@ -175,7 +175,7 @@ describe("AuthService", () => {
     it("still succeeds even if audit write fails", async () => {
       prisma.users.findFirst.mockResolvedValue(mockUser);
       (bcrypt.compare as jest.Mock).mockResolvedValue(true);
-      audit.write.mockResolvedValueOnce(false);
+      audit.writeSync.mockResolvedValueOnce(false);
 
       const result = await service.login(
         { username: "admin", password: "secret" },

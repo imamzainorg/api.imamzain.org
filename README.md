@@ -22,7 +22,7 @@ REST API powering [imamzain.org](https://imamzain.org) — Islamic content manag
 | --- | --- |
 | Framework | NestJS 11 (TypeScript 6) |
 | Database | PostgreSQL via Supabase |
-| ORM | Prisma 6 (introspection-only, raw SQL) |
+| ORM | Prisma 6 (SQL migrations via `prisma migrate deploy` + typed client) |
 | Auth | JWT + Passport |
 | Storage | Cloudflare R2 (pre-signed URLs) |
 | Email | Nodemailer + Hostinger SMTP |
@@ -156,29 +156,46 @@ See [.env.example](.env.example) for the complete list with inline descriptions.
 | `npm run build` | Compile TypeScript to `dist/` |
 | `npm start` | Start the compiled server |
 | `npm test` | Run unit tests |
+| `npm run test:watch` | Unit tests in watch mode |
 | `npm run test:cov` | Run tests with coverage report |
+| `npm run test:integration` | Integration tests against `DATABASE_TEST_URL` (see `.env.test.example`) |
+| `npm run test:all` | Unit + integration tests |
 | `npm run type-check` | TypeScript check without emitting |
-| `npm run prisma:pull` | Sync Prisma schema from the live database |
+| `npm run prisma:deploy` | Apply pending SQL migrations (`prisma migrate deploy`) |
+| `npm run prisma:pull` | Introspect the live database into `schema.prisma` (drift check) |
 | `npm run prisma:generate` | Regenerate the Prisma client |
 | `npm run prisma:studio` | Open Prisma Studio GUI |
 | `npm run prisma:seed` | Seed permissions, roles, languages, bootstrap super-admin, and starter site settings |
+| `npm run prisma:seed-content` | Seed legacy JSON content (books, posts, gallery, papers, hadiths, pages, stores, audios) from the sibling `imamzain.org` checkout |
+| `npm run prisma:diagnose` | Read-only report of what `prisma:seed-content` would create/skip |
+| `npm run prisma:hydrate-media` | Backfill real file size/dimensions on seeded media rows; report objects missing from R2 |
+| `npm run prisma:upload-missing-r2` | Copy legacy media files from the local `public/` mirror into R2 |
+| `npm run prisma:reconcile-audios` | Create draft audio rows for R2 audio objects missing from the DB |
 | `npm run prisma:backfill-variants` | One-off: generate sharp WebP variants for media uploaded before the variant pipeline shipped |
+
+> Dependency note: `package.json` pins an `overrides.fast-xml-builder` version
+> floor (CVE hygiene for the transitive `fast-xml-parser` chain pulled in by
+> the AWS SDK). The natural range already resolves to the same version, so the
+> override is a guard, not a behaviour change.
 
 ---
 
 ## Schema Migrations
 
-Prisma is run in introspection-only mode (`prisma db pull`). Schema changes
-are managed as raw SQL files under `prisma/migrations/<timestamp>_<name>/migration.sql`.
+Schema changes are hand-written SQL migrations under
+`prisma/migrations/<timestamp>_<name>/migration.sql`, applied and tracked by
+Prisma Migrate (`_prisma_migrations` table). `prisma/schema.prisma` is the
+source of truth for the typed client and must be edited to mirror every
+migration.
 
-To apply a new migration:
+To make a schema change:
 
 ```bash
-# 1. Apply the SQL to the database
-psql "$DIRECT_URL" -f prisma/migrations/<folder>/migration.sql
+# 1. Write the SQL under prisma/migrations/<timestamp>_<name>/migration.sql
+#    and mirror the change in prisma/schema.prisma.
 
-# 2. Re-introspect so schema.prisma reflects the live database
-npm run prisma:pull
+# 2. Apply pending migrations
+npm run prisma:deploy
 
 # 3. Regenerate the typed client
 #    Stop any long-running node process first (dev server, jest --watch),
@@ -186,8 +203,10 @@ npm run prisma:pull
 npm run prisma:generate
 ```
 
-Migrations are idempotent (`CREATE TABLE IF NOT EXISTS`, `DO`-block guarded
-`CREATE TYPE`), so re-running is a no-op.
+`npm run prisma:pull` (introspection) remains useful as a drift check against
+a live database, but deploys go through `prisma migrate deploy` — never apply
+migration SQL by hand with psql, or the `_prisma_migrations` ledger will
+disagree with reality.
 
 ---
 
@@ -207,8 +226,10 @@ src/
 ├── auth/                         # JWT strategy + 30s in-process user cache with cross-instance invalidation via Redis pub/sub
 ├── users/                        # User CRUD & profile management
 ├── roles/                        # Role & permission management (RBAC)
+├── audit-logs/                   # Admin read API over the audit trail
+├── dashboard/                    # CMS dashboard aggregates (cached counts + recent activity)
 ├── languages/                    # Language records for i18n
-├── media/                        # File metadata (backed by Cloudflare R2)
+├── media/                        # File metadata (backed by Cloudflare R2) + WebP variants
 ├── posts/                        # Blog posts + categories
 ├── post-categories/
 ├── books/                        # Digital library + categories
@@ -220,7 +241,13 @@ src/
 ├── static-pages/                 # Canonical rarely-changing pages (biography, about) + SEO
 ├── stores/                       # Physical sale / contact locations grouped by city
 ├── audios/                       # Single-language audio library (MP3 + PDF on R2) + pre-signed upload
-├── newsletter/                   # Newsletter subscriptions
+├── speakers/                     # Lecturers referenced by the audio library
+├── daily-hadiths/                # Daily hadith rotation + date pins
+├── youtube/                      # Local mirror of the YouTube channel (6-hourly sync)
+├── search/                       # Cross-resource pg_trgm search
+├── feeds/                        # sitemap.xml, RSS, homepage aggregator
+├── settings/                     # Site settings key-value store (cached)
+├── newsletter/                   # Newsletter subscriptions + campaigns
 ├── forms/                        # Contact forms & proxy-visit tracking
 ├── contest/                      # Qutuf Sajjadiya contest (start/submit lifecycle)
 ├── email/                        # Nodemailer SMTP service
@@ -245,7 +272,7 @@ For cross-cutting concepts the OpenAPI spec doesn't cover, the
 | Doc | What's in it |
 | --- | --- |
 | [docs/integration.md](docs/integration.md) | Auth flow, response/error envelopes, pagination, language resolution, soft-delete + restore, two-step media upload, Tiptap sanitisation allowlist, newsletter unsubscribe scheme, rate limits, public URL conventions, cron schedules. The cross-cutting handbook. |
-| [docs/permissions.md](docs/permissions.md) | Full permission catalogue (53 permissions), default role mappings, the role × permission matrix, and the complete audit-action vocabulary for activity feeds. |
+| [docs/permissions.md](docs/permissions.md) | Full permission catalogue (68 permissions), default role mappings, the role × permission matrix, and the complete audit-action vocabulary for activity feeds. |
 | [docs/CMS-INTEGRATION-NOTES.md](docs/CMS-INTEGRATION-NOTES.md) | Chronological release notes — what changed in each round of API updates. Read alongside the integration docs above for context on recent additions. |
 
 ### Authentication

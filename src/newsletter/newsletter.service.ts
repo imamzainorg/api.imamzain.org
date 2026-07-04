@@ -5,6 +5,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { AuditService } from '../common/audit/audit.service';
 import { AUDIT_ACTIONS } from '../common/audit/audit.actions';
 import { buildPaginationMeta } from '../common/utils/pagination.util';
+import { rethrowP2002AsConflict } from '../common/utils/prisma-error.util';
 import { SubscribeDto, UnsubscribeDto } from './dto/newsletter.dto';
 
 function resolveUnsubscribeSecret(): string {
@@ -90,10 +91,7 @@ export class NewsletterService {
     } catch (err: unknown) {
       // Concurrent subscribe with the same email lost the race; turn the
       // P2002 unique violation into a clean 409 instead of a 500.
-      if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002') {
-        throw new ConflictException('This email is already subscribed');
-      }
-      throw err;
+      rethrowP2002AsConflict(err, 'This email is already subscribed');
     }
 
     await this.audit.write({

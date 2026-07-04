@@ -6,15 +6,13 @@ import {
   IsArray,
   IsBoolean,
   IsIn,
-  IsInt,
   IsOptional,
   IsString,
   IsUUID,
-  Max,
   MaxLength,
-  Min,
   ValidateNested,
 } from "class-validator";
+import { PaginationDto } from "../../common/dto/pagination.dto";
 
 export class StartContestDto {
   @ApiProperty({ example: "Ahmad Hassan Al-Karbalayi", maxLength: 150 })
@@ -89,22 +87,7 @@ export class SubmitContestDto {
   answers!: SubmitAnswerDto[];
 }
 
-export class AttemptQueryDto {
-  @ApiPropertyOptional({ example: 1, minimum: 1, default: 1 })
-  @IsOptional()
-  @Type(() => Number)
-  @IsInt()
-  @Min(1)
-  page?: number = 1;
-
-  @ApiPropertyOptional({ example: 20, minimum: 1, maximum: 100, default: 20 })
-  @IsOptional()
-  @Type(() => Number)
-  @IsInt()
-  @Min(1)
-  @Max(100)
-  limit?: number = 20;
-
+export class AttemptQueryDto extends PaginationDto {
   @ApiPropertyOptional({ example: true, description: "Filter by submission status" })
   @IsOptional()
   @Transform(({ value }) => {

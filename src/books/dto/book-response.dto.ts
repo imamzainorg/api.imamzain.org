@@ -122,6 +122,9 @@ class BookDto {
   @ApiPropertyOptional({ example: '2010' })
   publish_year?: string;
 
+  @ApiPropertyOptional({ example: 'https://cdn.imamzain.org/books/al-sahifa-al-sajjadiyya.pdf', description: 'Direct URL of the downloadable book PDF.' })
+  pdf_url?: string;
+
   @ApiPropertyOptional({ example: 1 })
   part_number?: number;
 
@@ -172,6 +175,9 @@ class BookListItemDto {
 
   @ApiPropertyOptional({ example: '2010' })
   publish_year?: string;
+
+  @ApiPropertyOptional({ example: 'https://cdn.imamzain.org/books/al-sahifa-al-sajjadiyya.pdf', description: 'Direct URL of the downloadable book PDF.' })
+  pdf_url?: string;
 
   @ApiPropertyOptional({ example: 1 })
   part_number?: number;

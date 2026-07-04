@@ -477,10 +477,13 @@ CREATE INDEX "idx_gallery_images_added_by" ON "gallery_images"("added_by" ASC);
 CREATE INDEX "idx_gallery_images_category" ON "gallery_images"("category_id" ASC);
 
 -- CreateIndex
-CREATE INDEX "idx_gallery_images_locations_gin" ON "gallery_images" USING GIN ("locations" array_ops ASC);
+-- (no ASC here: GIN indexes reject ordering options — "access method gin does
+-- not support ASC/DESC". The stray ASC was never caught because production was
+-- baselined, not migrated from empty; CI's fresh-DB migrate deploy hits it.)
+CREATE INDEX "idx_gallery_images_locations_gin" ON "gallery_images" USING GIN ("locations" array_ops);
 
 -- CreateIndex
-CREATE INDEX "idx_gallery_images_tags_gin" ON "gallery_images" USING GIN ("tags" array_ops ASC);
+CREATE INDEX "idx_gallery_images_tags_gin" ON "gallery_images" USING GIN ("tags" array_ops);
 
 -- CreateIndex
 CREATE INDEX "idx_gallery_images_taken_at" ON "gallery_images"("taken_at" ASC);

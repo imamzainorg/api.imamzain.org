@@ -142,6 +142,7 @@ model books {
   isbn              String?             @unique
   pages             Int?
   publish_year      String?
+  pdf_url           String?
   part_number       Int?
   parts             Int?
   views             BigInt              @default(0)
@@ -279,13 +280,14 @@ model media {
   media_variants                media_variants[]
   post_attachments              post_attachments[]
   post_translation_og           post_translations[]           @relation("post_translation_og_image")
-  posts                         posts?
+  posts                         posts[]
   static_page_translation_og    static_page_translations[]    @relation("static_page_translation_og_image")
 
   @@index([uploaded_by], map: "idx_media_uploaded_by")
   @@index([alt_text(ops: raw("gin_trgm_ops"))], map: "idx_media_alt_text_trgm", type: Gin)
   @@index([filename(ops: raw("gin_trgm_ops"))], map: "idx_media_filename_trgm", type: Gin)
   @@index([mime_type], map: "idx_media_mime_type")
+  @@index([created_at(sort: Desc)], map: "idx_media_created_at")
 }
 
 model media_variants {
@@ -390,7 +392,7 @@ model post_translations {
 model posts {
   id                String              @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   category_id       String              @db.Uuid
-  cover_image_id    String?             @unique @db.Uuid
+  cover_image_id    String?             @db.Uuid
   published_at      DateTime?           @db.Timestamptz(6)
   is_published      Boolean             @default(false)
   views             BigInt              @default(0)
@@ -408,6 +410,7 @@ model posts {
   @@index([category_id], map: "idx_posts_category")
   @@index([created_by], map: "idx_posts_created_by")
   @@index([is_published, published_at], map: "idx_posts_published")
+  @@index([cover_image_id], map: "idx_posts_cover_image")
 }
 
 /// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
@@ -596,6 +599,8 @@ model qutuf_sajjadiya_contest_attempts {
   final_score                  Int?
   phone                        String?
   qutufSajjadiyaContestAnswers qutuf_sajjadiya_contest_answers[]
+
+  @@index([started_at(sort: Desc)], map: "idx_contest_attempts_started_at")
 }
 
 model qutuf_sajjadiya_contest_questions {

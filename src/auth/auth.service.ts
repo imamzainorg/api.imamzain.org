@@ -1,5 +1,6 @@
 import { Injectable, Logger, UnauthorizedException } from '@nestjs/common';
 import { Cron } from '@nestjs/schedule';
+import { cronsDisabled } from '../common/utils/cron.util';
 import { JwtService } from '@nestjs/jwt';
 import { Prisma } from '@prisma/client';
 import * as bcrypt from 'bcryptjs';
@@ -98,7 +99,9 @@ export class AuthService {
     const accessToken = this.jwtService.sign(payload);
     const refreshToken = await this.issueRefreshToken(user.id);
 
-    await this.audit.write({
+    // writeSync (not fire-and-forget): login is a compliance-trail event —
+    // the ip/agent row must exist once the response is out.
+    await this.audit.writeSync({
       actorId: user.id,
       action: AUDIT_ACTIONS.USER_LOGIN,
       resourceType: 'user',
@@ -246,6 +249,7 @@ export class AuthService {
    */
   @Cron('15 3 * * *')
   async cleanupStaleRefreshTokens(): Promise<void> {
+    if (cronsDisabled()) return;
     const now = new Date();
     const revokedCutoff = new Date(now.getTime() - REVOKED_TOKEN_GRACE_DAYS * 24 * 60 * 60 * 1000);
     try {
@@ -316,7 +320,8 @@ export class AuthService {
 
     invalidateJwtUserCache(userId);
 
-    await this.audit.write({
+    // writeSync: password changes are compliance-trail events like logins.
+    await this.audit.writeSync({
       actorId: userId,
       action: AUDIT_ACTIONS.PASSWORD_CHANGED,
       resourceType: 'user',

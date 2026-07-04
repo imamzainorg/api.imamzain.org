@@ -7,29 +7,10 @@
  */
 
 import { PrismaClient } from '@prisma/client';
-import * as path from 'path';
-import * as fs from 'fs';
+import { assertDataDir, loadJson, normalizeUrl } from './lib/seed-utils';
+import type { BookJson, PostJson, GalleryJson, JournalJson } from './lib/seed-utils';
 
 const prisma = new PrismaClient();
-const DATA_DIR = path.join(__dirname, '../../imamzain.org/src/data');
-
-function loadJson<T>(file: string): T {
-  return JSON.parse(fs.readFileSync(path.join(DATA_DIR, file), 'utf-8')) as T;
-}
-
-function normalizeUrl(url: string): string {
-  if (!url?.trim()) return '';
-  const u = url.trim();
-  if (u.startsWith('http')) return u;
-  if (u.startsWith('//')) return `https:${u}`;
-  if (u.startsWith('/')) return `https://cdn.imamzain.org${u}`;
-  return `https://cdn.imamzain.org/${u}`;
-}
-
-type BookJson   = { id: number; slug: string; title?: string; image?: string; category?: string | string[]; printDate?: string | number; pages?: string | number };
-type PostJson   = { id: number; slug: string; title?: string; category?: string };
-type GalleryJson = { id: number; url: string; name?: string };
-type JournalJson = { id: string; pdfUrl?: string; translations?: { title?: string }[] };
 
 async function diagnoseBooks() {
   const books = loadJson<BookJson[]>('books.json');
@@ -149,32 +130,43 @@ async function diagnoseJournals() {
   });
   if (!catTranslation) { console.log('  ⚠ Journals category not found in DB'); return; }
 
-  const noPdf:   typeof journals = [];
+  // Mirrors the seeder's idempotency keys exactly: pdf_url when present,
+  // otherwise the (category + Arabic title) fallback. Entries without a
+  // pdfUrl are NOT skipped by the seeder — they seed keyed by title.
+  const titleKeyed: typeof journals = [];
   const already: typeof journals = [];
 
   for (const j of journals) {
-    if (!j.pdfUrl) { noPdf.push(j); continue; }
-    const existing = await prisma.academic_papers.findFirst({
-      where: { pdf_url: j.pdfUrl, category_id: catTranslation.category_id },
-    });
-    if (existing) { already.push(j); continue; }
+    if (j.pdfUrl) {
+      const existing = await prisma.academic_papers.findFirst({
+        where: { pdf_url: j.pdfUrl, category_id: catTranslation.category_id },
+      });
+      if (existing) { already.push(j); continue; }
+    } else {
+      titleKeyed.push(j);
+      const arTitle = j.translations?.[0]?.title?.trim() ?? '';
+      const existing = await prisma.academic_paper_translations.findFirst({
+        where: { lang: 'ar', title: arTitle, academic_papers: { category_id: catTranslation.category_id } },
+      });
+      if (existing) { already.push(j); continue; }
+    }
   }
 
-  const total = noPdf.length + already.length;
-  console.log(`  Skipped: ${total}`);
+  console.log(`  Skipped (already in DB): ${already.length}`);
 
-  if (noPdf.length) {
-    console.log(`\n  No PDF URL (${noPdf.length}):`);
-    noPdf.forEach(j => console.log(`    [id=${j.id}] ${j.translations?.[0]?.title ?? '(no title)'}`));
+  if (titleKeyed.length) {
+    console.log(`\n  No PDF URL — seeded keyed by title instead (${titleKeyed.length}):`);
+    titleKeyed.forEach(j => console.log(`    [id=${j.id}] ${j.translations?.[0]?.title ?? '(no title)'}`));
   }
   if (already.length) {
     console.log(`\n  Already in DB (${already.length}):`);
-    already.forEach(j => console.log(`    [id=${j.id}] ${j.pdfUrl}`));
+    already.forEach(j => console.log(`    [id=${j.id}] ${j.pdfUrl ?? j.translations?.[0]?.title ?? '(no key)'}`));
   }
-  if (total === 0) console.log('  None — all journals accounted for.');
+  if (already.length === 0) console.log('  None — all journals accounted for.');
 }
 
 async function main() {
+  assertDataDir();
   console.log('Diagnosing skipped seed items…');
   await diagnoseBooks();
   await diagnosePosts();
@@ -184,5 +176,5 @@ async function main() {
 }
 
 main()
-  .catch(err => { console.error(err); process.exit(1); })
+  .catch(err => { console.error(err); process.exitCode = 1; })
   .finally(() => prisma.$disconnect());

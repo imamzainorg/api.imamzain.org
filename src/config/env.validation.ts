@@ -105,6 +105,13 @@ class EnvironmentVariables {
   @IsString()
   NEWSLETTER_UNSUBSCRIBE_URL_BASE?: string;
 
+  // Contest attempt-token signing. Falls back to JWT_SECRET at runtime if
+  // unset (same pattern as the newsletter secret) — set it explicitly if you
+  // ever rotate JWT_SECRET, or in-flight contest attempts are invalidated.
+  @IsOptional()
+  @IsString()
+  CONTEST_ATTEMPT_SECRET?: string;
+
   // Outbound email — kept optional so a missing SMTP config silently
   // disables delivery (matches current behaviour). Tighten to required-in-
   // production once the team confirms every prod env has these set.

@@ -6,6 +6,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { Cron, CronExpression } from '@nestjs/schedule';
+import { cronsDisabled } from '../common/utils/cron.util';
 import { newsletter_campaign_status, Prisma } from '@prisma/client';
 import pLimit from 'p-limit';
 import { EmailService } from '../email/email.service';
@@ -319,6 +320,7 @@ export class CampaignsService {
    */
   @Cron(CronExpression.EVERY_MINUTE)
   async runSendingTick() {
+    if (cronsDisabled()) return;
     if (this.isRunning) {
       this.logger.log('runSendingTick skipped — previous run still in progress');
       return;

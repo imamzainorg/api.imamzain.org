@@ -301,8 +301,9 @@ Four category resources emit parallel sets:
 | `DAILY_HADITH_CREATED` | `POST /daily-hadiths` |
 | `DAILY_HADITH_UPDATED` | `PATCH /daily-hadiths/:id` |
 | `DAILY_HADITH_DELETED` | `DELETE /daily-hadiths/:id` |
+| `DAILY_HADITH_RESTORED` | `POST /daily-hadiths/:id/restore` |
 | `DAILY_HADITH_PINNED` | `POST /daily-hadiths/pins` |
-| `DAILY_HADITH_UNPINNED` | `DELETE /daily-hadiths/pins/:pin_date` |
+| `DAILY_HADITH_UNPINNED` | `DELETE /daily-hadiths/pins/:pinDate` |
 
 The YouTube sync (`youtube-sync.service.ts`) does **not** emit audit
 log rows. It's a system action driven by cron, not a user action;

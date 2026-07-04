@@ -33,6 +33,10 @@ import { PrismaService } from '../src/prisma/prisma.service';
 
 async function main() {
   const logger = new Logger('BackfillVariants');
+
+  // Operator script — never run production cron ticks from this process.
+  process.env.DISABLE_CRON = 'true';
+
   const app = await NestFactory.createApplicationContext(AppModule, {
     logger: ['log', 'warn', 'error'],
   });
@@ -84,6 +88,9 @@ async function main() {
     }
 
     logger.log(`Done. ${succeeded} succeeded, ${failed} failed.`);
+    if (failed > 0) {
+      process.exitCode = 1;
+    }
   } finally {
     await app.close();
   }
@@ -93,5 +100,5 @@ main()
   .catch((err) => {
     // eslint-disable-next-line no-console
     console.error('Backfill failed:', err);
-    process.exit(1);
+    process.exitCode = 1;
   });
