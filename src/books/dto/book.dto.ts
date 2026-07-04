@@ -17,6 +17,8 @@ import {
 } from "class-validator";
 import { PaginationDto } from "../../common/dto/pagination.dto";
 
+const HTTP_URL = /^https?:\/\/.+/i;
+
 export class BookTranslationDto {
   @ApiProperty({ example: "ar", minLength: 2, maxLength: 2 })
   @IsString()
@@ -120,6 +122,16 @@ export class CreateBookDto {
   publish_year?: string;
 
   @ApiPropertyOptional({
+    example: "https://cdn.imamzain.org/books/al-sahifa-al-sajjadiyya.pdf",
+    description: "Direct URL of the downloadable book PDF.",
+  })
+  @IsOptional()
+  @IsString()
+  @MaxLength(2000)
+  @Matches(HTTP_URL, { message: "pdf_url must be an http(s) URL" })
+  pdf_url?: string;
+
+  @ApiPropertyOptional({
     example: 1,
     description: "Part number within a multi-volume series",
     minimum: 1,
@@ -177,6 +189,16 @@ export class UpdateBookDto {
   @IsOptional()
   @IsString()
   publish_year?: string;
+
+  @ApiPropertyOptional({
+    example: "https://cdn.imamzain.org/books/al-sahifa-al-sajjadiyya.pdf",
+    description: "Direct URL of the downloadable book PDF.",
+  })
+  @IsOptional()
+  @IsString()
+  @MaxLength(2000)
+  @Matches(HTTP_URL, { message: "pdf_url must be an http(s) URL" })
+  pdf_url?: string;
 
   @ApiPropertyOptional({ example: 2, minimum: 1 })
   @IsOptional()

@@ -29,6 +29,7 @@ import * as path from 'path';
 import { AppModule } from '../src/app.module';
 import { R2Service } from '../src/storage/r2.service';
 import { PrismaService } from '../src/prisma/prisma.service';
+import { getOrCreateSpeaker } from './lib/seed-utils';
 
 const AUDIO_EXTENSIONS = new Set(['mp3', 'm4a', 'mp4', 'aac', 'ogg', 'wav', 'flac', 'webm', '3gp', '3gpp']);
 
@@ -46,30 +47,14 @@ async function main() {
   const logger = new Logger('ReconcileAudios');
   const dryRun = process.argv.includes('--dry');
 
+  // Operator script — never run production cron ticks from this process.
+  process.env.DISABLE_CRON = 'true';
+
   const app = await NestFactory.createApplicationContext(AppModule, { logger: ['log', 'warn', 'error'] });
   const prisma = app.get(PrismaService);
   const r2 = app.get(R2Service);
 
   const speakerCache = new Map<string, string>();
-  async function getOrCreateSpeaker(rawName: string | null): Promise<string | null> {
-    const name = rawName?.trim();
-    if (!name) return null;
-    const cached = speakerCache.get(name);
-    if (cached) return cached;
-    const existing = await prisma.speaker_translations.findFirst({
-      where: { lang: 'ar', name, speakers: { deleted_at: null } },
-      select: { speaker_id: true },
-    });
-    if (existing) {
-      speakerCache.set(name, existing.speaker_id);
-      return existing.speaker_id;
-    }
-    const speaker = await prisma.speakers.create({
-      data: { speaker_translations: { create: { lang: 'ar', name, is_default: true } } },
-    });
-    speakerCache.set(name, speaker.id);
-    return speaker.id;
-  }
 
   try {
     const allKeys = await r2.listAudioKeys();
@@ -99,7 +84,7 @@ async function main() {
     let created = 0;
     for (const key of missing) {
       const { title, speaker } = parseFilename(key);
-      const speakerId = await getOrCreateSpeaker(speaker);
+      const speakerId = await getOrCreateSpeaker(prisma, speakerCache, speaker);
       await prisma.audios.create({
         data: {
           speaker_id: speakerId,

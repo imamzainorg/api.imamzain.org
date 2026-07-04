@@ -1,5 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { Cron } from '@nestjs/schedule';
+import { cronsDisabled } from '../utils/cron.util';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { AuditAction } from './audit.actions';
@@ -157,6 +158,7 @@ export class AuditService {
    */
   @Cron('30 3 * * *')
   async cleanupOldAuditLogs(): Promise<void> {
+    if (cronsDisabled()) return;
     const cutoff = new Date(Date.now() - AUDIT_LOG_RETENTION_DAYS * 24 * 60 * 60 * 1000);
     try {
       const { count } = await this.prisma.audit_logs.deleteMany({

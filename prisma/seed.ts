@@ -878,14 +878,12 @@ async function main() {
     { key: 'social_youtube', value: '', description: 'YouTube channel URL (empty to hide).', is_public: true },
   ];
 
-  let createdSettings = 0;
   for (const s of INITIAL_SETTINGS) {
-    const result = await prisma.site_settings.upsert({
+    await prisma.site_settings.upsert({
       where: { key: s.key },
       create: { key: s.key, value: s.value, type: s.type ?? 'string', description: s.description, is_public: s.is_public },
       update: {}, // never overwrite an existing setting — operators have likely tuned them
     });
-    if (result) createdSettings++;
   }
   console.log(`  ✓ ${INITIAL_SETTINGS.length} setting keys present (existing values preserved)`);
 
@@ -895,6 +893,7 @@ async function main() {
 main()
   .catch((err) => {
     console.error('Seed failed:', err);
-    process.exit(1);
+    // exitCode (not exit()) so the .finally disconnect below still runs.
+    process.exitCode = 1;
   })
   .finally(() => prisma.$disconnect());

@@ -9,32 +9,24 @@ import {
   Patch,
   Post,
   Query,
-  UseGuards,
 } from '@nestjs/common';
 import {
   ApiBadRequestResponse,
-  ApiBearerAuth,
   ApiConflictResponse,
   ApiCreatedResponse,
-  ApiForbiddenResponse,
   ApiNotFoundResponse,
   ApiOkResponse,
   ApiOperation,
   ApiParam,
   ApiTags,
-  ApiUnauthorizedResponse,
 } from '@nestjs/swagger';
-import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { Auth } from '../common/decorators/auth.decorator';
 import { CurrentUser, CurrentUserPayload } from '../common/decorators/current-user.decorator';
-import { RequirePermission } from '../common/decorators/require-permission.decorator';
 import {
   ConflictErrorDto,
-  ForbiddenErrorDto,
   NotFoundErrorDto,
-  UnauthorizedErrorDto,
   ValidationErrorDto,
 } from '../common/dto/api-response.dto';
-import { PermissionGuard } from '../common/guards/permission.guard';
 import { CampaignsService } from './campaigns.service';
 import {
   CampaignQueryDto,
@@ -49,16 +41,12 @@ import {
 } from './dto/campaign-response.dto';
 
 @ApiTags('Newsletter Campaigns')
-@ApiBearerAuth('jwt')
 @Controller('newsletter/campaigns')
-@UseGuards(JwtAuthGuard, PermissionGuard)
-@ApiUnauthorizedResponse({ type: UnauthorizedErrorDto, description: 'Missing or invalid JWT' })
-@ApiForbiddenResponse({ type: ForbiddenErrorDto, description: 'Insufficient permissions' })
 export class CampaignsController {
   constructor(private readonly service: CampaignsService) {}
 
   @Post()
-  @RequirePermission('newsletter:update')
+  @Auth('newsletter:update')
   @ApiOperation({
     summary: 'Create a campaign (draft or scheduled)',
     description:
@@ -71,7 +59,7 @@ export class CampaignsController {
   }
 
   @Get()
-  @RequirePermission('newsletter:read')
+  @Auth('newsletter:read')
   @ApiOperation({
     summary: 'List campaigns (paginated)',
     description:
@@ -84,7 +72,7 @@ export class CampaignsController {
   }
 
   @Get(':id')
-  @RequirePermission('newsletter:read')
+  @Auth('newsletter:read')
   @ApiOperation({
     summary: 'Get a single campaign with current delivery counters',
     description:
@@ -98,7 +86,7 @@ export class CampaignsController {
   }
 
   @Patch(':id')
-  @RequirePermission('newsletter:update')
+  @Auth('newsletter:update')
   @ApiOperation({
     summary: 'Update a draft or scheduled campaign',
     description:
@@ -119,7 +107,7 @@ export class CampaignsController {
 
   @Post(':id/send')
   @HttpCode(200)
-  @RequirePermission('newsletter:update')
+  @Auth('newsletter:update')
   @ApiOperation({
     summary: 'Queue a campaign for sending now',
     description:
@@ -136,7 +124,7 @@ export class CampaignsController {
 
   @Post(':id/cancel')
   @HttpCode(200)
-  @RequirePermission('newsletter:update')
+  @Auth('newsletter:update')
   @ApiOperation({
     summary: 'Cancel an in-flight or upcoming campaign',
     description:
@@ -150,7 +138,7 @@ export class CampaignsController {
   }
 
   @Delete(':id')
-  @RequirePermission('newsletter:delete')
+  @Auth('newsletter:delete')
   @ApiOperation({
     summary: 'Hard-delete a draft or cancelled campaign',
     description:

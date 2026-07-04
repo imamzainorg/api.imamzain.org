@@ -326,7 +326,6 @@ export class ContestService implements OnApplicationBootstrap {
     );
 
     return {
-      success: true,
       message: "Contest submitted",
       data: {
         final_score: finalScore,

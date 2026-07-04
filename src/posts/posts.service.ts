@@ -1,5 +1,6 @@
 import { BadRequestException, ConflictException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { Cron, CronExpression } from '@nestjs/schedule';
+import { cronsDisabled } from '../common/utils/cron.util';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuditService } from '../common/audit/audit.service';
@@ -7,32 +8,12 @@ import { AUDIT_ACTIONS } from '../common/audit/audit.actions';
 import { sanitizeEditorHtml } from '../common/utils/html-sanitize.util';
 import { readingTimeMinutes } from '../common/utils/reading-time.util';
 import { softDeleteSuffix, stripSoftDeleteSuffix } from '../common/utils/soft-delete.util';
-import { resolveTranslation } from '../common/utils/translation.util';
+import { rethrowP2002AsConflict } from '../common/utils/prisma-error.util';
+import { assertExactlyOneDefault, resolveTranslation } from '../common/utils/translation.util';
 import { buildPaginationMeta, resolvePagination } from '../common/utils/pagination.util';
 import { ADVISORY_LOCK_KEYS, withAdvisoryLock } from '../common/utils/advisory-lock.util';
+import { MEDIA_VARIANT_SELECT, OG_IMAGE_SELECT, PUBLIC_MEDIA_SELECT } from '../common/crud/media-selects';
 import { BulkIdsDto, BulkPublishDto, CreatePostDto, PostQueryDto, PostSort, PostStatus, TogglePublishDto, UpdatePostDto } from './dto/post.dto';
-
-// Public media variant shape — enough for the public site's `<img srcset>`.
-// Kept slim (no file_size / created_at) so it's cheap to ship on list payloads.
-const MEDIA_VARIANT_SELECT = {
-  id: true,
-  width: true,
-  url: true,
-  format: true,
-} satisfies Prisma.media_variantsSelect;
-
-// Resolvable per-translation OG image for SEO meta tags. The detail endpoint
-// hydrates this from `og_image_id` so the front-end gets a usable URL, not a
-// bare UUID it can't resolve.
-const OG_IMAGE_SELECT = {
-  id: true,
-  url: true,
-  filename: true,
-  alt_text: true,
-  mime_type: true,
-  width: true,
-  height: true,
-} satisfies Prisma.mediaSelect;
 
 const POST_DETAIL_INCLUDE = {
   post_translations: { include: { og_image: { select: OG_IMAGE_SELECT } } },
@@ -81,18 +62,7 @@ const POST_LIST_SELECT = {
       },
     },
   },
-  media: {
-    select: {
-      id: true,
-      url: true,
-      filename: true,
-      alt_text: true,
-      mime_type: true,
-      width: true,
-      height: true,
-      media_variants: { select: MEDIA_VARIANT_SELECT, orderBy: { width: 'asc' } },
-    },
-  },
+  media: { select: PUBLIC_MEDIA_SELECT },
   post_attachments: {
     take: 1,
     select: { post_id: true, media_id: true, display_order: true, media: { select: { id: true, url: true, mime_type: true, filename: true } } },
@@ -272,10 +242,7 @@ export class PostsService {
       }
     }
 
-    const defaultCount = dto.translations.filter((t) => t.is_default).length;
-    if (defaultCount !== 1) {
-      throw new BadRequestException('Exactly one translation must have is_default: true');
-    }
+    assertExactlyOneDefault(dto.translations, 'Exactly one translation must have is_default: true');
 
     // Batched pre-check: one findMany covers every (lang, slug) up front so
     // duplicate slugs surface as a useful 409 instead of N sequential queries
@@ -536,6 +503,7 @@ export class PostsService {
    */
   @Cron(CronExpression.EVERY_MINUTE)
   async runScheduledPublish() {
+    if (cronsDisabled()) return;
     // ScheduleModule runs this cron on every replica. Gate the body behind a
     // Postgres advisory lock so only ONE instance processes a given tick —
     // otherwise every replica independently flips the same due posts and calls
@@ -699,12 +667,7 @@ export class PostsService {
       // concurrent insert can claim one of the (lang, slug) pairs between the
       // check and the update. The unique constraint is the real backstop —
       // translate its P2002 into the same friendly 409 the pre-check produces.
-      if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002') {
-        throw new ConflictException(
-          'Cannot restore: one of the original translation slugs was claimed by another post',
-        );
-      }
-      throw err;
+      rethrowP2002AsConflict(err, 'Cannot restore: one of the original translation slugs was claimed by another post');
     }
 
     this.audit.write({

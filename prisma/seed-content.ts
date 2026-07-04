@@ -10,50 +10,29 @@
  */
 
 import { PrismaClient } from '@prisma/client';
-import * as path from 'path';
-import * as fs from 'fs';
+import {
+  assertDataDir,
+  loadJson,
+  normalizeUrl,
+  extractFilename,
+  detectMimeType,
+  safeParseDate,
+  getOrCreateSpeaker,
+} from './lib/seed-utils';
+import type {
+  BookJson,
+  PostJson,
+  GalleryJson,
+  ResearchJson,
+  JournalJson,
+  StudentJson,
+  HadithJson,
+  StaticPageJson,
+  StoreJson,
+  AudioJson,
+} from './lib/seed-utils';
 
 const prisma = new PrismaClient();
-
-const DATA_DIR = path.join(__dirname, '../../imamzain.org/src/data');
-
-// ── Helpers ───────────────────────────────────────────────────────────────────
-
-function loadJson<T>(file: string): T {
-  const fullPath = path.join(DATA_DIR, file);
-  return JSON.parse(fs.readFileSync(fullPath, 'utf-8')) as T;
-}
-
-function extractFilename(url: string): string {
-  const decoded = decodeURIComponent(url.split('?')[0]);
-  return decoded.split('/').pop() || 'unknown';
-}
-
-function detectMimeType(url: string): string {
-  const ext = url.split('?')[0].split('.').pop()?.toLowerCase() ?? '';
-  const map: Record<string, string> = {
-    jpg: 'image/jpeg', jpeg: 'image/jpeg', png: 'image/png',
-    gif: 'image/gif', webp: 'image/webp', svg: 'image/svg+xml',
-    pdf: 'application/pdf',
-  };
-  return map[ext] ?? 'application/octet-stream';
-}
-
-function normalizeUrl(url: string): string {
-  if (!url || !url.trim()) return '';
-  const u = url.trim();
-  if (u.startsWith('http')) return u;
-  if (u.startsWith('//')) return `https:${u}`;
-  if (u.startsWith('/')) return `https://cdn.imamzain.org${u}`;
-  return `https://cdn.imamzain.org/${u}`;
-}
-
-function safeParseDate(dateStr: string | null | undefined): Date | null {
-  if (!dateStr) return null;
-  const cleaned = dateStr.trim().replace(/\s+/g, '');
-  const d = new Date(cleaned);
-  return isNaN(d.getTime()) ? null : d;
-}
 
 /** Upsert a media record by URL (URL is the natural unique key). Returns the UUID. */
 async function upsertMedia(url: string, altText?: string): Promise<string> {
@@ -96,6 +75,7 @@ const GALLERY_CAT_SLUG: Record<string, string> = {
   'مسابقات': 'musabaqat',
   'مناسبات': 'munasabat',
   'فعاليات': 'faaliyat',
+  'مجالس': 'majalis',
 };
 
 const ACADEMIC_CATS = [
@@ -103,63 +83,6 @@ const ACADEMIC_CATS = [
   { key: 'journals',   ar: 'بحوث في دوريات علمية',   ar_slug: 'buhuth-fi-dawriyyat' },
   { key: 'student',    ar: 'رسائل جامعية',           ar_slug: 'rasail-jamiiyya' },
 ];
-
-// ── JSON types ────────────────────────────────────────────────────────────────
-
-type BookJson = {
-  id: number; slug: string; title: string; author?: string;
-  printHouse?: string; printDate?: string;
-  language?: string | string[]; pages?: number;
-  parts?: number; views?: number; image?: string; pdf?: string;
-  series?: string | null; partNumber?: number | null; totalParts?: number | null;
-  category?: string | string[];
-};
-
-type PostJson = {
-  id: number; slug: string; image?: string; title: string;
-  summary?: string; content: string; views?: number;
-  date?: string; last_update?: string; category?: string;
-  attachments?: { id: number; path: string }[];
-};
-
-type GalleryJson = {
-  id: number; name?: string; description?: string; date?: string;
-  tags?: string[]; url: string; location?: string;
-  photographer?: string; category?: string;
-};
-
-type ResearchJson = {
-  id: string; slug?: string; title: string; abstract?: string;
-  author?: string; publishedYear?: string; pdfUrl?: string; conference?: string;
-};
-
-type JournalJson = {
-  id: string;
-  translations?: { languageid: number; title: string; authors?: string[]; publicationVenue?: string; pagenam?: number }[];
-  publishedYear?: string; pdfUrl?: string;
-};
-
-type StudentJson = {
-  id: string;
-  translations?: { languageid: number; title: string; authors?: string[]; publicationVenue?: string; category?: string; pagenam?: number }[];
-  publishedYear?: string; pdfUrl?: string;
-};
-
-type HadithJson = { id: number; content: string };
-
-type StaticPageJson = { title: string; slug: string; content: string };
-
-type StoreJson = {
-  city: string;
-  sellpoints: {
-    id: number;
-    name: string;
-    location: string;
-    phone?: string;
-    gps?: string;
-    gpsLink?: string;
-  }[];
-};
 
 // ── Category helpers ──────────────────────────────────────────────────────────
 
@@ -184,16 +107,15 @@ async function findOrCreateCategory(
   });
   if (existing) return existing.category_id as string;
 
+  // Category + Arabic translation in ONE nested create — a crash can't leave a
+  // translation-less category behind. The relation field name on each category
+  // model equals the translation model name.
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const cat = await (prisma[`${tablePrefix}_categories` as keyof typeof prisma] as any).create({ data: {} });
-  const catId: string = cat.id;
-
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  await (prisma[translationModel] as any).create({
-    data: { category_id: catId, lang: 'ar', title: arName, slug: arSlug },
+  const cat = await (prisma[`${tablePrefix}_categories` as keyof typeof prisma] as any).create({
+    data: { [translationModel]: { create: { lang: 'ar', title: arName, slug: arSlug } } },
   });
 
-  return catId;
+  return cat.id as string;
 }
 
 function requireSlug(map: Record<string, string>, arName: string, kind: string): string {
@@ -236,27 +158,28 @@ async function seedBooks(): Promise<void> {
     const categoryId = await getBookCatId(primaryCat);
     const mediaId = await upsertMedia(imageUrl, b.title);
 
-    const book = await prisma.books.create({
+    // Book + Arabic translation in ONE nested create so a crash between the two
+    // writes can't leave a translation-less book a re-run would then skip.
+    await prisma.books.create({
       data: {
         category_id: categoryId,
         cover_image_id: mediaId,
         pages: b.pages != null ? (parseInt(String(b.pages), 10) || null) : null,
         publish_year: b.printDate != null ? String(b.printDate) : null,
+        pdf_url: b.pdf?.trim() ? normalizeUrl(b.pdf) : null,
         part_number: b.partNumber != null ? (parseInt(String(b.partNumber), 10) || null) : null,
         parts: b.totalParts != null ? (parseInt(String(b.totalParts), 10) || null) : null,
         views: BigInt(b.views ?? 0),
-      },
-    });
-
-    await prisma.book_translations.create({
-      data: {
-        book_id: book.id,
-        lang: 'ar',
-        title: b.title ?? '',
-        author: b.author ?? null,
-        publisher: b.printHouse ?? null,
-        series: b.series ?? null,
-        is_default: true,
+        book_translations: {
+          create: {
+            lang: 'ar',
+            title: b.title ?? '',
+            author: b.author ?? null,
+            publisher: b.printHouse ?? null,
+            series: b.series ?? null,
+            is_default: true,
+          },
+        },
       },
     });
 
@@ -301,39 +224,42 @@ async function seedPosts(): Promise<void> {
       if (imgUrl) coverId = await upsertMedia(imgUrl, p.title);
     }
 
-    const post = await prisma.posts.create({
+    // Pre-resolve all attachment media, then write the post + translation +
+    // attachments in ONE nested create so a crash can't leave a half-seeded
+    // post that re-runs would then skip. display_order keeps the source array
+    // index; duplicate media within one post collapse to the first occurrence
+    // (the PK is (post_id, media_id), matching the old upsert behaviour).
+    const attachments: { media_id: string; display_order: number }[] = [];
+    const seenMediaIds = new Set<string>();
+    for (let i = 0; i < (p.attachments?.length ?? 0); i++) {
+      const attUrl = normalizeUrl(p.attachments![i].path);
+      if (!attUrl) continue;
+      const mediaId = await upsertMedia(attUrl);
+      if (seenMediaIds.has(mediaId)) continue;
+      seenMediaIds.add(mediaId);
+      attachments.push({ media_id: mediaId, display_order: i });
+    }
+
+    await prisma.posts.create({
       data: {
         category_id: categoryId,
         cover_image_id: coverId,
         published_at: safeParseDate(p.date),
         is_published: true,
         views: BigInt(p.views ?? 0),
+        post_translations: {
+          create: {
+            lang: 'ar',
+            title: p.title,
+            summary: p.summary ?? null,
+            body: p.content,
+            slug: p.slug,
+            is_default: true,
+          },
+        },
+        post_attachments: { create: attachments },
       },
     });
-
-    await prisma.post_translations.create({
-      data: {
-        post_id: post.id,
-        lang: 'ar',
-        title: p.title,
-        summary: p.summary ?? null,
-        body: p.content,
-        slug: p.slug,
-        is_default: true,
-      },
-    });
-
-    for (let i = 0; i < (p.attachments?.length ?? 0); i++) {
-      const att = p.attachments![i];
-      const attUrl = normalizeUrl(att.path);
-      if (!attUrl) continue;
-      const mediaId = await upsertMedia(attUrl);
-      await prisma.post_attachments.upsert({
-        where: { post_id_media_id: { post_id: post.id, media_id: mediaId } },
-        create: { post_id: post.id, media_id: mediaId, display_order: i },
-        update: {},
-      });
-    }
 
     created++;
   }
@@ -381,6 +307,10 @@ async function seedGallery(): Promise<void> {
 
     const catId = g.category?.trim() ? await getGalleryCatId(g.category.trim()) : null;
 
+    const title = g.name ?? extractFilename(imgUrl);
+
+    // Gallery image + Arabic translation in ONE nested create so a crash can't
+    // leave a translation-less image behind.
     await prisma.gallery_images.create({
       data: {
         media_id: mediaId,
@@ -389,13 +319,10 @@ async function seedGallery(): Promise<void> {
         author: g.photographer || null,
         tags: g.tags ?? [],
         locations: g.location ? [g.location] : [],
+        gallery_image_translations: {
+          create: { lang: 'ar', title, description: g.description ?? null },
+        },
       },
-    });
-
-    const title = g.name ?? extractFilename(imgUrl);
-
-    await prisma.gallery_image_translations.create({
-      data: { media_id: mediaId, lang: 'ar', title, description: g.description ?? null },
     });
 
     created++;
@@ -422,29 +349,42 @@ async function seedResearchPapers(categoryId: string): Promise<void> {
   let skipped = 0;
 
   for (const p of papers) {
+    const arTitle = p.title ?? '';
+
     if (p.pdfUrl) {
       const existing = await prisma.academic_papers.findFirst({ where: { pdf_url: p.pdfUrl, category_id: categoryId } });
       if (existing) { skipped++; continue; }
+    } else {
+      // No pdfUrl to key on — fall back to (category + Arabic title) so
+      // re-runs don't duplicate these entries.
+      const existing = await prisma.academic_paper_translations.findFirst({
+        where: { lang: 'ar', title: arTitle, academic_papers: { category_id: categoryId } },
+      });
+      if (existing) { skipped++; continue; }
     }
-
-    const paper = await prisma.academic_papers.create({
-      data: { category_id: categoryId, published_year: p.publishedYear ?? null, pdf_url: p.pdfUrl ?? null },
-    });
 
     const authors = p.author
       ? p.author.split(/[،,–-]+/).map(a => a.trim()).filter(Boolean)
       : [];
 
-    await prisma.academic_paper_translations.create({
+    // Paper + Arabic translation in ONE nested create so a crash can't leave a
+    // translation-less paper behind.
+    await prisma.academic_papers.create({
       data: {
-        paper_id: paper.id,
-        lang: 'ar',
-        title: p.title ?? '',
-        abstract: p.abstract ?? null,
-        authors,
-        keywords: [],
-        publication_venue: p.conference ?? null,
-        is_default: true,
+        category_id: categoryId,
+        published_year: p.publishedYear ?? null,
+        pdf_url: p.pdfUrl ?? null,
+        academic_paper_translations: {
+          create: {
+            lang: 'ar',
+            title: arTitle,
+            abstract: p.abstract ?? null,
+            authors,
+            keywords: [],
+            publication_venue: p.conference ?? null,
+            is_default: true,
+          },
+        },
       },
     });
 
@@ -460,30 +400,42 @@ async function seedJournals(categoryId: string): Promise<void> {
   let skipped = 0;
 
   for (const j of journals) {
+    const t = j.translations?.[0];
+    const arTitle = t?.title?.trim() ?? '';
+
     if (j.pdfUrl) {
       const existing = await prisma.academic_papers.findFirst({ where: { pdf_url: j.pdfUrl, category_id: categoryId } });
       if (existing) { skipped++; continue; }
+    } else {
+      // No pdfUrl to key on — fall back to (category + Arabic title) so
+      // re-runs don't duplicate these entries.
+      const existing = await prisma.academic_paper_translations.findFirst({
+        where: { lang: 'ar', title: arTitle, academic_papers: { category_id: categoryId } },
+      });
+      if (existing) { skipped++; continue; }
     }
 
-    const t = j.translations?.[0];
-    const paper = await prisma.academic_papers.create({
-      data: { category_id: categoryId, published_year: j.publishedYear ?? null, pdf_url: j.pdfUrl ?? null },
-    });
-
-    const arTitle = t?.title?.trim() ?? '';
     const authors = (t?.authors ?? []).filter(Boolean);
 
-    await prisma.academic_paper_translations.create({
+    // Paper + Arabic translation in ONE nested create so a crash can't leave a
+    // translation-less paper behind.
+    await prisma.academic_papers.create({
       data: {
-        paper_id: paper.id,
-        lang: 'ar',
-        title: arTitle,
-        abstract: null,
-        authors,
-        keywords: [],
-        publication_venue: t?.publicationVenue ?? null,
-        page_count: t?.pagenam ?? null,
-        is_default: true,
+        category_id: categoryId,
+        published_year: j.publishedYear ?? null,
+        pdf_url: j.pdfUrl ?? null,
+        academic_paper_translations: {
+          create: {
+            lang: 'ar',
+            title: arTitle,
+            abstract: null,
+            authors,
+            keywords: [],
+            publication_venue: t?.publicationVenue ?? null,
+            page_count: t?.pagenam ?? null,
+            is_default: true,
+          },
+        },
       },
     });
 
@@ -499,33 +451,45 @@ async function seedStudentTheses(categoryId: string): Promise<void> {
   let skipped = 0;
 
   for (const s of theses) {
+    const t = s.translations?.[0];
+    const arTitle = t?.title?.trim() ?? '';
+
     if (s.pdfUrl) {
       const existing = await prisma.academic_papers.findFirst({ where: { pdf_url: s.pdfUrl, category_id: categoryId } });
       if (existing) { skipped++; continue; }
+    } else {
+      // No pdfUrl to key on — fall back to (category + Arabic title) so
+      // re-runs don't duplicate these entries.
+      const existing = await prisma.academic_paper_translations.findFirst({
+        where: { lang: 'ar', title: arTitle, academic_papers: { category_id: categoryId } },
+      });
+      if (existing) { skipped++; continue; }
     }
 
-    const t = s.translations?.[0];
-    const paper = await prisma.academic_papers.create({
-      data: { category_id: categoryId, published_year: s.publishedYear ?? null, pdf_url: s.pdfUrl ?? null },
-    });
-
-    const arTitle = t?.title?.trim() ?? '';
     const authors = (t?.authors ?? []).filter(Boolean);
     const degreeLabel = t?.category ?? null; // e.g. "بكالوريوس", "دكتوراه"
     const venue = t?.publicationVenue ?? null;
     const arVenue = degreeLabel ? `${degreeLabel} — ${venue ?? ''}`.replace(/\s+/g, ' ').trim() : venue ?? null;
 
-    await prisma.academic_paper_translations.create({
+    // Paper + Arabic translation in ONE nested create so a crash can't leave a
+    // translation-less paper behind.
+    await prisma.academic_papers.create({
       data: {
-        paper_id: paper.id,
-        lang: 'ar',
-        title: arTitle,
-        abstract: null,
-        authors,
-        keywords: [],
-        publication_venue: arVenue,
-        page_count: t?.pagenam ?? null,
-        is_default: true,
+        category_id: categoryId,
+        published_year: s.publishedYear ?? null,
+        pdf_url: s.pdfUrl ?? null,
+        academic_paper_translations: {
+          create: {
+            lang: 'ar',
+            title: arTitle,
+            abstract: null,
+            authors,
+            keywords: [],
+            publication_venue: arVenue,
+            page_count: t?.pagenam ?? null,
+            is_default: true,
+          },
+        },
       },
     });
 
@@ -668,17 +632,6 @@ async function seedStores(): Promise<void> {
 // deliberately leave CMS-owned fields (is_published, slug, deleted_at) untouched
 // so operator edits persist across re-seeds.
 
-type AudioJson = {
-  id: number;
-  title: string;
-  speaker: string;
-  audio: string; // mp3 CDN url -> audio_url
-  pdf?: string; // -> pdf_url (absent in the current export)
-  durationSeconds?: number; // -> duration_seconds
-  sizeMB?: number; // -> size_mb
-  peaks?: number[]; // 300 floats -> peaks (jsonb)
-};
-
 // The API caps peaks at 300 (DTO ArrayMaxSize), but the seed writes through
 // Prisma and bypasses that validation. Older AudioItemAnalyzed.json exports
 // carry 423–1500-point arrays; block-max downsample them to ≤300 here so seeded
@@ -703,33 +656,6 @@ function downsamplePeaks(peaks: number[] | undefined): number[] | undefined {
   return out;
 }
 
-/**
- * Find or create a speaker by its Arabic name. Caches within a run so the same
- * lecturer across many audios resolves to one row. Exact-name match only —
- * near-duplicate spellings produce distinct speakers an admin can merge later.
- */
-async function getOrCreateSpeaker(cache: Map<string, string>, rawName: string): Promise<string | null> {
-  const name = rawName?.trim();
-  if (!name) return null;
-  const cached = cache.get(name);
-  if (cached) return cached;
-
-  const existing = await prisma.speaker_translations.findFirst({
-    where: { lang: 'ar', name, speakers: { deleted_at: null } },
-    select: { speaker_id: true },
-  });
-  if (existing) {
-    cache.set(name, existing.speaker_id);
-    return existing.speaker_id;
-  }
-
-  const speaker = await prisma.speakers.create({
-    data: { speaker_translations: { create: { lang: 'ar', name, is_default: true } } },
-  });
-  cache.set(name, speaker.id);
-  return speaker.id;
-}
-
 async function seedAudios(): Promise<void> {
   const items = loadJson<AudioJson[]>('AudioItemAnalyzed.json');
   const speakerCache = new Map<string, string>();
@@ -748,7 +674,7 @@ async function seedAudios(): Promise<void> {
       continue;
     }
 
-    const speakerId = await getOrCreateSpeaker(speakerCache, a.speaker);
+    const speakerId = await getOrCreateSpeaker(prisma, speakerCache, a.speaker);
     const title = a.title.trim();
 
     // Language-agnostic columns refreshed on every re-seed. audio_url is the
@@ -793,6 +719,7 @@ async function seedAudios(): Promise<void> {
 // `qutuf_sajjadiya_contest_questions` table directly via the DB / CMS.
 
 async function main() {
+  assertDataDir();
   console.log('Seeding content…\n');
 
   console.log('→ Books (with categories)');
@@ -834,6 +761,7 @@ async function main() {
 main()
   .catch(err => {
     console.error('Content seed failed:', err);
-    process.exit(1);
+    // exitCode (not exit()) so the .finally disconnect below still runs.
+    process.exitCode = 1;
   })
   .finally(() => prisma.$disconnect());

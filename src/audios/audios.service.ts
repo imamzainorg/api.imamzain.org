@@ -5,12 +5,12 @@ import { R2Service } from '../storage/r2.service';
 import { AuditService } from '../common/audit/audit.service';
 import { AUDIT_ACTIONS } from '../common/audit/audit.actions';
 import { softDeleteSuffix, stripSoftDeleteSuffix } from '../common/utils/soft-delete.util';
-import { resolveTranslation } from '../common/utils/translation.util';
+import { rethrowP2002AsConflict } from '../common/utils/prisma-error.util';
+import { assertExactlyOneDefault, resolveTranslation } from '../common/utils/translation.util';
 import { buildPaginationMeta, resolvePagination } from '../common/utils/pagination.util';
 import {
   AudioAdminQueryDto,
   AudioQueryDto,
-  AudioTranslationDto,
   CreateAudioDto,
   RequestAudioUploadUrlDto,
   ToggleAudioPublishDto,
@@ -155,18 +155,13 @@ export class AudiosService {
 
   // ── Writes ──────────────────────────────────────────────────────────────────
 
-  private validateDefault(translations: AudioTranslationDto[]) {
-    const defaultCount = translations.filter((t) => t.is_default).length;
-    if (defaultCount !== 1) throw new BadRequestException('Exactly one translation must have is_default: true');
-  }
-
   private async assertSpeakerExists(speakerId: string) {
     const speaker = await this.prisma.speakers.findFirst({ where: { id: speakerId, deleted_at: null }, select: { id: true } });
     if (!speaker) throw new NotFoundException('Speaker not found');
   }
 
   async create(dto: CreateAudioDto, actorId: string, lang: string | null) {
-    this.validateDefault(dto.translations);
+    assertExactlyOneDefault(dto.translations, 'Exactly one translation must have is_default: true');
     if (dto.speaker_id) await this.assertSpeakerExists(dto.speaker_id);
     if (dto.slug) await this.assertSlugAvailable(dto.slug, null);
 
@@ -197,10 +192,7 @@ export class AudiosService {
         return audio;
       });
     } catch (err) {
-      if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002') {
-        throw new ConflictException('An audio with that slug or audio URL already exists');
-      }
-      throw err;
+      rethrowP2002AsConflict(err, 'An audio with that slug or audio URL already exists');
     }
 
     await this.audit.write({
@@ -254,10 +246,7 @@ export class AudiosService {
         }
       });
     } catch (err) {
-      if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002') {
-        throw new ConflictException('An audio with that slug or audio URL already exists');
-      }
-      throw err;
+      rethrowP2002AsConflict(err, 'An audio with that slug or audio URL already exists');
     }
 
     await this.audit.write({
@@ -350,10 +339,7 @@ export class AudiosService {
         });
       });
     } catch (err) {
-      if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002') {
-        throw new ConflictException('Cannot restore: the original slug was claimed by another audio');
-      }
-      throw err;
+      rethrowP2002AsConflict(err, 'Cannot restore: the original slug was claimed by another audio');
     }
 
     await this.audit.write({

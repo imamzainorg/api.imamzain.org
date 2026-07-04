@@ -1,5 +1,6 @@
 import { Injectable, Logger, UnauthorizedException } from '@nestjs/common';
 import { Cron } from '@nestjs/schedule';
+import { cronsDisabled } from '../common/utils/cron.util';
 import { JwtService } from '@nestjs/jwt';
 import { Prisma } from '@prisma/client';
 import * as bcrypt from 'bcryptjs';
@@ -246,6 +247,7 @@ export class AuthService {
    */
   @Cron('15 3 * * *')
   async cleanupStaleRefreshTokens(): Promise<void> {
+    if (cronsDisabled()) return;
     const now = new Date();
     const revokedCutoff = new Date(now.getTime() - REVOKED_TOKEN_GRACE_DAYS * 24 * 60 * 60 * 1000);
     try {

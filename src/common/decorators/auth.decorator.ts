@@ -1,6 +1,6 @@
 import { applyDecorators, UseGuards } from '@nestjs/common';
 import { ApiBearerAuth, ApiForbiddenResponse, ApiUnauthorizedResponse } from '@nestjs/swagger';
-import { JwtAuthGuard } from '../../auth/guards/jwt-auth.guard';
+import { JwtAuthGuard } from '../guards/jwt-auth.guard';
 import { PermissionGuard } from '../guards/permission.guard';
 import { RequirePermission } from './require-permission.decorator';
 import { ForbiddenErrorDto, UnauthorizedErrorDto } from '../dto/api-response.dto';

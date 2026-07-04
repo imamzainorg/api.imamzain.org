@@ -8,13 +8,10 @@ import {
   Patch,
   Post,
   Query,
-  UseGuards,
 } from '@nestjs/common';
 import {
-  ApiBearerAuth,
   ApiBadRequestResponse,
   ApiConflictResponse,
-  ApiForbiddenResponse,
   ApiNotFoundResponse,
   ApiOkResponse,
   ApiCreatedResponse,
@@ -22,15 +19,12 @@ import {
   ApiParam,
   ApiQuery,
   ApiTags,
-  ApiUnauthorizedResponse,
 } from '@nestjs/swagger';
 import { Throttle } from '@nestjs/throttler';
-import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { Auth } from '../common/decorators/auth.decorator';
 import { CurrentUser, CurrentUserPayload } from '../common/decorators/current-user.decorator';
-import { RequirePermission } from '../common/decorators/require-permission.decorator';
-import { ConflictErrorDto, ForbiddenErrorDto, NotFoundErrorDto, UnauthorizedErrorDto, ValidationErrorDto } from '../common/dto/api-response.dto';
+import { ConflictErrorDto, NotFoundErrorDto, ValidationErrorDto } from '../common/dto/api-response.dto';
 import { PaginationDto } from '../common/dto/pagination.dto';
-import { PermissionGuard } from '../common/guards/permission.guard';
 import { AdminResetPasswordDto, AssignRoleDto, CreateUserDto, UpdateUserDto } from './dto/user.dto';
 import {
   UserCreatedResponseDto,
@@ -41,16 +35,12 @@ import {
 import { UsersService } from './users.service';
 
 @ApiTags('Users')
-@ApiBearerAuth('jwt')
 @Controller('users')
-@UseGuards(JwtAuthGuard, PermissionGuard)
-@ApiUnauthorizedResponse({ type: UnauthorizedErrorDto, description: 'Missing or invalid JWT' })
-@ApiForbiddenResponse({ type: ForbiddenErrorDto, description: 'Insufficient permissions' })
 export class UsersController {
   constructor(private readonly usersService: UsersService) {}
 
   @Get()
-  @RequirePermission('users:read')
+  @Auth('users:read')
   @ApiOperation({ summary: 'List all admin users (paginated)', description: 'Requires permission: `users:read`' })
   @ApiQuery({ name: 'page', required: false, type: Number, example: 1, description: 'Page number (default: 1)' })
   @ApiQuery({ name: 'limit', required: false, type: Number, example: 20, description: 'Items per page (default: 20, max: 100)' })
@@ -61,7 +51,7 @@ export class UsersController {
   }
 
   @Get('trash')
-  @RequirePermission('users:delete')
+  @Auth('users:delete')
   @ApiOperation({
     summary: 'List soft-deleted users (CMS trash view)',
     description: 'Paginated list of deleted accounts with their original (suffix-stripped) username. Requires permission: `users:delete`.',
@@ -75,7 +65,7 @@ export class UsersController {
 
   @Post(':id/restore')
   @HttpCode(200)
-  @RequirePermission('users:delete')
+  @Auth('users:delete')
   @ApiOperation({
     summary: 'Restore a soft-deleted user',
     description:
@@ -90,7 +80,7 @@ export class UsersController {
   }
 
   @Get(':id')
-  @RequirePermission('users:read')
+  @Auth('users:read')
   @ApiOperation({ summary: 'Get a single user with their roles and permissions', description: 'Requires permission: `users:read`' })
   @ApiParam({ name: 'id', format: 'uuid' })
   @ApiOkResponse({ type: UserDetailResponseDto, description: 'User detail including all assigned roles and the full flattened permission list' })
@@ -100,7 +90,7 @@ export class UsersController {
   }
 
   @Post()
-  @RequirePermission('users:create')
+  @Auth('users:create')
   @ApiOperation({ summary: 'Create a new admin user', description: 'Requires permission: `users:create`' })
   @ApiCreatedResponse({ type: UserCreatedResponseDto, description: 'User account created; response includes the full user object with id, username, and role list' })
   @ApiBadRequestResponse({ type: ValidationErrorDto, description: 'Validation failed' })
@@ -110,7 +100,7 @@ export class UsersController {
   }
 
   @Patch(':id')
-  @RequirePermission('users:update')
+  @Auth('users:update')
   @ApiOperation({ summary: "Update a user's username", description: 'Requires permission: `users:update`' })
   @ApiParam({ name: 'id', format: 'uuid' })
   @ApiOkResponse({ type: UserDetailResponseDto, description: 'Updated user with the new username, roles, and permissions' })
@@ -125,7 +115,7 @@ export class UsersController {
   }
 
   @Delete(':id')
-  @RequirePermission('users:delete')
+  @Auth('users:delete')
   @ApiOperation({ summary: 'Soft-delete a user', description: 'Requires permission: `users:delete`' })
   @ApiParam({ name: 'id', format: 'uuid' })
   @ApiOkResponse({ type: UserMessageResponseDto, description: 'User account soft-deleted; the account is deactivated and excluded from all future queries — data is preserved' })
@@ -135,7 +125,7 @@ export class UsersController {
   }
 
   @Post(':id/roles')
-  @RequirePermission('users:update')
+  @Auth('users:update')
   @ApiOperation({ summary: 'Assign a role to a user', description: 'Requires permission: `users:update`' })
   @ApiParam({ name: 'id', format: 'uuid', description: 'User ID' })
   @ApiCreatedResponse({ type: UserDetailResponseDto, description: 'Role assigned to the user; returns the user with the updated role and permission lists. The new permission set takes effect on their next authenticated request.' })
@@ -150,7 +140,7 @@ export class UsersController {
   }
 
   @Delete(':id/roles/:roleId')
-  @RequirePermission('users:update')
+  @Auth('users:update')
   @ApiOperation({ summary: 'Remove a role from a user', description: 'Requires permission: `users:update`' })
   @ApiParam({ name: 'id', format: 'uuid', description: 'User ID' })
   @ApiParam({ name: 'roleId', format: 'uuid', description: 'Role ID' })
@@ -167,7 +157,7 @@ export class UsersController {
   @Post(':id/reset-password')
   @HttpCode(200)
   @Throttle({ default: { limit: 10, ttl: 900_000 } })
-  @RequirePermission('users:update')
+  @Auth('users:update')
   @ApiOperation({
     summary: 'Admin-driven password reset',
     description:

@@ -9,11 +9,9 @@ import {
   Patch,
   Post,
   Query,
-  UseGuards,
 } from '@nestjs/common';
 import {
   ApiBadRequestResponse,
-  ApiBearerAuth,
   ApiConflictResponse,
   ApiCreatedResponse,
   ApiForbiddenResponse,
@@ -24,14 +22,11 @@ import {
   ApiPayloadTooLargeResponse,
   ApiQuery,
   ApiTags,
-  ApiUnauthorizedResponse,
 } from '@nestjs/swagger';
 import { Throttle } from '@nestjs/throttler';
-import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { Auth } from '../common/decorators/auth.decorator';
 import { CurrentUser, CurrentUserPayload } from '../common/decorators/current-user.decorator';
-import { RequirePermission } from '../common/decorators/require-permission.decorator';
-import { ConflictErrorDto, ForbiddenErrorDto, NotFoundErrorDto, PayloadTooLargeErrorDto, UnauthorizedErrorDto, ValidationErrorDto } from '../common/dto/api-response.dto';
-import { PermissionGuard } from '../common/guards/permission.guard';
+import { ConflictErrorDto, ForbiddenErrorDto, NotFoundErrorDto, PayloadTooLargeErrorDto, ValidationErrorDto } from '../common/dto/api-response.dto';
 import { ConfirmUploadDto, MediaQueryDto, RequestUploadUrlDto, UpdateMediaDto } from './dto/media.dto';
 import {
   MediaCreatedResponseDto,
@@ -43,17 +38,13 @@ import {
 import { MediaService } from './media.service';
 
 @ApiTags('Media')
-@ApiBearerAuth('jwt')
 @Controller('media')
-@UseGuards(JwtAuthGuard, PermissionGuard)
-@ApiUnauthorizedResponse({ type: UnauthorizedErrorDto, description: 'Missing or invalid JWT' })
-@ApiForbiddenResponse({ type: ForbiddenErrorDto, description: 'Insufficient permissions' })
 export class MediaController {
   constructor(private readonly mediaService: MediaService) {}
 
   @Post('upload-url')
   @Throttle({ default: { limit: 60, ttl: 60_000 } })
-  @RequirePermission('media:create')
+  @Auth('media:create')
   @ApiOperation({
     summary: 'Request a pre-signed R2 upload URL',
     description:
@@ -75,7 +66,11 @@ export class MediaController {
   @Post('confirm')
   @Throttle({ default: { limit: 60, ttl: 60_000 } })
   @HttpCode(201)
-  @RequirePermission('media:create')
+  // Listed above @Auth so this route-specific 403 wins over the decorator's
+  // standard "Insufficient permissions" text (topmost same-status ApiResponse
+  // takes precedence in @nestjs/swagger).
+  @ApiForbiddenResponse({ type: ForbiddenErrorDto, description: 'The key was issued to a different user' })
+  @Auth('media:create')
   @ApiOperation({
     summary: 'Confirm an upload and register the media record',
     description:
@@ -94,14 +89,13 @@ export class MediaController {
   @ApiCreatedResponse({ type: MediaCreatedResponseDto, description: 'Media record registered in the database. Returns the media object with `variants: []` — variants populate asynchronously and become visible on subsequent `GET /media/:id` calls.' })
   @ApiBadRequestResponse({ type: ValidationErrorDto, description: 'Validation failed, the key is not under the managed prefix, or the file was not uploaded to R2' })
   @ApiNotFoundResponse({ type: NotFoundErrorDto, description: 'No pending upload exists for that key — request a new upload URL first' })
-  @ApiForbiddenResponse({ type: ForbiddenErrorDto, description: 'The key was issued to a different user' })
   @ApiPayloadTooLargeResponse({ type: PayloadTooLargeErrorDto, description: 'Uploaded file exceeds the per-MIME byte cap (`maxBytes` from the upload-url response); R2 object is purged' })
   confirmUpload(@Body() dto: ConfirmUploadDto, @CurrentUser() user: CurrentUserPayload) {
     return this.mediaService.confirmUpload(dto, user.id);
   }
 
   @Get()
-  @RequirePermission('media:read')
+  @Auth('media:read')
   @ApiOperation({
     summary: 'List all media records (paginated, searchable, filterable)',
     description:
@@ -118,7 +112,7 @@ export class MediaController {
   }
 
   @Get(':id')
-  @RequirePermission('media:read')
+  @Auth('media:read')
   @ApiOperation({ summary: 'Get a single media record', description: 'Requires permission: `media:read`' })
   @ApiParam({ name: 'id', format: 'uuid' })
   @ApiOkResponse({ type: MediaDetailResponseDto, description: 'Media record detail including filename, MIME type, dimensions, and public CDN URL' })
@@ -128,7 +122,7 @@ export class MediaController {
   }
 
   @Patch(':id')
-  @RequirePermission('media:update')
+  @Auth('media:update')
   @ApiOperation({ summary: 'Update media metadata (filename, alt text, dimensions)', description: 'Requires permission: `media:update`' })
   @ApiParam({ name: 'id', format: 'uuid' })
   @ApiOkResponse({ type: MediaDetailResponseDto, description: 'Updated media record with the new metadata' })
@@ -144,7 +138,7 @@ export class MediaController {
 
   @Post(':id/regenerate-variants')
   @HttpCode(200)
-  @RequirePermission('media:update')
+  @Auth('media:update')
   @ApiOperation({
     summary: 'Re-run sharp variant generation for an existing media row',
     description:
@@ -160,7 +154,7 @@ export class MediaController {
   }
 
   @Delete(':id')
-  @RequirePermission('media:delete')
+  @Auth('media:delete')
   @ApiOperation({
     summary: 'Delete a media record and remove the file from R2',
     description:

@@ -1,6 +1,6 @@
 import { ApiProperty, ApiPropertyOptional } from "@nestjs/swagger";
-import { Type } from "class-transformer";
-import { IsInt, IsOptional, IsString, Matches, Max, MaxLength, Min } from "class-validator";
+import { IsInt, IsOptional, IsString, Matches, MaxLength, Min } from "class-validator";
+import { PaginationDto } from "../../common/dto/pagination.dto";
 
 export class RequestUploadUrlDto {
   @ApiProperty({
@@ -85,22 +85,7 @@ export class UpdateMediaDto {
   alt_text?: string;
 }
 
-export class MediaQueryDto {
-  @ApiPropertyOptional({ example: 1, minimum: 1, default: 1 })
-  @IsOptional()
-  @Type(() => Number)
-  @IsInt()
-  @Min(1)
-  page?: number = 1;
-
-  @ApiPropertyOptional({ example: 20, minimum: 1, maximum: 100, default: 20 })
-  @IsOptional()
-  @Type(() => Number)
-  @IsInt()
-  @Min(1)
-  @Max(100)
-  limit?: number = 20;
-
+export class MediaQueryDto extends PaginationDto {
   @ApiPropertyOptional({
     example: "shrine",
     description:

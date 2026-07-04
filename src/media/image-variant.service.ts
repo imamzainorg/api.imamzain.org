@@ -54,9 +54,15 @@ export class ImageVariantService {
     });
     if (!original) return [];
 
+    // One shared instance — the original is decoded once and each width
+    // clones the pipeline instead of re-decoding a multi-MP source per
+    // variant. .rotate() applies the EXIF orientation tag then strips it, so
+    // sideways phone photos come out the right way up in every variant.
+    const base = sharp(original, { limitInputPixels: SHARP_LIMIT_INPUT_PIXELS }).rotate();
+
     let metadata: sharp.Metadata;
     try {
-      metadata = await sharp(original, { limitInputPixels: SHARP_LIMIT_INPUT_PIXELS }).metadata();
+      metadata = await base.metadata();
     } catch (err) {
       this.logger.warn(`sharp.metadata failed for ${originalKey}: ${err}`);
       return [];
@@ -69,10 +75,8 @@ export class ImageVariantService {
 
     const results = await Promise.allSettled(
       targetWidths.map(async (width) => {
-        // .rotate() applies the EXIF orientation tag then strips it, so
-        // sideways phone photos come out the right way up in every variant.
-        const buffer = await sharp(original, { limitInputPixels: SHARP_LIMIT_INPUT_PIXELS })
-          .rotate()
+        const buffer = await base
+          .clone()
           .resize({ width, withoutEnlargement: true })
           .webp({ quality: VARIANT_QUALITY })
           .toBuffer();

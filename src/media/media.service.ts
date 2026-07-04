@@ -1,5 +1,6 @@
 import { BadRequestException, ConflictException, ForbiddenException, GoneException, Injectable, Logger, NotFoundException, PayloadTooLargeException } from '@nestjs/common';
 import { Cron } from '@nestjs/schedule';
+import { cronsDisabled } from '../common/utils/cron.util';
 import { Prisma } from '@prisma/client';
 import pLimit from 'p-limit';
 import { PrismaService } from '../prisma/prisma.service';
@@ -169,6 +170,7 @@ export class MediaService {
   /** Runs every hour at :00. Deletes R2 objects whose presigned URL expired without confirmation. */
   @Cron('0 * * * *')
   async cleanupOrphanUploads() {
+    if (cronsDisabled()) return;
     const expired = await this.prisma.pending_media_uploads.findMany({
       where: { expires_at: { lt: new Date() } },
     });

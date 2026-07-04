@@ -3,7 +3,8 @@ import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuditService } from '../common/audit/audit.service';
 import { AUDIT_ACTIONS } from '../common/audit/audit.actions';
-import { resolveTranslation } from '../common/utils/translation.util';
+import { rethrowP2002AsConflict } from '../common/utils/prisma-error.util';
+import { assertExactlyOneDefault, resolveTranslation } from '../common/utils/translation.util';
 import { softDeleteSuffix, stripSoftDeleteSuffix } from '../common/utils/soft-delete.util';
 import { buildPaginationMeta, resolvePagination } from '../common/utils/pagination.util';
 import { AcademicPaperQueryDto, CreateAcademicPaperDto, UpdateAcademicPaperDto } from './dto/academic-paper.dto';
@@ -142,8 +143,7 @@ export class AcademicPapersService {
     const category = await this.prisma.academic_paper_categories.findFirst({ where: { id: dto.category_id, deleted_at: null } });
     if (!category) throw new NotFoundException('Category not found');
 
-    const defaultCount = dto.translations.filter((t) => t.is_default).length;
-    if (defaultCount !== 1) throw new BadRequestException('Exactly one translation must have is_default: true');
+    assertExactlyOneDefault(dto.translations, 'Exactly one translation must have is_default: true');
 
     await this.assertSlugsAvailable(dto.translations, null);
 
@@ -178,10 +178,7 @@ export class AcademicPapersService {
         return created;
       });
     } catch (err) {
-      if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002') {
-        throw new ConflictException('A paper translation slug is already in use');
-      }
-      throw err;
+      rethrowP2002AsConflict(err, 'A paper translation slug is already in use');
     }
 
     await this.audit.write({
@@ -251,10 +248,7 @@ export class AcademicPapersService {
       }
       });
     } catch (err) {
-      if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002') {
-        throw new ConflictException('A paper translation slug is already in use');
-      }
-      throw err;
+      rethrowP2002AsConflict(err, 'A paper translation slug is already in use');
     }
 
     await this.audit.write({
@@ -347,10 +341,7 @@ export class AcademicPapersService {
         });
       });
     } catch (err) {
-      if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002') {
-        throw new ConflictException('Cannot restore: a translation slug was claimed by another paper');
-      }
-      throw err;
+      rethrowP2002AsConflict(err, 'Cannot restore: a translation slug was claimed by another paper');
     }
 
     await this.audit.write({

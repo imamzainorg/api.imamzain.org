@@ -93,6 +93,12 @@ export class AllExceptionsFilter implements ExceptionFilter {
         status = HttpStatus.BAD_REQUEST;
         message = "Foreign key constraint failed — referenced record does not exist";
         code = "FK_CONSTRAINT_VIOLATION";
+      } else if (exception.code === "P2023") {
+        // Malformed value reaching a typed column — in practice a non-UUID
+        // string hitting a @db.Uuid `:id` param. A client error, not a 500.
+        status = HttpStatus.BAD_REQUEST;
+        message = "Invalid identifier format";
+        code = "INVALID_IDENTIFIER";
       } else {
         // @SentryExceptionCaptured() already reports this unhandled error to
         // Sentry with mechanism handled:false — capturing again here would

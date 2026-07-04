@@ -64,6 +64,18 @@ class TodayHadithDataDto {
   is_pinned!: boolean;
 }
 
+class TodayHadithMetaDto {
+  @ApiProperty({ example: '2026-05-12', description: 'UTC calendar date the pick is stable for (YYYY-MM-DD).' })
+  date!: string;
+
+  @ApiProperty({
+    example: 'rotation',
+    enum: ['pin', 'rotation', 'empty'],
+    description: "How today's hadith was chosen: an editor pin, the natural rotation, or an empty/inactive table.",
+  })
+  source!: 'pin' | 'rotation' | 'empty';
+}
+
 export class TodayHadithResponseDto {
   @ApiProperty({ example: true })
   success!: boolean;
@@ -80,6 +92,12 @@ export class TodayHadithResponseDto {
     description: 'Null when the hadith table is empty or all entries are inactive / deleted.',
   })
   data!: TodayHadithDataDto | null;
+
+  @ApiProperty({
+    type: TodayHadithMetaDto,
+    description: 'Selection metadata. Unique to this endpoint — not part of the standard envelope.',
+  })
+  meta!: TodayHadithMetaDto;
 }
 
 class PinItemDto {
@@ -91,5 +109,7 @@ class PinItemDto {
 }
 
 export class DailyHadithPinListResponseDto extends ApiEnvelope([PinItemDto], 'Pins fetched') {}
+
+export class DailyHadithPinSavedResponseDto extends ApiEnvelope(PinItemDto, 'Pin saved') {}
 
 export class DailyHadithMessageResponseDto extends ApiEnvelope(null, 'Hadith deleted') {}

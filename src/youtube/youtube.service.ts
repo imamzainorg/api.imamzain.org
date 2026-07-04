@@ -1,13 +1,14 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { youtube_playlists, youtube_videos } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
+import { buildPaginationMeta, resolvePagination } from '../common/utils/pagination.util';
 
 @Injectable()
 export class YoutubeService {
   constructor(private readonly prisma: PrismaService) {}
 
-  async findVideos(page: number, limit: number) {
-    const skip = (page - 1) * limit;
+  async findVideos(pageInput: number, limitInput: number) {
+    const { page, limit, skip } = resolvePagination({ page: pageInput, limit: limitInput });
     const [items, total] = await Promise.all([
       this.prisma.youtube_videos.findMany({
         orderBy: [{ published_at: 'desc' }, { id: 'asc' }],
@@ -21,13 +22,13 @@ export class YoutubeService {
       message: 'Videos fetched',
       data: {
         items: items.map(serialiseVideo),
-        pagination: { page, limit, total, pages: Math.ceil(total / limit) },
+        pagination: buildPaginationMeta(page, limit, total),
       },
     };
   }
 
-  async findPlaylists(page: number, limit: number) {
-    const skip = (page - 1) * limit;
+  async findPlaylists(pageInput: number, limitInput: number) {
+    const { page, limit, skip } = resolvePagination({ page: pageInput, limit: limitInput });
     const [items, total] = await Promise.all([
       this.prisma.youtube_playlists.findMany({
         orderBy: [{ published_at: 'desc' }, { id: 'asc' }],
@@ -41,7 +42,7 @@ export class YoutubeService {
       message: 'Playlists fetched',
       data: {
         items: items.map(serialisePlaylist),
-        pagination: { page, limit, total, pages: Math.ceil(total / limit) },
+        pagination: buildPaginationMeta(page, limit, total),
       },
     };
   }
@@ -70,6 +71,9 @@ export class YoutubeService {
       data: {
         playlist: serialisePlaylist(playlist),
         videos: items.map((i) => serialiseVideo(i.youtube_videos)),
+        // YouTube's own item_count for the playlist — may exceed videos.length
+        // when `limit` truncates the page.
+        total: playlist.item_count,
       },
     };
   }
