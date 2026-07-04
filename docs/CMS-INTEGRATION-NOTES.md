@@ -2126,7 +2126,97 @@ to fill in. Idempotent (matches by R2 key); `-- --dry` reports without writing.
 
 ---
 
-## 18. Open follow-ups (still not in this push)
+## 18. Round 13 (this push) — books PDF, hadith trash/restore, error hardening
+
+Merged as PR #4 (`main` @ `6ae3b61`). Mostly internal cleanup (shared
+helpers, atomic seed scripts, CI now runs the integration suite against a
+fresh Postgres); the CMS-visible changes are below. Everything is
+additive — no breaking changes to envelopes, pagination, or existing
+fields.
+
+### Schema migrations to apply first
+
+```bash
+npm run prisma:deploy      # applies 20260702090000 + 20260702100000
+npm run prisma:generate
+```
+
+Both additive:
+
+- `20260702090000_posts_cover_reuse_and_indexes` — drops the accidental
+  UNIQUE on `posts.cover_image_id` (a plain index replaces it) and adds
+  `media(created_at DESC)` + contest `started_at DESC` indexes.
+- `20260702100000_books_pdf_url` — adds nullable `books.pdf_url`.
+
+FYI: the **baseline** migration was also repaired for *fresh* databases
+(two GIN indexes carried an `ASC` option Postgres rejects — never seen in
+production because that DB was baselined, not migrated from empty).
+Already-applied databases are unaffected; `migrate deploy` may print a
+one-time checksum warning for the edited baseline.
+
+### a. Books gain `pdf_url` — CMS form change
+
+- New optional column `books.pdf_url` — the downloadable book PDF as an
+  http(s) URL (≤ 2000 chars, validated).
+- Accepted on `POST /books` and `PATCH /books/:id`; returned on list,
+  detail, by-slug and trash payloads.
+- The content seed populates it from the legacy JSON for 110 of the 138
+  books.
+- **CMS:** add a "PDF URL" input to the book form (plain text URL — PDFs
+  stay externally hosted for now, same as academic papers).
+  **Public site:** render the download button when `pdf_url` is non-null.
+
+### b. Posts: cover images are reusable
+
+Assigning a cover image already used by another post used to fail with a
+misleading `409 "A record with that value already exists"` (an accidental
+DB unique constraint). Covers are now reusable across posts, same as
+books. No CMS change needed — the 409 simply stops happening.
+
+### c. Daily hadiths reach restore parity (+ contract fixes)
+
+- **New:** `GET /daily-hadiths/trash` and `POST /daily-hadiths/:id/restore`
+  (both require `daily-hadiths:delete`), matching every other resource's
+  trash view. New audit action: `DAILY_HADITH_RESTORED`.
+- `GET /daily-hadiths/today`: the `meta: { date, source }` key the
+  endpoint has always returned is now declared in OpenAPI
+  (`source` is `"pin" | "rotation" | "empty"`).
+- `POST /daily-hadiths/pins`: response is now typed in OpenAPI — the
+  standard envelope of `{ pin_date, hadith_id }`.
+- `DELETE /daily-hadiths/pins/:pinDate`: the path **parameter name**
+  changed from `:pin_date` to `:pinDate`. Real URLs are unchanged — you
+  still call `/daily-hadiths/pins/2026-05-15`. Only regenerate OpenAPI
+  clients if you use them.
+
+### d. Malformed ids are 400, not 500
+
+A malformed UUID in an `:id` route (e.g. `GET /posts/not-a-uuid`) used to
+surface as `500 INTERNAL_ERROR`. It now returns:
+
+```json
+{ "success": false, "code": "INVALID_IDENTIFIER", "error": "Invalid identifier format" }
+```
+
+with HTTP 400 — treat it as a validation-class error.
+
+### e. YouTube playlist videos carry `total`
+
+`GET /youtube/playlists/:playlistId/videos` still returns
+`{ playlist, videos }` and now also includes `total` (YouTube's own
+`item_count`) so a client can tell when `limit` truncated the list.
+
+### f. No-wire-change items (FYI)
+
+- `USER_LOGIN` / `PASSWORD_CHANGED` audit rows are now written
+  synchronously (compliance trail) — payloads unchanged.
+- Operator scripts set `DISABLE_CRON=true` so maintenance runs never fire
+  newsletter sends / scheduled publishes / YouTube syncs.
+- Seed scripts are atomic and idempotent end-to-end (nested creates), in
+  preparation for the production content push.
+
+---
+
+## 19. Open follow-ups (still not in this push)
 
 - Self-service password reset flow (would need an `email` column on
   `users` plus the `password_reset_tokens` table described in the
@@ -2139,4 +2229,5 @@ to fill in. Idempotent (matches by R2 key); `-- --dry` reports without writing.
   approaches the 50k-URL cap (likely years away).
 - PDF uploads through `/media/*` (cap infrastructure is in place at
   `MAX_BYTES_BY_MIME`, but `application/pdf` is not on the MIME
-  allowlist yet — academic-paper `pdf_url` is still externally hosted).
+  allowlist yet — academic-paper and book `pdf_url` are still
+  externally hosted).

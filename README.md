@@ -297,7 +297,7 @@ For cross-cutting concepts the OpenAPI spec doesn't cover, the
 | Media | `/media` | R2 pre-signed upload URLs. `POST /media/confirm` returns immediately with `variants: []`; sharp runs in the background (~1–3 s) and the variants populate via `GET /media/:id`. `POST /media/:id/regenerate-variants` re-runs sharp if a generation step failed |
 | Posts | `/posts` | i18n via translation tables (`meta_title` / `meta_description` / `og_image_id` SEO fields + derived `reading_time_minutes` per translation). `?featured=true` filters to flagged posts; `?sort=views` returns the popular sort. Admin-only `GET /posts/admin/:id` returns drafts. Posts whose `published_at` is in the past are auto-published by an EVERY_MINUTE cron. **List payloads drop the `body` field** to keep responses small — call the detail endpoint when you need full text |
 | Post Categories | `/post-categories` | |
-| Books | `/books` | Optional per-translation `slug` → public `GET /books/by-slug/:slug`. Per-translation SEO fields (`meta_title` / `meta_description` / `og_image`). `media.variants[]` included for responsive `<img srcset>`. |
+| Books | `/books` | Optional per-translation `slug` → public `GET /books/by-slug/:slug`. Per-translation SEO fields (`meta_title` / `meta_description` / `og_image`). `media.variants[]` included for responsive `<img srcset>`. Optional `pdf_url` — the downloadable book PDF, settable via create/update and returned on list + detail. |
 | Book Categories | `/book-categories` | |
 | Gallery Images | `/gallery` | |
 | Gallery Categories | `/gallery-categories` | |

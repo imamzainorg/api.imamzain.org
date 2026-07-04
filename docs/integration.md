@@ -84,6 +84,7 @@ Every error carries a `code`. The status-derived defaults:
 | `NOT_FOUND` | 404 | Resource doesn't exist or was soft-deleted |
 | `CONFLICT` | 409 | Uniqueness / state conflict |
 | `FK_CONSTRAINT_VIOLATION` | 400 | Referenced record doesn't exist |
+| `INVALID_IDENTIFIER` | 400 | Malformed UUID in an id path/query param (used to surface as 500) |
 | `PAYLOAD_TOO_LARGE` | 413 | Upload / body over the size cap |
 | `RATE_LIMITED` | 429 | Throttle limit hit |
 | `INTERNAL_ERROR` | 500 | Unhandled server error |
@@ -366,8 +367,9 @@ indexed.
 
 Every soft-deletable resource (posts, books, papers, gallery images,
 all four category types, **static pages**, **stores** + their
-sale-points, **audios**, users, newsletter subscribers, and form
-submissions — contacts + proxy visits) follows the same lifecycle:
+sale-points, **audios**, **daily hadiths**, users, newsletter
+subscribers, and form submissions — contacts + proxy visits) follows
+the same lifecycle:
 
 ```text
 ┌───────┐  DELETE /<resource>/:id          ┌─────────┐
