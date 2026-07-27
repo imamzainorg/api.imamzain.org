@@ -64,10 +64,17 @@ export class ContestService implements OnApplicationBootstrap {
 
   private async getQuestions(): Promise<CachedQuestion[]> {
     if (this.questionsCache) return this.questionsCache;
+    // `id` is a text column holding Arabic-Indic numerals (١..٥٠), so a plain
+    // ORDER BY id sorts lexicographically: ١, ١٠, ١١, … ١٩, ٢, ٢٠, … Transliterate
+    // to ASCII digits and sort numerically instead. Any id without digits sorts
+    // last rather than aborting the query.
     const rows = await this.prisma.$queryRaw<CachedQuestion[]>`
       SELECT id, question, option_a, option_b, option_c, option_d
       FROM qutuf_sajjadiya_contest_questions
-      ORDER BY id ASC
+      ORDER BY
+        NULLIF(regexp_replace(translate(id, '٠١٢٣٤٥٦٧٨٩', '0123456789'), '\\D', '', 'g'), '')::int
+          ASC NULLS LAST,
+        id ASC
     `;
     this.questionsCache = rows;
     return rows;

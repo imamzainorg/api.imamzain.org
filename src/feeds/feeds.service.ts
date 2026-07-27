@@ -23,55 +23,66 @@ function publicSiteBase(): string {
   return (process.env.PUBLIC_SITE_URL ?? 'https://imamzain.org').replace(/\/$/, '');
 }
 
-function postUrl(lang: string, slug: string): string {
-  return `${publicSiteBase()}/${lang}/posts/${slug}`;
+// ── Public site route table ──────────────────────────────────────────────────
+// These MUST mirror the front-end's actual routes. imamzain.org is served as a
+// single Arabic site: `<html lang="ar" dir="rtl">` is hardcoded in
+// src/app/layout.tsx and there is no [lang] route segment, so none of these
+// carry a language prefix. Emitting one previously made every URL in
+// sitemap.xml a 404.
+//
+// Because there is no per-language URL, a row with several translations has one
+// canonical URL, not one per language. We emit the default translation's slug
+// and no hreflang alternates.
+//
+// Two resources are deliberately absent:
+//   - academic papers: the site has no detail route (the scientific platform is
+//     one page at /research/scientific-platform that opens papers in a modal).
+//   - audios: same, /media/audio is a single page with ?id= deep links.
+// Add builders back here when those routes exist.
+
+function postUrl(slug: string): string {
+  return `${publicSiteBase()}/news/${slug}`;
 }
 
-// Static pages are canonical, root-level URLs on the public site:
-// `{PUBLIC_SITE_URL}/{lang}/{slug}` (e.g. /ar/imam-zain-biography). If the
-// front-end serves them under a different path prefix, update this to match —
-// same contract as postUrl above.
-function staticPageUrl(lang: string, slug: string): string {
-  return `${publicSiteBase()}/${lang}/${slug}`;
+function staticPageUrl(slug: string): string {
+  return `${publicSiteBase()}/his-life/${slug}`;
 }
 
-function bookUrl(lang: string, slug: string): string {
-  return `${publicSiteBase()}/${lang}/books/${slug}`;
-}
-
-function paperUrl(lang: string, slug: string): string {
-  return `${publicSiteBase()}/${lang}/academic-papers/${slug}`;
-}
-
-// Audios use a single, language-agnostic canonical slug → no /{lang}/ segment.
-function audioUrl(slug: string): string {
-  return `${publicSiteBase()}/audios/${slug}`;
+// The site exposes books at both /library/books/{slug} and /publications/{slug}
+// with no rel=canonical on either. /library/books is the dedicated detail view,
+// so it is the one we advertise; the duplication itself still needs resolving
+// on the front-end.
+function bookUrl(slug: string): string {
+  return `${publicSiteBase()}/library/books/${slug}`;
 }
 
 /**
  * Sitemap + RSS feed generation for the public main site.
  *
  * Both endpoints read directly from the live posts table — no caching layer.
- * At current corpus size (low thousands of posts × two languages) this is
- * well under the 50k-URL-per-sitemap and 500-item-per-feed practical caps,
- * and the read is a couple of indexed scans. Revisit if the corpus grows.
+ * At current corpus size (low thousands of posts) this is well under the
+ * 50k-URL-per-sitemap and 500-item-per-feed practical caps, and the read is a
+ * couple of indexed scans. Revisit if the corpus grows.
  *
- * URL shape: `{PUBLIC_SITE_URL}/{lang}/posts/{slug}`. Set
- * `PUBLIC_SITE_URL` to override the default `https://imamzain.org`.
+ * URL shapes are defined by the route table above. Set `PUBLIC_SITE_URL` to
+ * override the default origin `https://imamzain.org`.
  */
 @Injectable()
 export class FeedsService {
   constructor(private readonly prisma: PrismaService) {}
 
   /**
-   * Build a urlset sitemap with one <url> entry per published post and an
-   * `xhtml:link` alternate per other translation so search engines learn
-   * the language alternates.
+   * Build a urlset sitemap with one <url> entry per published post, static page
+   * and slugged book.
+   *
+   * No hreflang alternates: the public site has no per-language URL, so a row's
+   * translations all share one canonical URL. Emitting one <url> per translation
+   * would advertise the same page several times over.
    */
   async buildSitemap(): Promise<string> {
-    // The five corpora are independent reads — fetch them in parallel, then
-    // format in a fixed section order (posts, pages, books, papers, audios).
-    const [posts, pages, books, papers, audios] = await Promise.all([
+    // Independent reads, so fetch in parallel, then format in a fixed section
+    // order (posts, pages, books).
+    const [posts, pages, books] = await Promise.all([
       this.prisma.posts.findMany({
         where: { deleted_at: null, is_published: true },
         include: { post_translations: { select: { lang: true, slug: true, is_default: true } } },
@@ -79,97 +90,62 @@ export class FeedsService {
       }),
       this.prisma.static_pages.findMany({
         where: { deleted_at: null, is_published: true },
-        include: { static_page_translations: { select: { lang: true, slug: true } } },
+        include: { static_page_translations: { select: { lang: true, slug: true, is_default: true } } },
         orderBy: [{ display_order: 'asc' }, { id: 'asc' }],
       }),
       this.prisma.books.findMany({
         where: { deleted_at: null, book_translations: { some: { slug: { not: null } } } },
-        select: { updated_at: true, created_at: true, book_translations: { select: { lang: true, slug: true } } },
-      }),
-      this.prisma.academic_papers.findMany({
-        where: { deleted_at: null, academic_paper_translations: { some: { slug: { not: null } } } },
-        select: { updated_at: true, created_at: true, academic_paper_translations: { select: { lang: true, slug: true } } },
-      }),
-      this.prisma.audios.findMany({
-        where: { deleted_at: null, is_published: true, slug: { not: null } },
-        select: { slug: true, updated_at: true, created_at: true },
+        select: {
+          updated_at: true,
+          created_at: true,
+          book_translations: { select: { lang: true, slug: true, is_default: true } },
+        },
       }),
     ]);
 
     const lines: string[] = [
       '<?xml version="1.0" encoding="UTF-8"?>',
-      '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9" xmlns:xhtml="http://www.w3.org/1999/xhtml">',
+      '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">',
     ];
 
     for (const post of posts) {
+      const t = resolveTranslation(post.post_translations, null);
+      if (!t) continue;
       const lastmod = (post.updated_at ?? post.published_at ?? post.created_at).toISOString();
-      const alternates = post.post_translations.map((t) => ({
-        lang: t.lang,
-        url: postUrl(t.lang, t.slug),
-      }));
-      for (const t of post.post_translations) this.pushUrlEntry(lines, postUrl(t.lang, t.slug), lastmod, alternates);
+      this.pushUrlEntry(lines, postUrl(t.slug), lastmod);
     }
 
-    // Static pages (biography, about, …) are public, indexable URLs too — emit
-    // one <url> per translation with hreflang alternates, same shape as posts.
+    // Static pages (biography, …) are public, indexable URLs too.
     for (const page of pages) {
+      const t = resolveTranslation(page.static_page_translations, null);
+      if (!t) continue;
       const lastmod = (page.updated_at ?? page.created_at).toISOString();
-      const alternates = page.static_page_translations.map((t) => ({
-        lang: t.lang,
-        url: staticPageUrl(t.lang, t.slug),
-      }));
-      for (const t of page.static_page_translations) this.pushUrlEntry(lines, staticPageUrl(t.lang, t.slug), lastmod, alternates);
+      this.pushUrlEntry(lines, staticPageUrl(t.slug), lastmod);
     }
 
-    // Books & academic papers that have an editor slug on at least one
-    // translation get indexable URLs too. Rows with no slug stay UUID-only and
-    // are intentionally omitted (no human/SEO-friendly URL to advertise).
+    // Books with an editor slug get an indexable URL. Rows with no slug stay
+    // UUID-only and are intentionally omitted (nothing SEO-friendly to
+    // advertise). Prefer the default translation, but fall back to any slugged
+    // one so a book whose default translation lacks a slug is still listed.
     for (const book of books) {
-      const slugged = book.book_translations.filter((t): t is { lang: string; slug: string } => !!t.slug);
+      const slugged = book.book_translations.filter(
+        (t): t is (typeof book.book_translations)[number] & { slug: string } => !!t.slug,
+      );
       if (slugged.length === 0) continue;
+      const t = resolveTranslation(slugged, null) ?? slugged[0];
       const lastmod = (book.updated_at ?? book.created_at).toISOString();
-      const alternates = slugged.map((t) => ({ lang: t.lang, url: bookUrl(t.lang, t.slug) }));
-      for (const t of slugged) this.pushUrlEntry(lines, bookUrl(t.lang, t.slug), lastmod, alternates);
-    }
-
-    for (const paper of papers) {
-      const slugged = paper.academic_paper_translations.filter((t): t is { lang: string; slug: string } => !!t.slug);
-      if (slugged.length === 0) continue;
-      const lastmod = (paper.updated_at ?? paper.created_at).toISOString();
-      const alternates = slugged.map((t) => ({ lang: t.lang, url: paperUrl(t.lang, t.slug) }));
-      for (const t of slugged) this.pushUrlEntry(lines, paperUrl(t.lang, t.slug), lastmod, alternates);
-    }
-
-    // Audios: published + slugged only. Single canonical slug, so emit one bare
-    // <url> per audio (no /{lang}/ segment, no hreflang alternates).
-    for (const audio of audios) {
-      if (!audio.slug) continue;
-      const lastmod = (audio.updated_at ?? audio.created_at).toISOString();
-      lines.push('  <url>');
-      lines.push(`    <loc>${xmlEscape(audioUrl(audio.slug))}</loc>`);
-      lines.push(`    <lastmod>${xmlEscape(lastmod)}</lastmod>`);
-      lines.push('  </url>');
+      this.pushUrlEntry(lines, bookUrl(t.slug), lastmod);
     }
 
     lines.push('</urlset>');
     return lines.join('\n');
   }
 
-  /** Emit one <url> block with hreflang alternates. */
-  private pushUrlEntry(
-    lines: string[],
-    loc: string,
-    lastmod: string,
-    alternates: { lang: string; url: string }[],
-  ): void {
+  /** Emit one <url> block. */
+  private pushUrlEntry(lines: string[], loc: string, lastmod: string): void {
     lines.push('  <url>');
     lines.push(`    <loc>${xmlEscape(loc)}</loc>`);
     lines.push(`    <lastmod>${xmlEscape(lastmod)}</lastmod>`);
-    for (const alt of alternates) {
-      lines.push(
-        `    <xhtml:link rel="alternate" hreflang="${xmlEscape(alt.lang)}" href="${xmlEscape(alt.url)}"/>`,
-      );
-    }
     lines.push('  </url>');
   }
 
@@ -213,7 +189,7 @@ export class FeedsService {
       const translation = resolveTranslation(post.post_translations, null);
       if (!translation) continue;
 
-      const url = postUrl(translation.lang, translation.slug);
+      const url = postUrl(translation.slug);
       const title = translation.title;
       const description = translation.summary ?? htmlToPlainExcerpt(translation.body ?? '');
       const pubDate = (post.published_at ?? post.created_at).toUTCString();
