@@ -21,7 +21,7 @@ import { FormsService } from "./forms.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { EmailService } from "../email/email.service";
 import { WhatsappService } from "../whatsapp/whatsapp.service";
-import { prisma, cleanDatabase } from "../../test/db-helpers";
+import { prisma, cleanDatabase, waitForRow } from "../../test/db-helpers";
 
 const describeIfDb = process.env.DATABASE_TEST_URL ? describe : describe.skip;
 
@@ -94,9 +94,14 @@ describeIfDb("FormsService (integration)", () => {
         message: "Testing audit log creation",
       });
 
-      const log = await prisma.audit_logs.findFirst({
-        where: { action: "CONTACT_SUBMITTED" },
-      });
+      // CONTACT_SUBMITTED goes through AuditService.write(), which schedules
+      // the INSERT and resolves immediately, so the row is not guaranteed to
+      // exist the moment submitContact() resolves. Poll for it rather than
+      // reading once: the contract is that it lands, not that it lands
+      // synchronously. (USER_LOGIN uses writeSync and is asserted directly.)
+      const log = await waitForRow(() =>
+        prisma.audit_logs.findFirst({ where: { action: "CONTACT_SUBMITTED" } }),
+      );
       expect(log).not.toBeNull();
       expect(log!.resource_type).toBe("contact_submission");
     });
