@@ -28,6 +28,14 @@ export const prisma = new PrismaClient({
  *   8. permissions          DB cascades → permission_translations
  */
 export async function cleanDatabase() {
+    // AuditService.write() is fire-and-forget: it schedules the INSERT on a
+    // later tick and resolves immediately. A write scheduled by the test that
+    // just finished can therefore still be in flight here, and would hit a
+    // users table this function has already emptied (audit_logs_user_id_fkey).
+    // Let the event loop drain those first so the warning spam, and the
+    // cross-test interference behind it, does not happen.
+    await settlePendingWrites()
+
     await prisma.audit_logs.deleteMany()
     await prisma.contact_submissions.deleteMany()
     await prisma.proxy_visit_requests.deleteMany()
@@ -36,4 +44,37 @@ export async function cleanDatabase() {
     await prisma.users.deleteMany()
     await prisma.roles.deleteMany()
     await prisma.permissions.deleteMany()
+}
+
+/**
+ * Yield long enough for already-scheduled fire-and-forget writes to reach the
+ * database. setImmediate alone only clears the scheduling tick, not the query
+ * round-trip, so this also waits on a trivial query.
+ */
+export async function settlePendingWrites(): Promise<void> {
+    await new Promise((resolve) => setImmediate(resolve))
+    await prisma.$queryRaw`SELECT 1`
+}
+
+/**
+ * Poll until `read` returns something non-null, or fail after `timeoutMs`.
+ *
+ * Use this for anything written through AuditService.write(). That path is
+ * deliberately fire-and-forget (see the failure policy in audit.service.ts), so
+ * the contract is "the row lands shortly after", not "the row exists the
+ * instant the mutation resolves". Asserting the latter is a race that passes or
+ * fails on scheduler timing. Actions that genuinely need a synchronous
+ * guarantee use writeSync instead, and can be asserted directly.
+ */
+export async function waitForRow<T>(
+    read: () => Promise<T | null>,
+    { timeoutMs = 5000, intervalMs = 50 }: { timeoutMs?: number; intervalMs?: number } = {},
+): Promise<T | null> {
+    const deadline = Date.now() + timeoutMs
+    for (;;) {
+        const row = await read()
+        if (row !== null && row !== undefined) return row
+        if (Date.now() >= deadline) return null
+        await new Promise((resolve) => setTimeout(resolve, intervalMs))
+    }
 }

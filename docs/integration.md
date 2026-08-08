@@ -699,31 +699,48 @@ slow down; the front-end should not retry automatically.
 ## Public URL conventions
 
 The API doesn't render HTML, but it does emit canonical URLs in two
-places: `sitemap.xml` and `rss/posts.xml`. Both use the same pattern.
+places: `sitemap.xml` and `rss/posts.xml`.
+
+imamzain.org is served as a **single Arabic site**: `<html lang="ar"
+dir="rtl">` is hardcoded and there is no `[lang]` route segment. None of
+these URLs therefore carry a language prefix.
 
 ### Post URL
 
 ```text
-${PUBLIC_SITE_URL}/{lang}/posts/{slug}
+${PUBLIC_SITE_URL}/news/{slug}
 ```
 
-Default: `https://imamzain.org/{lang}/posts/{slug}`. Set
-`PUBLIC_SITE_URL` to override.
+Default: `https://imamzain.org/news/{slug}`. Set `PUBLIC_SITE_URL` to
+override.
 
 ### Other resource URLs (emitted in the sitemap)
 
 ```text
-${PUBLIC_SITE_URL}/{lang}/{slug}                    ← static pages
-${PUBLIC_SITE_URL}/{lang}/books/{slug}              ← books with a slug
-${PUBLIC_SITE_URL}/{lang}/academic-papers/{slug}    ← papers with a slug
-${PUBLIC_SITE_URL}/audios/{slug}                    ← audios with a slug (single, language-agnostic)
+${PUBLIC_SITE_URL}/his-life/{slug}            ← static pages
+${PUBLIC_SITE_URL}/library/books/{slug}       ← books with a slug
 ```
+
+**Academic papers and audios are not in the sitemap.** The public site
+has no detail route for either: `/research/scientific-platform` is one
+page that opens papers in a modal, and `/media/audio` is one page with
+`?id=` deep links. Add the builders back to
+`src/feeds/feeds.service.ts` when those routes exist.
+
+Books without a slug are intentionally omitted (no SEO-friendly URL to
+advertise). Books are currently reachable at both `/library/books/{slug}`
+and `/publications/{slug}`; the sitemap advertises the former.
+
+### No hreflang alternates
+
+Because there is no per-language URL, a row's translations all resolve
+to one canonical URL. Emitting one `<url>` per translation would
+advertise the same page several times, so the sitemap emits **one entry
+per row**, using the default translation's slug.
 
 The front-end **must** match these URL patterns for the sitemap to be
 correct. Changing the front-end's URL structure means updating the
-sitemap helpers in `src/feeds/feeds.service.ts`. Books / papers without
-a slug are intentionally omitted from the sitemap (no SEO-friendly URL
-to advertise).
+route table at the top of `src/feeds/feeds.service.ts`.
 
 ### Sitemap pickup
 

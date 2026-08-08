@@ -166,7 +166,11 @@ export class HomepageService {
     const categories = await this.prisma.gallery_categories.findMany({
       where: { deleted_at: null },
       include: {
-        gallery_category_translations: { select: { lang: true, is_default: true, title: true } },
+        // gallery_category_translations has no is_default column (unlike the
+        // other translation tables), so selecting it made every request throw.
+        // resolveTranslation degrades correctly without it: no lang match falls
+        // through to translations[0].
+        gallery_category_translations: { select: { lang: true, title: true } },
       },
       orderBy: { created_at: 'asc' },
     });
