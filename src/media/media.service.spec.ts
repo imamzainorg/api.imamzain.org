@@ -46,8 +46,8 @@ describe('MediaService', () => {
             post_attachments: { count: jest.fn() },
             post_translations: { count: jest.fn().mockResolvedValue(0) },
             book_translations: { count: jest.fn().mockResolvedValue(0) },
-            academic_paper_translations: { count: jest.fn().mockResolvedValue(0) },
             static_page_translations: { count: jest.fn().mockResolvedValue(0) },
+            gallery_image_translations: { count: jest.fn().mockResolvedValue(0) },
             pending_media_uploads: {
               create: jest.fn().mockResolvedValue({}),
               findFirst: jest.fn(),

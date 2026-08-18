@@ -174,6 +174,7 @@ export class SettingsService implements OnApplicationBootstrap {
       actorId,
       action: existing ? AUDIT_ACTIONS.SETTING_UPDATED : AUDIT_ACTIONS.SETTING_CREATED,
       resourceType: 'site_setting',
+      resourceId: key,
       changes: { method: 'PUT', path: `/api/v1/settings/${key}`, key },
     });
 
@@ -191,6 +192,7 @@ export class SettingsService implements OnApplicationBootstrap {
       actorId,
       action: AUDIT_ACTIONS.SETTING_DELETED,
       resourceType: 'site_setting',
+      resourceId: key,
       changes: { method: 'DELETE', path: `/api/v1/settings/${key}`, key },
     });
 

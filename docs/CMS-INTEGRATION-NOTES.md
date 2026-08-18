@@ -2216,7 +2216,104 @@ with HTTP 400 — treat it as a validation-class error.
 
 ---
 
-## 19. Open follow-ups (still not in this push)
+## 19. Round 14 (this push) — production schema audit + hardening
+
+A read-only audit pass over the schema, migrations and cross-cutting
+services surfaced several real gaps; this round fixes the ones with a
+clear, safe answer and adds three requested content-management features.
+
+### a. `audit_logs.resource_id` widened from `uuid` to `text`
+
+Two resource types (`language`, `site_setting`) key on a non-UUID value
+(a 2-letter code, a free-text key) and were dodging the trap by omitting
+`resource_id` entirely — meaning those audit rows were unfilterable by
+resource id. Column widened; both call sites now populate it properly.
+`GET /audit-logs?resource_id=` is no longer UUID-validated (any string).
+
+### b. Content-slug consolidation — Phase A (posts, books, static_pages)
+
+`slug` historically lived on the per-language translation table for
+posts/books/academic_papers/static_pages, but the public site only ever
+serves one canonical URL per resource (the default translation's) —
+`audios` already had the correct pattern: a single, language-agnostic
+`slug` column on the spine table. Phase A adds that spine-level `slug`
+column to posts/books/static_pages (nullable, backfilled from each row's
+default translation) — additive only, the old translation-level column is
+still the one the API reads/writes. A pre-flight check for cross-language
+slug collisions (the old per-`lang` uniqueness allowed some that a global
+uniqueness would not) came back clean for all three. Phase B (unique
+constraint) and Phase C (app cutover + drop the old columns) are not yet
+built.
+
+### c. `academic_papers`: dead slug/SEO feature removed
+
+`academic_paper_translations.slug` / `meta_title` / `meta_description` /
+`og_image_id` (added mirroring books) were never reachable — the public
+site has no paper detail route at all (papers open in a modal), so
+nothing ever served these fields to a crawler, and `GET
+/academic-papers/by-slug/:slug` was dead. Confirmed 0 of 1035 existing
+translation rows had any of these fields set before removing them.
+`media.service.ts`'s delete() reference-count guard updated to drop the
+now-nonexistent `academic_paper_translations.og_image_id` check.
+
+### d. View counters: `academic_papers`, `audios`, `gallery_images`
+
+New `views BIGINT DEFAULT 0` column (+ `CHECK (views >= 0)`, matching
+posts/books) and a `POST /:id/view` endpoint on each, matching posts'
+`trackView` pattern (30/min throttle).
+
+### e. Draft/publish workflow: `books`, `academic_papers`, `gallery_images`
+
+New `is_published BOOLEAN DEFAULT true` column on each (default **true** —
+unlike posts, this content is typically uploaded already-final by staff,
+matching audios' precedent). New routes on each: `GET /:resource/admin`,
+`GET /:resource/admin/:id`, `PATCH /:id/publish`. New permissions
+`books:read` / `academic-papers:read` / `gallery:read`, granted to
+super-admin / admin / editor (seeded via `prisma/seed.ts`, re-run against
+production). New audit actions `{BOOK,ACADEMIC_PAPER,GALLERY_IMAGE}
+_{PUBLISHED,UNPUBLISHED}`.
+
+Adding a publish flag to tables that were previously always-public meant
+auditing every OTHER place those tables are queried directly, bypassing
+the new service methods — `search.service.ts` (3 raw-SQL match queries),
+`feeds.service.ts` (sitemap), and `homepage.service.ts` (publications list
++ gallery slider) all needed an explicit `is_published = true` filter
+added so drafts don't leak into public search, the sitemap, or the
+homepage.
+
+### f. SEO fields on `gallery_image_translations`
+
+`meta_title` / `meta_description` / `og_image_id`, matching
+posts/books/static_pages — gallery had a public detail route
+(`GET /gallery/:id`) and no SEO fields, unlike academic_papers (which
+correctly has neither, per (c) above). `media.service.ts`'s delete()
+reference-count guard updated to add this new FK — it's the exact bug
+class its own comment warns about ("this must cover EVERY FK into media").
+
+### g. Pagination ordering fixes
+
+Several list endpoints ordered only by a non-unique column (`created_at`),
+letting two same-timestamp rows swap pages or vanish under concurrent
+writes. Fixed by appending a unique tiebreaker: `roles`/`permissions`
+(had no `orderBy` at all — now `name asc`, itself unique), `gallery`
+public list, `users` admin list (both already did this correctly on
+their own trash-list endpoint — just not the live list), `audit-logs`,
+and the RSS feed's top-50 cutoff.
+
+### h. Misc
+
+- `audios.audio_url` (`@unique`) wasn't covered by the soft-delete suffix
+  trick (only `slug` was) — a soft-deleted audio's URL stayed permanently
+  reserved. Fixed in `softDelete`/`restore`/`findTrash`.
+- `newsletter_campaigns.source_resource_type`'s Swagger `enum:` was
+  documentation only — `@IsIn()` now actually enforces it.
+- Ten `static_pages` rows (published, zero translations, all created in
+  one ~15s window — a failed batch operation) were leaking into the
+  public `GET /static-pages` response as blank entries. Soft-deleted.
+
+---
+
+## 20. Open follow-ups (still not in this push)
 
 - Self-service password reset flow (would need an `email` column on
   `users` plus the `password_reset_tokens` table described in the
@@ -2231,3 +2328,9 @@ with HTTP 400 — treat it as a validation-class error.
   `MAX_BYTES_BY_MIME`, but `application/pdf` is not on the MIME
   allowlist yet — academic-paper and book `pdf_url` are still
   externally hosted).
+- Content-slug consolidation Phase B/C (see round 14, item b): add the
+  global unique constraint to posts/books/static_pages' new spine-level
+  `slug` column, cut the ~4 modules' create/update/delete/restore/
+  findBySlug + `feeds.service.ts` over to reading/writing it, then drop
+  the old translation-level `slug` columns. Pre-flight check already ran
+  clean — safe to schedule whenever the app-code rewrite is wanted.

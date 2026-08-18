@@ -271,9 +271,13 @@ export class MediaService {
     // og:image) or a raw FK error (book cover RESTRICT). Count references
     // regardless of the parent's deleted_at: the FKs still point at this row
     // even from a soft-deleted post/book. This must cover EVERY FK into media —
-    // the og_image_id columns on post/book/paper/static-page translations all
-    // SET NULL on delete, so any one missed here lets a delete silently strip a
-    // resource's SEO image (book/paper/page og:image were previously unguarded).
+    // the og_image_id columns on post/book/static-page/gallery-image
+    // translations all SET NULL on delete, so any one missed here lets a
+    // delete silently strip a resource's SEO image (book/page og:image were
+    // previously unguarded; gallery joined this set when it gained SEO fields
+    // — see 20260818170000_gallery_image_seo_fields). academic_paper_translations
+    // .og_image_id was removed entirely (dead feature, never used) — no
+    // longer a reference source to check here.
     const [
       postRef,
       bookRef,
@@ -281,8 +285,8 @@ export class MediaService {
       attachRef,
       postOgRef,
       bookOgRef,
-      paperOgRef,
       pageOgRef,
+      galleryOgRef,
     ] = await Promise.all([
       this.prisma.posts.count({ where: { cover_image_id: id } }),
       this.prisma.books.count({ where: { cover_image_id: id } }),
@@ -290,12 +294,12 @@ export class MediaService {
       this.prisma.post_attachments.count({ where: { media_id: id } }),
       this.prisma.post_translations.count({ where: { og_image_id: id } }),
       this.prisma.book_translations.count({ where: { og_image_id: id } }),
-      this.prisma.academic_paper_translations.count({ where: { og_image_id: id } }),
       this.prisma.static_page_translations.count({ where: { og_image_id: id } }),
+      this.prisma.gallery_image_translations.count({ where: { og_image_id: id } }),
     ]);
 
     if (
-      postRef + bookRef + galleryRef + attachRef + postOgRef + bookOgRef + paperOgRef + pageOgRef >
+      postRef + bookRef + galleryRef + attachRef + postOgRef + bookOgRef + pageOgRef + galleryOgRef >
       0
     ) {
       throw new ConflictException('Media is still referenced by other records');

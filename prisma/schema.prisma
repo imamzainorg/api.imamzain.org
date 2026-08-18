@@ -40,16 +40,10 @@ model academic_paper_translations {
   publication_venue String?
   page_count        Int?
   is_default        Boolean         @default(false)
-  slug              String?
-  meta_title        String?
-  meta_description  String?
-  og_image_id       String?         @db.Uuid
   languages         languages       @relation(fields: [lang], references: [code], onDelete: Cascade, onUpdate: NoAction)
-  og_image          media?          @relation("academic_paper_translation_og_image", fields: [og_image_id], references: [id], onUpdate: NoAction)
   academic_papers   academic_papers @relation(fields: [paper_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
 
   @@id([paper_id, lang])
-  @@index([og_image_id], map: "idx_academic_paper_translations_og_image")
   @@index([abstract(ops: raw("gin_trgm_ops"))], map: "idx_academic_paper_translations_abstract_trgm", type: Gin)
   @@index([title(ops: raw("gin_trgm_ops"))], map: "idx_academic_paper_translations_title_trgm", type: Gin)
 }
@@ -60,6 +54,8 @@ model academic_papers {
   published_year              String?
   pdf_url                     String?
   uploaded_by                 String?                       @db.Uuid
+  views                       BigInt                        @default(0)
+  is_published                Boolean                       @default(true)
   created_at                  DateTime                      @default(now()) @db.Timestamptz(6)
   updated_at                  DateTime                      @default(now()) @db.Timestamptz(6)
   deleted_at                  DateTime?                     @db.Timestamptz(6)
@@ -76,7 +72,7 @@ model audit_logs {
   user_id       String?  @db.Uuid
   action        String
   resource_type String
-  resource_id   String?  @db.Uuid
+  resource_id   String?
   changes       Json?
   ip_address    String?  @db.Inet
   user_agent    String?
@@ -145,7 +141,13 @@ model books {
   pdf_url           String?
   part_number       Int?
   parts             Int?
+  // Phase A of the content-slug consolidation (see migration
+  // 20260818130000). Backfilled from the default translation's slug; not
+  // yet unique-constrained or read/written by the app — that's Phase B/C.
+  // book_translations.slug is still the live column until then.
+  slug              String?
   views             BigInt              @default(0)
+  is_published      Boolean             @default(true)
   created_at        DateTime            @default(now()) @db.Timestamptz(6)
   updated_at        DateTime            @default(now()) @db.Timestamptz(6)
   added_by          String?             @db.Uuid
@@ -201,14 +203,19 @@ model gallery_category_translations {
 }
 
 model gallery_image_translations {
-  media_id       String         @db.Uuid
-  lang           String         @db.Char(2)
-  title          String
-  description    String?
-  languages      languages      @relation(fields: [lang], references: [code], onDelete: Cascade, onUpdate: NoAction)
-  gallery_images gallery_images @relation(fields: [media_id], references: [media_id], onDelete: Cascade, onUpdate: NoAction)
+  media_id         String         @db.Uuid
+  lang             String         @db.Char(2)
+  title            String
+  description      String?
+  meta_title       String?
+  meta_description String?
+  og_image_id      String?        @db.Uuid
+  languages        languages      @relation(fields: [lang], references: [code], onDelete: Cascade, onUpdate: NoAction)
+  og_image         media?         @relation("gallery_image_translation_og_image", fields: [og_image_id], references: [id], onUpdate: NoAction)
+  gallery_images   gallery_images @relation(fields: [media_id], references: [media_id], onDelete: Cascade, onUpdate: NoAction)
 
   @@id([media_id, lang])
+  @@index([og_image_id], map: "idx_gallery_image_translations_og_image")
   @@index([description(ops: raw("gin_trgm_ops"))], map: "idx_gallery_image_translations_description_trgm", type: Gin)
   @@index([title(ops: raw("gin_trgm_ops"))], map: "idx_gallery_image_translations_title_trgm", type: Gin)
 }
@@ -220,6 +227,8 @@ model gallery_images {
   author                     String?
   tags                       String[]                     @default([])
   locations                  String[]                     @default([])
+  views                      BigInt                       @default(0)
+  is_published               Boolean                      @default(true)
   created_at                 DateTime                     @default(now()) @db.Timestamptz(6)
   updated_at                 DateTime                     @default(now()) @db.Timestamptz(6)
   added_by                   String?                      @db.Uuid
@@ -272,10 +281,10 @@ model media {
   height                        Int?
   created_at                    DateTime                      @default(now()) @db.Timestamptz(6)
   uploaded_by                   String?                       @db.Uuid
-  academic_paper_translation_og academic_paper_translations[] @relation("academic_paper_translation_og_image")
   book_translation_og           book_translations[]           @relation("book_translation_og_image")
   books                         books[]
   gallery_images                gallery_images?
+  gallery_image_translation_og  gallery_image_translations[]  @relation("gallery_image_translation_og_image")
   users                         users?                        @relation(fields: [uploaded_by], references: [id], onUpdate: NoAction)
   media_variants                media_variants[]
   post_attachments              post_attachments[]
@@ -395,6 +404,11 @@ model posts {
   cover_image_id    String?             @db.Uuid
   published_at      DateTime?           @db.Timestamptz(6)
   is_published      Boolean             @default(false)
+  // Phase A of the content-slug consolidation (see migration
+  // 20260818130000). Backfilled from the default translation's slug; not
+  // yet unique-constrained or read/written by the app — that's Phase B/C.
+  // post_translations.slug is still the live column until then.
+  slug              String?
   views             BigInt              @default(0)
   created_at        DateTime            @default(now()) @db.Timestamptz(6)
   updated_at        DateTime            @default(now()) @db.Timestamptz(6)
@@ -689,6 +703,11 @@ model static_pages {
   id                       String                     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   display_order            Int                        @default(0)
   is_published             Boolean                    @default(true)
+  // Phase A of the content-slug consolidation (see migration
+  // 20260818130000). Backfilled from the default translation's slug; not
+  // yet unique-constrained or read/written by the app — that's Phase B/C.
+  // static_page_translations.slug is still the live column until then.
+  slug                     String?
   created_at               DateTime                   @default(now()) @db.Timestamptz(6)
   updated_at               DateTime                   @default(now()) @db.Timestamptz(6)
   deleted_at               DateTime?                  @db.Timestamptz(6)
@@ -771,6 +790,7 @@ model audios {
   size_mb            Float?
   peaks              Json?
   is_published       Boolean              @default(true)
+  views              BigInt               @default(0)
   created_at         DateTime             @default(now()) @db.Timestamptz(6)
   updated_at         DateTime             @default(now()) @db.Timestamptz(6)
   deleted_at         DateTime?            @db.Timestamptz(6)

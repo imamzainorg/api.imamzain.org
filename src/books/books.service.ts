@@ -23,6 +23,7 @@ const BOOK_LIST_SELECT = {
   part_number: true,
   parts: true,
   views: true,
+  is_published: true,
   created_at: true,
   updated_at: true,
   deleted_at: true,
@@ -60,10 +61,11 @@ export class BooksService {
     private readonly audit: AuditService,
   ) {}
 
-  async findAll(query: BookQueryDto, lang: string | null) {
+  async findAll(query: BookQueryDto, lang: string | null, isAdmin = false) {
     const { page, limit, skip } = resolvePagination(query);
 
     const where: Prisma.booksWhereInput = { deleted_at: null };
+    if (!isAdmin) where.is_published = true;
     if (query.category_id) where.category_id = query.category_id;
 
     if (query.search) {
@@ -87,9 +89,12 @@ export class BooksService {
     return { message: 'Books fetched', data: { items: mapped, pagination: buildPaginationMeta(page, limit, total) } };
   }
 
-  async findOne(id: string, lang: string | null) {
+  async findOne(id: string, lang: string | null, isAdmin = false) {
+    const where: Prisma.booksWhereInput = { id, deleted_at: null };
+    if (!isAdmin) where.is_published = true;
+
     const book = await this.prisma.books.findFirst({
-      where: { id, deleted_at: null },
+      where,
       include: {
         book_translations: { include: { og_image: { select: OG_IMAGE_SELECT } } },
         media: { include: { media_variants: { select: MEDIA_VARIANT_SELECT, orderBy: { width: 'asc' } } } },
@@ -101,14 +106,43 @@ export class BooksService {
     return { message: 'Book fetched', data: { ...book, translation: resolveTranslation(book.book_translations, lang) } };
   }
 
-  /** Public detail by editor slug — resolves regardless of the visitor's lang. */
+  /** Public detail by editor slug — resolves regardless of the visitor's lang. Published only. */
   async findBySlug(slug: string, lang: string | null) {
     const match = await this.prisma.book_translations.findFirst({
-      where: { slug, books: { deleted_at: null } },
+      where: { slug, books: { deleted_at: null, is_published: true } },
       select: { book_id: true },
     });
     if (!match) throw new NotFoundException('Book not found');
     return this.findOne(match.book_id, lang);
+  }
+
+  async togglePublish(id: string, isPublished: boolean, actorId: string, lang: string | null) {
+    const existing = await this.prisma.books.findFirst({
+      where: { id, deleted_at: null },
+      select: { id: true, is_published: true },
+    });
+    if (!existing) throw new NotFoundException('Book not found');
+
+    if (existing.is_published === isPublished) {
+      const { data } = await this.findOne(id, lang, true);
+      return { message: 'Book already in requested state', data };
+    }
+
+    await this.prisma.books.update({
+      where: { id },
+      data: { is_published: isPublished, updated_at: new Date() },
+    });
+
+    await this.audit.write({
+      actorId,
+      action: isPublished ? AUDIT_ACTIONS.BOOK_PUBLISHED : AUDIT_ACTIONS.BOOK_UNPUBLISHED,
+      resourceType: 'book',
+      resourceId: id,
+      changes: { method: 'PATCH', path: `/api/v1/books/${id}/publish`, is_published: isPublished },
+    });
+
+    const { data } = await this.findOne(id, lang, true);
+    return { message: isPublished ? 'Book published' : 'Book unpublished', data };
   }
 
   /**
@@ -139,7 +173,7 @@ export class BooksService {
 
   async trackView(id: string) {
     const result = await this.prisma.books.updateMany({
-      where: { id, deleted_at: null },
+      where: { id, deleted_at: null, is_published: true },
       data: { views: { increment: 1 } },
     });
     if (result.count === 0) throw new NotFoundException('Book not found');
@@ -177,6 +211,10 @@ export class BooksService {
             pdf_url: dto.pdf_url ?? null,
             part_number: dto.part_number ?? null,
             parts: dto.parts ?? null,
+            // Books are typically uploaded already-final by staff (unlike posts,
+            // which benefit from a draft-first workflow) — default to published,
+            // matching audios' precedent.
+            is_published: dto.is_published ?? true,
             added_by: userId,
           },
         });
@@ -254,6 +292,7 @@ export class BooksService {
       if (dto.pdf_url !== undefined) updateData.pdf_url = dto.pdf_url;
       if (dto.part_number !== undefined) updateData.part_number = dto.part_number;
       if (dto.parts !== undefined) updateData.parts = dto.parts;
+      if (dto.is_published !== undefined) updateData.is_published = dto.is_published;
 
       await tx.books.update({ where: { id }, data: updateData });
 

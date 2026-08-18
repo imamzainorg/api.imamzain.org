@@ -33,6 +33,7 @@ const AUDIO_LIST_SELECT = {
   duration_seconds: true,
   size_mb: true,
   is_published: true,
+  views: true,
   created_at: true,
   updated_at: true,
   audio_translations: { select: { lang: true, title: true, is_default: true } },
@@ -151,6 +152,15 @@ export class AudiosService {
     });
     if (!audio) throw new NotFoundException('Audio not found');
     return { message: 'Audio fetched', data: this.shapeAudio(audio, lang) };
+  }
+
+  async trackView(id: string) {
+    const result = await this.prisma.audios.updateMany({
+      where: { id, deleted_at: null, is_published: true },
+      data: { views: { increment: 1 } },
+    });
+    if (result.count === 0) throw new NotFoundException('Audio not found');
+    return { message: 'View tracked', data: null };
   }
 
   // ── Writes ──────────────────────────────────────────────────────────────────
@@ -306,23 +316,29 @@ export class AudiosService {
     ]);
     const items = rows.map((r) => {
       const shaped = this.shapeAudio(r, lang);
-      return { ...shaped, slug: shaped.slug ? stripSoftDeleteSuffix(shaped.slug) : shaped.slug };
+      return {
+        ...shaped,
+        slug: shaped.slug ? stripSoftDeleteSuffix(shaped.slug) : shaped.slug,
+        audio_url: stripSoftDeleteSuffix(shaped.audio_url),
+      };
     });
     return { message: 'Trash fetched', data: { items, pagination: buildPaginationMeta(page, limit, total) } };
   }
 
   /**
-   * Restore a soft-deleted audio. Reverses the slug suffix from softDelete.
-   * Refused with 409 if a live audio has taken the original slug meanwhile.
+   * Restore a soft-deleted audio. Reverses the slug and audio_url suffixes
+   * from softDelete. Refused with 409 if a live audio has taken the
+   * original slug or audio_url meanwhile.
    */
   async restore(id: string, actorId: string) {
     const audio = await this.prisma.audios.findFirst({
       where: { id, deleted_at: { not: null } },
-      select: { id: true, slug: true },
+      select: { id: true, slug: true, audio_url: true },
     });
     if (!audio) throw new NotFoundException('Deleted audio not found');
 
     const original = audio.slug ? stripSoftDeleteSuffix(audio.slug) : null;
+    const originalAudioUrl = stripSoftDeleteSuffix(audio.audio_url);
 
     try {
       await this.prisma.$transaction(async (tx) => {
@@ -333,13 +349,27 @@ export class AudiosService {
           });
           if (conflict) throw new ConflictException(`Cannot restore: slug "${original}" is now used by another audio`);
         }
+        const urlConflict = await tx.audios.findFirst({
+          where: { audio_url: originalAudioUrl, deleted_at: null, NOT: { id } },
+          select: { id: true },
+        });
+        if (urlConflict) {
+          throw new ConflictException(
+            `Cannot restore: audio_url "${originalAudioUrl}" is now used by another audio`,
+          );
+        }
         await tx.audios.update({
           where: { id },
-          data: { deleted_at: null, ...(original ? { slug: original } : {}), updated_at: new Date() },
+          data: {
+            deleted_at: null,
+            audio_url: originalAudioUrl,
+            ...(original ? { slug: original } : {}),
+            updated_at: new Date(),
+          },
         });
       });
     } catch (err) {
-      rethrowP2002AsConflict(err, 'Cannot restore: the original slug was claimed by another audio');
+      rethrowP2002AsConflict(err, 'Cannot restore: the original slug or audio_url was claimed by another audio');
     }
 
     await this.audit.write({
@@ -354,15 +384,23 @@ export class AudiosService {
   }
 
   async softDelete(id: string, actorId: string) {
-    const audio = await this.prisma.audios.findFirst({ where: { id, deleted_at: null }, select: { id: true, slug: true } });
+    const audio = await this.prisma.audios.findFirst({
+      where: { id, deleted_at: null },
+      select: { id: true, slug: true, audio_url: true },
+    });
     if (!audio) throw new NotFoundException('Audio not found');
 
-    // Free the slug by suffixing it so the partial-unique index is released
-    // while the row sits in trash; restore reverses it.
+    // Free the slug and audio_url by suffixing them so their unique
+    // constraints release while the row sits in trash; restore reverses
+    // both. audio_url is never null (unlike slug), so it's always suffixed.
     const deletedAt = new Date();
-    const slugUpdate = audio.slug ? { slug: `${audio.slug}${softDeleteSuffix(deletedAt)}` } : {};
+    const suffix = softDeleteSuffix(deletedAt);
+    const slugUpdate = audio.slug ? { slug: `${audio.slug}${suffix}` } : {};
 
-    await this.prisma.audios.update({ where: { id }, data: { deleted_at: deletedAt, ...slugUpdate } });
+    await this.prisma.audios.update({
+      where: { id },
+      data: { deleted_at: deletedAt, audio_url: `${audio.audio_url}${suffix}`, ...slugUpdate },
+    });
 
     await this.audit.write({
       actorId,

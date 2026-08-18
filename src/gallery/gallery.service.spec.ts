@@ -103,7 +103,7 @@ describe("GalleryService", () => {
 
       expect(prisma.gallery_images.findFirst).toHaveBeenCalledWith(
         expect.objectContaining({
-          where: { media_id: "media-1", deleted_at: null },
+          where: { media_id: "media-1", deleted_at: null, is_published: true },
         }),
       );
     });

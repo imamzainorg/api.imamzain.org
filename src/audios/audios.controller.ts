@@ -168,6 +168,16 @@ export class AudiosController {
     return this.service.findOne(id, lang);
   }
 
+  @Post(':id/view')
+  @Throttle({ default: { ttl: 60_000, limit: 30 } })
+  @ApiOperation({ summary: 'Record a view for a published audio (public)', description: 'Increments the view counter. Rate-limited to 30 calls per minute per IP.' })
+  @ApiParam({ name: 'id', format: 'uuid' })
+  @ApiOkResponse({ type: AudioMessageResponseDto, description: 'View counter incremented by 1; only applies to currently published audios' })
+  @ApiNotFoundResponse({ type: NotFoundErrorDto, description: 'No audio with that ID exists, it has been deleted, or it is not currently published' })
+  trackView(@Param('id') id: string) {
+    return this.service.trackView(id);
+  }
+
   @Patch(':id')
   @Auth('audios:update')
   @ApiOperation({ summary: 'Update an audio record and upsert translations', description: 'Requires permission: `audios:update`.' })

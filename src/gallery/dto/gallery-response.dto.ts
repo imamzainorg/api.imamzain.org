@@ -15,15 +15,33 @@ class GalleryImageTranslationItemDto {
 
   @ApiPropertyOptional({ example: 'وصف الصورة' })
   description?: string;
+
+  @ApiPropertyOptional({ description: 'SEO <title> override for this translation.' })
+  meta_title?: string;
+
+  @ApiPropertyOptional({ description: 'SEO meta description for this translation.' })
+  meta_description?: string;
+
+  @ApiPropertyOptional({ format: 'uuid', description: 'Media id used as the OpenGraph image for this translation.' })
+  og_image_id?: string;
 }
 
-/** List-endpoint translation shape — title only. */
+/** List-endpoint translation shape — description dropped, SEO fields kept. */
 class GalleryImageListTranslationItemDto {
   @ApiProperty({ example: 'ar' })
   lang: string;
 
   @ApiProperty({ example: 'صورة من المعرض' })
   title: string;
+
+  @ApiPropertyOptional({ description: 'SEO <title> override for this translation.' })
+  meta_title?: string;
+
+  @ApiPropertyOptional({ description: 'SEO meta description for this translation.' })
+  meta_description?: string;
+
+  @ApiPropertyOptional({ format: 'uuid', description: 'Media id used as the OpenGraph image for this translation.' })
+  og_image_id?: string;
 }
 
 class GalleryMediaDto {
@@ -87,6 +105,12 @@ class GalleryImageDto {
   @ApiProperty({ type: [String], example: ['العراق', 'كربلاء المقدسة'] })
   locations: string[];
 
+  @ApiProperty({ example: 0 })
+  views: number;
+
+  @ApiProperty({ example: true })
+  is_published: boolean;
+
   @ApiProperty({ example: '2024-01-01T00:00:00.000Z' })
   created_at: string;
 
@@ -127,6 +151,12 @@ class GalleryImageListItemDto {
 
   @ApiProperty({ type: [String], example: ['العراق', 'كربلاء المقدسة'] })
   locations: string[];
+
+  @ApiProperty({ example: 0 })
+  views: number;
+
+  @ApiProperty({ example: true })
+  is_published: boolean;
 
   @ApiProperty({ example: '2024-01-01T00:00:00.000Z' })
   created_at: string;

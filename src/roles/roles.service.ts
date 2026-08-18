@@ -85,6 +85,7 @@ export class RolesService {
     const [roles, total] = await Promise.all([
       this.prisma.roles.findMany({
         include: ROLE_DETAIL_INCLUDE,
+        orderBy: { name: 'asc' },
         skip,
         take: limit,
       }),
@@ -249,6 +250,7 @@ export class RolesService {
     const [permissions, total] = await Promise.all([
       this.prisma.permissions.findMany({
         include: { permission_translations: true },
+        orderBy: { name: 'asc' },
         skip,
         take: limit,
       }),

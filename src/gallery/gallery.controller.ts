@@ -1,4 +1,5 @@
 import { Body, Controller, Delete, Get, HttpCode, Param, Patch, Post, Query } from '@nestjs/common';
+import { Throttle } from '@nestjs/throttler';
 import {
   ApiBadRequestResponse,
   ApiCreatedResponse,
@@ -16,7 +17,7 @@ import { Lang } from '../common/decorators/language.decorator';
 import { NotFoundErrorDto, ValidationErrorDto } from '../common/dto/api-response.dto';
 import { PaginationDto } from '../common/dto/pagination.dto';
 import { PublicCache } from '../common/decorators/public-cache.decorator';
-import { CreateGalleryImageDto, GalleryQueryDto, UpdateGalleryImageDto } from './dto/gallery.dto';
+import { CreateGalleryImageDto, GalleryQueryDto, TogglePublishDto, UpdateGalleryImageDto } from './dto/gallery.dto';
 import {
   GalleryCreatedResponseDto,
   GalleryDetailResponseDto,
@@ -43,6 +44,33 @@ export class GalleryController {
   @ApiBadRequestResponse({ type: ValidationErrorDto, description: 'Invalid query parameters (page < 1, limit out of 1–100, or non-integer values)' })
   findAll(@Query() query: GalleryQueryDto, @Lang() lang: string | null) {
     return this.galleryService.findAll(query, lang);
+  }
+
+  @Get('admin')
+  @Auth('gallery:read')
+  @ApiOperation({
+    summary: 'List all gallery images including unpublished (admin)',
+    description: 'Returns drafts and published images. Requires permission: `gallery:read`.',
+  })
+  @ApiQuery({ name: 'page', required: false, type: Number, example: 1 })
+  @ApiQuery({ name: 'limit', required: false, type: Number, example: 20 })
+  @ApiQuery({ name: 'category_id', required: false, type: String, description: 'Filter by gallery category UUID' })
+  @ApiQuery({ name: 'tags', required: false, isArray: true, type: String, example: ['shrine'] })
+  @ApiQuery({ name: 'locations', required: false, isArray: true, type: String, example: ['Karbala'] })
+  @ApiOkResponse({ type: GalleryListResponseDto, description: 'Paginated list of all gallery images' })
+  @ApiBadRequestResponse({ type: ValidationErrorDto, description: 'Invalid query parameters (page < 1, limit out of 1–100, or non-integer values)' })
+  findAdmin(@Query() query: GalleryQueryDto, @Lang() lang: string | null) {
+    return this.galleryService.findAll(query, lang, true);
+  }
+
+  @Get('admin/:id')
+  @Auth('gallery:read')
+  @ApiOperation({ summary: 'Get a single gallery image by ID including unpublished (admin)', description: 'Requires permission: `gallery:read`. Returns drafts too.' })
+  @ApiParam({ name: 'id', format: 'uuid', description: 'Media ID (serves as the gallery image primary key)' })
+  @ApiOkResponse({ type: GalleryDetailResponseDto, description: 'Gallery image detail (regardless of publish state)' })
+  @ApiNotFoundResponse({ type: NotFoundErrorDto, description: 'No gallery image with that media ID exists, or it has been deleted' })
+  findAdminOne(@Param('id') id: string, @Lang() lang: string | null) {
+    return this.galleryService.findOne(id, lang, true);
   }
 
   @Get('trash')
@@ -85,6 +113,16 @@ export class GalleryController {
     return this.galleryService.findOne(id, lang);
   }
 
+  @Post(':id/view')
+  @Throttle({ default: { ttl: 60_000, limit: 30 } })
+  @ApiOperation({ summary: 'Record a view for a gallery image (public)', description: 'Increments the view counter. Rate-limited to 30 calls per minute per IP. The `id` parameter is the media record UUID.' })
+  @ApiParam({ name: 'id', format: 'uuid', description: 'Media ID (serves as the gallery image primary key)' })
+  @ApiOkResponse({ type: GalleryMessageResponseDto, description: 'View counter incremented by 1' })
+  @ApiNotFoundResponse({ type: NotFoundErrorDto, description: 'No gallery image with that media ID exists, or it has been deleted' })
+  trackView(@Param('id') id: string) {
+    return this.galleryService.trackView(id);
+  }
+
   @Post()
   @Auth('gallery:create')
   @ApiOperation({ summary: 'Add an image to the gallery', description: 'The `media_id` must reference an existing media record. Requires permission: `gallery:create`.' })
@@ -104,6 +142,16 @@ export class GalleryController {
   @ApiNotFoundResponse({ type: NotFoundErrorDto, description: 'No gallery image with that media ID exists, or it has been deleted' })
   update(@Param('id') id: string, @Body() dto: UpdateGalleryImageDto, @CurrentUser() user: CurrentUserPayload, @Lang() lang: string | null) {
     return this.galleryService.update(id, dto, user.id, lang);
+  }
+
+  @Patch(':id/publish')
+  @Auth('gallery:update')
+  @ApiOperation({ summary: 'Publish or unpublish a gallery image', description: 'Requires permission: `gallery:update`.' })
+  @ApiParam({ name: 'id', format: 'uuid', description: 'Media ID' })
+  @ApiOkResponse({ type: GalleryDetailResponseDto })
+  @ApiNotFoundResponse({ type: NotFoundErrorDto, description: 'No gallery image with that media ID exists, or it has been deleted' })
+  togglePublish(@Param('id') id: string, @Body() dto: TogglePublishDto, @CurrentUser() user: CurrentUserPayload, @Lang() lang: string | null) {
+    return this.galleryService.togglePublish(id, dto.is_published, user.id, lang);
   }
 
   @Delete(':id')

@@ -5,20 +5,8 @@ import { AuditService } from '../common/audit/audit.service';
 import { AUDIT_ACTIONS } from '../common/audit/audit.actions';
 import { rethrowP2002AsConflict } from '../common/utils/prisma-error.util';
 import { assertExactlyOneDefault, resolveTranslation } from '../common/utils/translation.util';
-import { softDeleteSuffix, stripSoftDeleteSuffix } from '../common/utils/soft-delete.util';
 import { buildPaginationMeta, resolvePagination } from '../common/utils/pagination.util';
 import { AcademicPaperQueryDto, CreateAcademicPaperDto, UpdateAcademicPaperDto } from './dto/academic-paper.dto';
-
-// Resolvable per-translation OG image for SEO meta tags (detail only).
-const OG_IMAGE_SELECT = {
-  id: true,
-  url: true,
-  filename: true,
-  alt_text: true,
-  mime_type: true,
-  width: true,
-  height: true,
-} satisfies Prisma.mediaSelect;
 
 // List queries drop the abstract (heavy free-text) from translations.
 const PAPER_LIST_SELECT = {
@@ -27,6 +15,8 @@ const PAPER_LIST_SELECT = {
   published_year: true,
   pdf_url: true,
   uploaded_by: true,
+  views: true,
+  is_published: true,
   created_at: true,
   updated_at: true,
   deleted_at: true,
@@ -39,10 +29,6 @@ const PAPER_LIST_SELECT = {
       keywords: true,
       publication_venue: true,
       page_count: true,
-      slug: true,
-      meta_title: true,
-      meta_description: true,
-      og_image_id: true,
       is_default: true,
     },
   },
@@ -64,10 +50,11 @@ export class AcademicPapersService {
     private readonly audit: AuditService,
   ) {}
 
-  async findAll(query: AcademicPaperQueryDto, lang: string | null) {
+  async findAll(query: AcademicPaperQueryDto, lang: string | null, isAdmin = false) {
     const { page, limit, skip } = resolvePagination(query);
 
     const where: Prisma.academic_papersWhereInput = { deleted_at: null };
+    if (!isAdmin) where.is_published = true;
     if (query.category_id) where.category_id = query.category_id;
 
     if (query.search) {
@@ -96,11 +83,14 @@ export class AcademicPapersService {
     return { message: 'Papers fetched', data: { items: mapped, pagination: buildPaginationMeta(page, limit, total) } };
   }
 
-  async findOne(id: string, lang: string | null) {
+  async findOne(id: string, lang: string | null, isAdmin = false) {
+    const where: Prisma.academic_papersWhereInput = { id, deleted_at: null };
+    if (!isAdmin) where.is_published = true;
+
     const paper = await this.prisma.academic_papers.findFirst({
-      where: { id, deleted_at: null },
+      where,
       include: {
-        academic_paper_translations: { include: { og_image: { select: OG_IMAGE_SELECT } } },
+        academic_paper_translations: true,
         academic_paper_categories: { include: { academic_paper_category_translations: true } },
       },
     });
@@ -108,35 +98,42 @@ export class AcademicPapersService {
     return { message: 'Paper fetched', data: { ...paper, translation: resolveTranslation(paper.academic_paper_translations, lang) } };
   }
 
-  /** Public detail by editor slug — resolves regardless of the visitor's lang. */
-  async findBySlug(slug: string, lang: string | null) {
-    const match = await this.prisma.academic_paper_translations.findFirst({
-      where: { slug, academic_papers: { deleted_at: null } },
-      select: { paper_id: true },
+  async trackView(id: string) {
+    const result = await this.prisma.academic_papers.updateMany({
+      where: { id, deleted_at: null, is_published: true },
+      data: { views: { increment: 1 } },
     });
-    if (!match) throw new NotFoundException('Paper not found');
-    return this.findOne(match.paper_id, lang);
+    if (result.count === 0) throw new NotFoundException('Paper not found');
+    return { message: 'View tracked', data: null };
   }
 
-  /** Reject a slug that collides with another paper's live (lang, slug) pair. */
-  private async assertSlugsAvailable(
-    translations: { lang: string; slug?: string | null }[],
-    excludePaperId: string | null,
-  ) {
-    for (const t of translations) {
-      if (!t.slug) continue;
-      const conflict = await this.prisma.academic_paper_translations.findFirst({
-        where: {
-          lang: t.lang,
-          slug: t.slug,
-          ...(excludePaperId ? { NOT: { paper_id: excludePaperId } } : {}),
-        },
-        select: { paper_id: true },
-      });
-      if (conflict) {
-        throw new ConflictException(`Slug "${t.slug}" (${t.lang}) is already used by another paper`);
-      }
+  async togglePublish(id: string, isPublished: boolean, actorId: string, lang: string | null) {
+    const existing = await this.prisma.academic_papers.findFirst({
+      where: { id, deleted_at: null },
+      select: { id: true, is_published: true },
+    });
+    if (!existing) throw new NotFoundException('Paper not found');
+
+    if (existing.is_published === isPublished) {
+      const { data } = await this.findOne(id, lang, true);
+      return { message: 'Paper already in requested state', data };
     }
+
+    await this.prisma.academic_papers.update({
+      where: { id },
+      data: { is_published: isPublished, updated_at: new Date() },
+    });
+
+    await this.audit.write({
+      actorId,
+      action: isPublished ? AUDIT_ACTIONS.ACADEMIC_PAPER_PUBLISHED : AUDIT_ACTIONS.ACADEMIC_PAPER_UNPUBLISHED,
+      resourceType: 'academic_paper',
+      resourceId: id,
+      changes: { method: 'PATCH', path: `/api/v1/academic-papers/${id}/publish`, is_published: isPublished },
+    });
+
+    const { data } = await this.findOne(id, lang, true);
+    return { message: isPublished ? 'Paper published' : 'Paper unpublished', data };
   }
 
   async create(dto: CreateAcademicPaperDto, userId: string, lang: string | null) {
@@ -144,8 +141,6 @@ export class AcademicPapersService {
     if (!category) throw new NotFoundException('Category not found');
 
     assertExactlyOneDefault(dto.translations, 'Exactly one translation must have is_default: true');
-
-    await this.assertSlugsAvailable(dto.translations, null);
 
     let paper;
     try {
@@ -155,6 +150,9 @@ export class AcademicPapersService {
             category_id: dto.category_id,
             published_year: dto.published_year ?? null,
             pdf_url: dto.pdf_url ?? null,
+            // Papers are typically uploaded already-final by staff — default to
+            // published, matching books/audios.
+            is_published: dto.is_published ?? true,
             uploaded_by: userId,
           },
         });
@@ -168,17 +166,16 @@ export class AcademicPapersService {
             keywords: t.keywords ?? [],
             publication_venue: t.publication_venue ?? null,
             page_count: t.page_count ?? null,
-            slug: t.slug ?? null,
-            meta_title: t.meta_title ?? null,
-            meta_description: t.meta_description ?? null,
-            og_image_id: t.og_image_id ?? null,
             is_default: t.is_default ?? false,
           })),
         });
         return created;
       });
     } catch (err) {
-      rethrowP2002AsConflict(err, 'A paper translation slug is already in use');
+      // No unique constraint remains on academic_paper_translations besides
+      // its (paper_id, lang) primary key — this only fires if the DTO sent
+      // the same lang twice.
+      rethrowP2002AsConflict(err, 'Duplicate translation language in the request');
     }
 
     await this.audit.write({
@@ -204,8 +201,6 @@ export class AcademicPapersService {
       if (!category) throw new NotFoundException('Category not found');
     }
 
-    if (dto.translations) await this.assertSlugsAvailable(dto.translations, id);
-
     try {
       await this.prisma.$transaction(async (tx) => {
       // Build an explicit Prisma input rather than spreading the DTO so DTO
@@ -216,6 +211,7 @@ export class AcademicPapersService {
       }
       if (dto.published_year !== undefined) updateData.published_year = dto.published_year;
       if (dto.pdf_url !== undefined) updateData.pdf_url = dto.pdf_url;
+      if (dto.is_published !== undefined) updateData.is_published = dto.is_published;
 
       await tx.academic_papers.update({ where: { id }, data: updateData });
 
@@ -228,10 +224,6 @@ export class AcademicPapersService {
             keywords: t.keywords ?? [],
             publication_venue: t.publication_venue ?? null,
             page_count: t.page_count ?? null,
-            slug: t.slug ?? null,
-            meta_title: t.meta_title ?? null,
-            meta_description: t.meta_description ?? null,
-            og_image_id: t.og_image_id ?? null,
             is_default: t.is_default ?? false,
           };
           await tx.academic_paper_translations.upsert({
@@ -248,7 +240,7 @@ export class AcademicPapersService {
       }
       });
     } catch (err) {
-      rethrowP2002AsConflict(err, 'A paper translation slug is already in use');
+      rethrowP2002AsConflict(err, 'Duplicate translation language in the request');
     }
 
     await this.audit.write({
@@ -290,11 +282,11 @@ export class AcademicPapersService {
     };
   }
 
-  /** Restore a soft-deleted academic paper. Reverses the per-translation slug suffix. */
+  /** Restore a soft-deleted academic paper. */
   async restore(id: string, userId: string) {
     const paper = await this.prisma.academic_papers.findFirst({
       where: { id, deleted_at: { not: null } },
-      include: { academic_paper_translations: true },
+      select: { id: true, category_id: true },
     });
     if (!paper) throw new NotFoundException('Deleted paper not found');
 
@@ -312,37 +304,10 @@ export class AcademicPapersService {
       );
     }
 
-    const restoredSlugs = paper.academic_paper_translations
-      .filter((t) => t.slug)
-      .map((t) => ({ lang: t.lang, original: stripSoftDeleteSuffix(t.slug as string) }));
-
-    try {
-      await this.prisma.$transaction(async (tx) => {
-        for (const { lang, original } of restoredSlugs) {
-          const conflict = await tx.academic_paper_translations.findFirst({
-            where: { lang, slug: original, NOT: { paper_id: id } },
-            select: { paper_id: true },
-          });
-          if (conflict) {
-            throw new ConflictException(`Cannot restore: slug "${original}" (${lang}) is now used by another paper`);
-          }
-        }
-
-        for (const { lang, original } of restoredSlugs) {
-          await tx.academic_paper_translations.update({
-            where: { paper_id_lang: { paper_id: id, lang } },
-            data: { slug: original },
-          });
-        }
-
-        await tx.academic_papers.update({
-          where: { id },
-          data: { deleted_at: null, updated_at: new Date() },
-        });
-      });
-    } catch (err) {
-      rethrowP2002AsConflict(err, 'Cannot restore: a translation slug was claimed by another paper');
-    }
+    await this.prisma.academic_papers.update({
+      where: { id },
+      data: { deleted_at: null, updated_at: new Date() },
+    });
 
     await this.audit.write({
       actorId: userId,
@@ -358,26 +323,11 @@ export class AcademicPapersService {
   async softDelete(id: string, userId: string) {
     const paper = await this.prisma.academic_papers.findFirst({
       where: { id, deleted_at: null },
-      include: { academic_paper_translations: true },
+      select: { id: true },
     });
     if (!paper) throw new NotFoundException('Paper not found');
 
-    // Suffix any per-translation slug so the (lang, slug) partial-unique index
-    // is freed for reuse while this paper sits in trash; restore reverses it.
-    const deletedAt = new Date();
-    const suffix = softDeleteSuffix(deletedAt);
-
-    await this.prisma.$transaction(async (tx) => {
-      for (const t of paper.academic_paper_translations) {
-        if (t.slug) {
-          await tx.academic_paper_translations.update({
-            where: { paper_id_lang: { paper_id: id, lang: t.lang } },
-            data: { slug: `${t.slug}${suffix}` },
-          });
-        }
-      }
-      await tx.academic_papers.update({ where: { id }, data: { deleted_at: deletedAt } });
-    });
+    await this.prisma.academic_papers.update({ where: { id }, data: { deleted_at: new Date() } });
 
     await this.audit.write({
       actorId: userId,

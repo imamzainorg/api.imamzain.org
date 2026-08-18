@@ -134,6 +134,9 @@ class BookDto {
   @ApiProperty({ example: 0 })
   views: number;
 
+  @ApiProperty({ example: true })
+  is_published: boolean;
+
   @ApiProperty({ example: '2024-01-01T00:00:00.000Z' })
   created_at: string;
 
@@ -187,6 +190,9 @@ class BookListItemDto {
 
   @ApiProperty({ example: 0 })
   views: number;
+
+  @ApiProperty({ example: true })
+  is_published: boolean;
 
   @ApiProperty({ example: '2024-01-01T00:00:00.000Z' })
   created_at: string;

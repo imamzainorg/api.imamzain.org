@@ -95,6 +95,12 @@ class AcademicPaperDto {
   @ApiPropertyOptional({ example: 'https://cdn.imamzain.org/papers/paper.pdf' })
   pdf_url?: string;
 
+  @ApiProperty({ example: 0 })
+  views: number;
+
+  @ApiProperty({ example: true })
+  is_published: boolean;
+
   @ApiProperty({ example: '2024-01-01T00:00:00.000Z' })
   created_at: string;
 
@@ -126,6 +132,12 @@ class AcademicPaperListItemDto {
 
   @ApiPropertyOptional({ example: 'https://cdn.imamzain.org/papers/paper.pdf' })
   pdf_url?: string;
+
+  @ApiProperty({ example: 0 })
+  views: number;
+
+  @ApiProperty({ example: true })
+  is_published: boolean;
 
   @ApiProperty({ example: '2024-01-01T00:00:00.000Z' })
   created_at: string;

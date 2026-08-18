@@ -82,6 +82,14 @@ const PERMISSIONS: { name: string; translations: Translations }[] = [
 
   // Books
   {
+    name: 'books:read',
+    translations: {
+      ar: { title: 'عرض الكتب', description: 'عرض الكتب بما فيها المسودات غير المنشورة' },
+      en: { title: 'Read Books', description: 'View books including unpublished drafts' },
+      fa: { title: 'مشاهده کتاب‌ها', description: 'مشاهده کتاب‌ها شامل پیش‌نویس‌های منتشرنشده' },
+    },
+  },
+  {
     name: 'books:create',
     translations: {
       ar: { title: 'إضافة كتاب', description: 'رفع وإضافة كتب جديدة إلى المكتبة' },
@@ -134,6 +142,14 @@ const PERMISSIONS: { name: string; translations: Translations }[] = [
 
   // Academic papers
   {
+    name: 'academic-papers:read',
+    translations: {
+      ar: { title: 'عرض البحوث العلمية', description: 'عرض البحوث بما فيها المسودات غير المنشورة' },
+      en: { title: 'Read Academic Papers', description: 'View papers including unpublished drafts' },
+      fa: { title: 'مشاهده مقالات علمی', description: 'مشاهده مقالات شامل پیش‌نویس‌های منتشرنشده' },
+    },
+  },
+  {
     name: 'academic-papers:create',
     translations: {
       ar: { title: 'رفع بحث علمي', description: 'إضافة بحوث ودراسات علمية جديدة' },
@@ -185,6 +201,14 @@ const PERMISSIONS: { name: string; translations: Translations }[] = [
   },
 
   // Gallery
+  {
+    name: 'gallery:read',
+    translations: {
+      ar: { title: 'عرض صور المعرض', description: 'عرض صور المعرض بما فيها غير المنشورة' },
+      en: { title: 'Read Gallery Images', description: 'View gallery images including unpublished drafts' },
+      fa: { title: 'مشاهده تصاویر گالری', description: 'مشاهده تصاویر گالری شامل موارد منتشرنشده' },
+    },
+  },
   {
     name: 'gallery:create',
     translations: {
@@ -673,18 +697,21 @@ const ROLES: { name: string; permissions: string[]; translations: RoleTranslatio
       'post-categories:create',
       'post-categories:update',
       'post-categories:delete',
+      'books:read',
       'books:create',
       'books:update',
       'books:delete',
       'book-categories:create',
       'book-categories:update',
       'book-categories:delete',
+      'academic-papers:read',
       'academic-papers:create',
       'academic-papers:update',
       'academic-papers:delete',
       'academic-paper-categories:create',
       'academic-paper-categories:update',
       'academic-paper-categories:delete',
+      'gallery:read',
       'gallery:create',
       'gallery:update',
       'gallery:delete',

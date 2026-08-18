@@ -37,7 +37,7 @@ export class UsersService {
           deleted_at: true,
           user_roles: { include: { roles: true } },
         },
-        orderBy: { created_at: 'desc' },
+        orderBy: [{ created_at: 'desc' }, { id: 'asc' }],
         skip,
         take: limit,
       }),

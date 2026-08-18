@@ -18,7 +18,7 @@ import { Lang } from '../common/decorators/language.decorator';
 import { ConflictErrorDto, NotFoundErrorDto, ValidationErrorDto } from '../common/dto/api-response.dto';
 import { PaginationDto } from '../common/dto/pagination.dto';
 import { PublicCache } from '../common/decorators/public-cache.decorator';
-import { BookQueryDto, CreateBookDto, UpdateBookDto } from './dto/book.dto';
+import { BookQueryDto, CreateBookDto, TogglePublishDto, UpdateBookDto } from './dto/book.dto';
 import {
   BookCreatedResponseDto,
   BookDetailResponseDto,
@@ -44,6 +44,32 @@ export class BooksController {
   @ApiBadRequestResponse({ type: ValidationErrorDto, description: 'Invalid query parameters (page < 1, limit out of 1–100, or non-integer values)' })
   findAll(@Query() query: BookQueryDto, @Lang() lang: string | null) {
     return this.booksService.findAll(query, lang);
+  }
+
+  @Get('admin')
+  @Auth('books:read')
+  @ApiOperation({
+    summary: 'List all books including unpublished (admin)',
+    description: 'Returns drafts and published books. Requires permission: `books:read`.',
+  })
+  @ApiQuery({ name: 'page', required: false, type: Number, example: 1 })
+  @ApiQuery({ name: 'limit', required: false, type: Number, example: 20 })
+  @ApiQuery({ name: 'category_id', required: false, type: String, description: 'Filter by book category UUID' })
+  @ApiQuery({ name: 'search', required: false, type: String, example: 'الصحيفة', description: 'Search across book titles' })
+  @ApiOkResponse({ type: BookListResponseDto, description: 'Paginated list of all books' })
+  @ApiBadRequestResponse({ type: ValidationErrorDto, description: 'Invalid query parameters (page < 1, limit out of 1–100, or non-integer values)' })
+  findAdmin(@Query() query: BookQueryDto, @Lang() lang: string | null) {
+    return this.booksService.findAll(query, lang, true);
+  }
+
+  @Get('admin/:id')
+  @Auth('books:read')
+  @ApiOperation({ summary: 'Get a single book by ID including unpublished (admin)', description: 'Requires permission: `books:read`. Returns drafts too.' })
+  @ApiParam({ name: 'id', format: 'uuid' })
+  @ApiOkResponse({ type: BookDetailResponseDto, description: 'Book detail with all translations (regardless of publish state)' })
+  @ApiNotFoundResponse({ type: NotFoundErrorDto, description: 'No book with that ID exists, or it has been deleted' })
+  findAdminOne(@Param('id') id: string, @Lang() lang: string | null) {
+    return this.booksService.findOne(id, lang, true);
   }
 
   @Get('trash')
@@ -132,6 +158,16 @@ export class BooksController {
   @ApiConflictResponse({ type: ConflictErrorDto, description: 'A book with that ISBN already exists' })
   update(@Param('id') id: string, @Body() dto: UpdateBookDto, @CurrentUser() user: CurrentUserPayload, @Lang() lang: string | null) {
     return this.booksService.update(id, dto, user.id, lang);
+  }
+
+  @Patch(':id/publish')
+  @Auth('books:update')
+  @ApiOperation({ summary: 'Publish or unpublish a book', description: 'Requires permission: `books:update`.' })
+  @ApiParam({ name: 'id', format: 'uuid' })
+  @ApiOkResponse({ type: BookDetailResponseDto })
+  @ApiNotFoundResponse({ type: NotFoundErrorDto, description: 'No book with that ID exists, or it has been deleted' })
+  togglePublish(@Param('id') id: string, @Body() dto: TogglePublishDto, @CurrentUser() user: CurrentUserPayload, @Lang() lang: string | null) {
+    return this.booksService.togglePublish(id, dto.is_published, user.id, lang);
   }
 
   @Delete(':id')

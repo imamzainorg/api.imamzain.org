@@ -22,10 +22,14 @@ export class AuditLogQueryDto extends PaginationDto {
 
   @ApiPropertyOptional({
     description:
-      'Filter by resource UUID. Combine with resource_type to scope to one row\'s history (e.g. all events for one post).',
+      'Filter by resource id. Usually a UUID, but a few resource types key on something ' +
+      'else (resource_type=language uses the 2-letter code, resource_type=site_setting ' +
+      'uses the setting key) — so this is a plain string, not UUID-validated. Combine ' +
+      'with resource_type to scope to one row\'s history (e.g. all events for one post).',
   })
   @IsOptional()
-  @IsUUID()
+  @IsString()
+  @MaxLength(255)
   resource_id?: string;
 
   @ApiPropertyOptional({ description: 'Start of date range (ISO 8601)' })

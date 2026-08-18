@@ -76,7 +76,7 @@ describe('LanguagesService', () => {
   });
 
   describe('create', () => {
-    it('creates language and logs audit without a resource_id (key is not a UUID)', async () => {
+    it('creates language and logs audit with the language code as resource_id', async () => {
       prisma.languages.create.mockResolvedValue(baseLang);
 
       const result = await service.create(
@@ -88,11 +88,9 @@ describe('LanguagesService', () => {
         expect.objectContaining({
           action: 'LANGUAGE_CREATED',
           resourceType: 'language',
+          resourceId: 'ar',
         }),
       );
-      // No resourceId supplied — AuditService persists null in that case.
-      const call = audit.write.mock.calls[0][0];
-      expect(call.resourceId).toBeUndefined();
       expect(result.data.code).toBe('ar');
     });
 
@@ -108,7 +106,7 @@ describe('LanguagesService', () => {
   });
 
   describe('update', () => {
-    it('updates language and logs audit without a resource_id', async () => {
+    it('updates language and logs audit with the language code as resource_id', async () => {
       prisma.languages.findFirst.mockResolvedValue(baseLang);
       prisma.languages.update.mockResolvedValue({ ...baseLang, is_active: false });
 
@@ -118,10 +116,9 @@ describe('LanguagesService', () => {
         expect.objectContaining({
           action: 'LANGUAGE_UPDATED',
           resourceType: 'language',
+          resourceId: 'ar',
         }),
       );
-      const call = audit.write.mock.calls[0][0];
-      expect(call.resourceId).toBeUndefined();
       expect(result.message).toBe('Language updated');
     });
 

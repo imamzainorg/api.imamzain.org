@@ -2,6 +2,7 @@ import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { newsletter_campaign_status } from '@prisma/client';
 import {
   IsEnum,
+  IsIn,
   IsISO8601,
   IsOptional,
   IsString,
@@ -13,6 +14,12 @@ import { PaginationDto } from '../../common/dto/pagination.dto';
 import { MaxBytes } from '../../common/validators/max-bytes.validator';
 
 const SUBJECT_MAX = 200;
+
+// Single source of truth for both the Swagger `enum:` hint and the runtime
+// `@IsIn()` check below — previously only the Swagger metadata listed these
+// values while validation accepted any string up to 50 chars, so the
+// documented constraint was never actually enforced.
+const SOURCE_RESOURCE_TYPES = ['post', 'book', 'academic_paper', 'gallery_image', 'contest'] as const;
 
 export class CreateCampaignDto {
   @ApiProperty({
@@ -45,13 +52,12 @@ export class CreateCampaignDto {
   scheduled_at?: string;
 
   @ApiPropertyOptional({
-    enum: ['post', 'book', 'academic_paper', 'gallery_image', 'contest'],
+    enum: SOURCE_RESOURCE_TYPES,
     description:
       'Optional link back to the content that triggered this campaign (matches audit_logs.resource_type values). Used by the CMS to render "Sent for: <post title>" on the campaign detail page.',
   })
   @IsOptional()
-  @IsString()
-  @MaxLength(50)
+  @IsIn(SOURCE_RESOURCE_TYPES)
   source_resource_type?: string;
 
   @ApiPropertyOptional({ format: 'uuid' })
@@ -80,10 +86,9 @@ export class UpdateCampaignDto {
   @IsISO8601()
   scheduled_at?: string | null;
 
-  @ApiPropertyOptional()
+  @ApiPropertyOptional({ enum: SOURCE_RESOURCE_TYPES })
   @IsOptional()
-  @IsString()
-  @MaxLength(50)
+  @IsIn(SOURCE_RESOURCE_TYPES)
   source_resource_type?: string | null;
 
   @ApiPropertyOptional({ format: 'uuid' })
