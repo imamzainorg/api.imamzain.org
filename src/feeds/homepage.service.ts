@@ -98,7 +98,7 @@ export class HomepageService {
 
   private async publications(lang: string | null) {
     const books = await this.prisma.books.findMany({
-      where: { deleted_at: null },
+      where: { deleted_at: null, is_published: true },
       include: {
         // Drop the heavy book_translations.description — the mapper only needs
         // the title + slug (plus lang/is_default for resolveTranslation).
@@ -148,7 +148,7 @@ export class HomepageService {
 
   private async gallerySlider() {
     const images = await this.prisma.gallery_images.findMany({
-      where: { deleted_at: null },
+      where: { deleted_at: null, is_published: true },
       include: { media: { select: { url: true } } },
       orderBy: [{ created_at: 'desc' }, { media_id: 'asc' }],
       take: GALLERY_SLIDER_COUNT,

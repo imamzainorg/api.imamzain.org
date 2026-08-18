@@ -10,7 +10,6 @@ import {
   IsUrl,
   IsUUID,
   Length,
-  Matches,
   MaxLength,
   Min,
   MinLength,
@@ -64,34 +63,6 @@ export class AcademicPaperTranslationDto {
   page_count?: number;
 
   @ApiPropertyOptional({
-    example: "fiqh-al-imam-sajjad",
-    description:
-      "Optional editor slug. Lowercase latin letters, numbers and hyphens; unique per language. Sets the public /{lang}/academic-papers/{slug} URL. Omit to keep the paper reachable only by UUID.",
-  })
-  @IsOptional()
-  @IsString()
-  @Matches(/^[a-z0-9]+(?:-[a-z0-9]+)*$/)
-  @MaxLength(200)
-  slug?: string;
-
-  @ApiPropertyOptional({ description: "SEO <title> override for this translation." })
-  @IsOptional()
-  @IsString()
-  @MaxLength(300)
-  meta_title?: string;
-
-  @ApiPropertyOptional({ description: "SEO meta description for this translation." })
-  @IsOptional()
-  @IsString()
-  @MaxLength(500)
-  meta_description?: string;
-
-  @ApiPropertyOptional({ format: "uuid", description: "Media ID used as the OpenGraph image for this translation." })
-  @IsOptional()
-  @IsUUID()
-  og_image_id?: string;
-
-  @ApiPropertyOptional({
     example: true,
     description: "Exactly one translation must be the default",
   })
@@ -120,6 +91,14 @@ export class CreateAcademicPaperDto {
   @IsOptional()
   @IsUrl()
   pdf_url?: string;
+
+  @ApiPropertyOptional({
+    example: true,
+    description: "Whether the paper is publicly visible. Defaults to true — papers are typically uploaded already-final.",
+  })
+  @IsOptional()
+  @IsBoolean()
+  is_published?: boolean;
 
   @ApiProperty({
     type: [AcademicPaperTranslationDto],
@@ -150,12 +129,23 @@ export class UpdateAcademicPaperDto {
   @IsUrl()
   pdf_url?: string;
 
+  @ApiPropertyOptional({ example: true, description: "Whether the paper is publicly visible." })
+  @IsOptional()
+  @IsBoolean()
+  is_published?: boolean;
+
   @ApiPropertyOptional({ type: [AcademicPaperTranslationDto] })
   @IsOptional()
   @IsArray()
   @ValidateNested({ each: true })
   @Type(() => AcademicPaperTranslationDto)
   translations?: AcademicPaperTranslationDto[];
+}
+
+export class TogglePublishDto {
+  @ApiProperty({ example: true })
+  @IsBoolean()
+  is_published!: boolean;
 }
 
 export class AcademicPaperQueryDto extends PaginationDto {

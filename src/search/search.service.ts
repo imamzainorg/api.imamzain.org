@@ -142,6 +142,7 @@ export class SearchService {
         FROM book_translations bt
         JOIN books b ON b.id = bt.book_id
         WHERE b.deleted_at IS NULL
+          AND b.is_published = true
           AND (bt.title % ${q} OR bt.author % ${q} OR bt.description % ${q})
         ORDER BY bt.book_id, score DESC
       ) sub
@@ -184,6 +185,7 @@ export class SearchService {
         FROM academic_paper_translations apt
         JOIN academic_papers ap ON ap.id = apt.paper_id
         WHERE ap.deleted_at IS NULL
+          AND ap.is_published = true
           AND (apt.title % ${q} OR apt.abstract % ${q})
         ORDER BY apt.paper_id, score DESC
       ) sub
@@ -226,6 +228,7 @@ export class SearchService {
         FROM gallery_image_translations git
         JOIN gallery_images gi ON gi.media_id = git.media_id
         WHERE gi.deleted_at IS NULL
+          AND gi.is_published = true
           AND (git.title % ${q} OR git.description % ${q})
         ORDER BY git.media_id, score DESC
       ) sub

@@ -177,21 +177,28 @@ list response. Internal fields (`created_at`, `uploaded_by`,
 
 ### SEO fields on detail payloads
 
-Posts, books, academic papers, and static pages carry per-translation
-`meta_title`, `meta_description`, and `og_image_id`. The **detail**
-endpoints additionally resolve `og_image_id` into an `og_image` object
-(`{ id, url, filename, alt_text, mime_type, width, height }`) so the
-front-end gets a usable image URL, not a bare UUID. List payloads keep
-only the scalar `og_image_id`.
+Posts, books, and static pages carry per-translation `meta_title`,
+`meta_description`, and `og_image_id`. The **detail** endpoints additionally
+resolve `og_image_id` into an `og_image` object (`{ id, url, filename,
+alt_text, mime_type, width, height }`) so the front-end gets a usable image
+URL, not a bare UUID. List payloads keep only the scalar `og_image_id`.
+Academic papers do not carry SEO fields — see the note under `by-slug`
+below.
 
 ### Human-readable URLs (`by-slug`)
 
-Posts and static pages have always had per-language slugs. Books and
-academic papers now accept an **optional** editor slug per translation
-too, exposed at `GET /books/by-slug/:slug` and
-`GET /academic-papers/by-slug/:slug`. Slugs are nullable — a book/paper
-without one stays reachable only by UUID, and `by-slug` returns 404 for
-it. Set a slug via the translation object on create / update.
+Posts and static pages have always had per-language slugs. Books now
+accept an **optional** editor slug per translation too, exposed at
+`GET /books/by-slug/:slug`. Slugs are nullable — a book without one stays
+reachable only by UUID, and `by-slug` returns 404 for it. Set a slug via
+the translation object on create / update.
+
+Academic papers do **not** have a slug or `by-slug` route — the public
+site has no dedicated detail page for papers (they open in a modal on
+`/research/scientific-platform`), so a canonical per-paper URL would have
+nothing to be linked from. An earlier round added slug + SEO fields to
+academic papers mirroring books; they were removed after confirming no
+production row ever set them and no route ever served them.
 
 **Audios** accept an **optional** canonical `slug` (a single,
 language-agnostic column — the English slug is stable for SEO), exposed at

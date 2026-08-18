@@ -5,7 +5,7 @@ import { AuditService } from '../common/audit/audit.service';
 import { AUDIT_ACTIONS } from '../common/audit/audit.actions';
 import { resolveTranslation } from '../common/utils/translation.util';
 import { buildPaginationMeta, resolvePagination } from '../common/utils/pagination.util';
-import { MEDIA_VARIANT_SELECT, PUBLIC_MEDIA_SELECT } from '../common/crud/media-selects';
+import { MEDIA_VARIANT_SELECT, OG_IMAGE_SELECT, PUBLIC_MEDIA_SELECT } from '../common/crud/media-selects';
 import { CreateGalleryImageDto, GalleryQueryDto, UpdateGalleryImageDto } from './dto/gallery.dto';
 
 // List queries drop the description from translations.
@@ -16,11 +16,20 @@ const GALLERY_LIST_SELECT = {
   author: true,
   tags: true,
   locations: true,
+  views: true,
+  is_published: true,
   created_at: true,
   updated_at: true,
   deleted_at: true,
   gallery_image_translations: {
-    select: { media_id: true, lang: true, title: true },
+    select: {
+      media_id: true,
+      lang: true,
+      title: true,
+      meta_title: true,
+      meta_description: true,
+      og_image_id: true,
+    },
   },
   media: { select: PUBLIC_MEDIA_SELECT },
   gallery_categories: {
@@ -41,10 +50,11 @@ export class GalleryService {
     private readonly audit: AuditService,
   ) {}
 
-  async findAll(query: GalleryQueryDto, lang: string | null) {
+  async findAll(query: GalleryQueryDto, lang: string | null, isAdmin = false) {
     const { page, limit, skip } = resolvePagination(query);
 
     const where: Prisma.gallery_imagesWhereInput = { deleted_at: null };
+    if (!isAdmin) where.is_published = true;
     if (query.category_id) where.category_id = query.category_id;
     if (query.tags && query.tags.length > 0) where.tags = { hasEvery: query.tags };
     if (query.locations && query.locations.length > 0) where.locations = { hasEvery: query.locations };
@@ -53,7 +63,7 @@ export class GalleryService {
       this.prisma.gallery_images.findMany({
         where,
         select: GALLERY_LIST_SELECT,
-        orderBy: { created_at: 'desc' },
+        orderBy: [{ created_at: 'desc' }, { media_id: 'asc' }],
         skip,
         take: limit,
       }),
@@ -67,11 +77,14 @@ export class GalleryService {
     return { message: 'Gallery fetched', data: { items: mapped, pagination: buildPaginationMeta(page, limit, total) } };
   }
 
-  async findOne(id: string, lang: string | null) {
+  async findOne(id: string, lang: string | null, isAdmin = false) {
+    const where: Prisma.gallery_imagesWhereInput = { media_id: id, deleted_at: null };
+    if (!isAdmin) where.is_published = true;
+
     const image = await this.prisma.gallery_images.findFirst({
-      where: { media_id: id, deleted_at: null },
+      where,
       include: {
-        gallery_image_translations: true,
+        gallery_image_translations: { include: { og_image: { select: OG_IMAGE_SELECT } } },
         media: { include: { media_variants: { select: MEDIA_VARIANT_SELECT, orderBy: { width: 'asc' } } } },
         gallery_categories: { include: { gallery_category_translations: true } },
       },
@@ -81,6 +94,44 @@ export class GalleryService {
       message: 'Gallery image fetched',
       data: { ...image, translation: resolveTranslation(image.gallery_image_translations, lang) },
     };
+  }
+
+  async trackView(id: string) {
+    const result = await this.prisma.gallery_images.updateMany({
+      where: { media_id: id, deleted_at: null, is_published: true },
+      data: { views: { increment: 1 } },
+    });
+    if (result.count === 0) throw new NotFoundException('Gallery image not found');
+    return { message: 'View tracked', data: null };
+  }
+
+  async togglePublish(id: string, isPublished: boolean, actorId: string, lang: string | null) {
+    const existing = await this.prisma.gallery_images.findFirst({
+      where: { media_id: id, deleted_at: null },
+      select: { media_id: true, is_published: true },
+    });
+    if (!existing) throw new NotFoundException('Gallery image not found');
+
+    if (existing.is_published === isPublished) {
+      const { data } = await this.findOne(id, lang, true);
+      return { message: 'Gallery image already in requested state', data };
+    }
+
+    await this.prisma.gallery_images.update({
+      where: { media_id: id },
+      data: { is_published: isPublished, updated_at: new Date() },
+    });
+
+    await this.audit.write({
+      actorId,
+      action: isPublished ? AUDIT_ACTIONS.GALLERY_IMAGE_PUBLISHED : AUDIT_ACTIONS.GALLERY_IMAGE_UNPUBLISHED,
+      resourceType: 'gallery_image',
+      resourceId: id,
+      changes: { method: 'PATCH', path: `/api/v1/gallery/${id}/publish`, is_published: isPublished },
+    });
+
+    const { data } = await this.findOne(id, lang, true);
+    return { message: isPublished ? 'Gallery image published' : 'Gallery image unpublished', data };
   }
 
   async create(dto: CreateGalleryImageDto, userId: string, lang: string | null) {
@@ -97,6 +148,21 @@ export class GalleryService {
       if (!category) throw new NotFoundException('Category not found');
     }
 
+    // Validate every translation-level og_image_id up front so a bad one
+    // surfaces as 404 with a useful message instead of a Prisma FK error.
+    const ogImageIds = dto.translations
+      .map((t) => t.og_image_id)
+      .filter((v): v is string => typeof v === 'string');
+    if (ogImageIds.length > 0) {
+      const found = await this.prisma.media.findMany({
+        where: { id: { in: ogImageIds } },
+        select: { id: true },
+      });
+      if (found.length !== new Set(ogImageIds).size) {
+        throw new NotFoundException('One or more og_image_id values do not match any media record');
+      }
+    }
+
     const image = await this.prisma.$transaction(async (tx) => {
       const created = await tx.gallery_images.create({
         data: {
@@ -106,6 +172,9 @@ export class GalleryService {
           author: dto.author ?? null,
           tags: dto.tags ?? [],
           locations: dto.locations ?? [],
+          // Gallery photos are typically uploaded already-final by staff —
+          // default to published, matching books/papers/audios.
+          is_published: dto.is_published ?? true,
           added_by: userId,
         },
       });
@@ -115,6 +184,9 @@ export class GalleryService {
           lang: t.lang,
           title: t.title,
           description: t.description ?? null,
+          meta_title: t.meta_title ?? null,
+          meta_description: t.meta_description ?? null,
+          og_image_id: t.og_image_id ?? null,
         })),
       });
       return created;
@@ -146,6 +218,21 @@ export class GalleryService {
       if (!category) throw new NotFoundException('Category not found');
     }
 
+    if (dto.translations) {
+      const ogImageIds = dto.translations
+        .map((t) => t.og_image_id)
+        .filter((v): v is string => typeof v === 'string');
+      if (ogImageIds.length > 0) {
+        const found = await this.prisma.media.findMany({
+          where: { id: { in: ogImageIds } },
+          select: { id: true },
+        });
+        if (found.length !== new Set(ogImageIds).size) {
+          throw new NotFoundException('One or more og_image_id values do not match any media record');
+        }
+      }
+    }
+
     await this.prisma.$transaction(async (tx) => {
       // Build the update payload explicitly so DTO additions can't slip into
       // the row data (e.g. an accidental media_id field that would attempt
@@ -162,15 +249,23 @@ export class GalleryService {
       if (dto.author !== undefined) updateData.author = dto.author;
       if (dto.tags !== undefined) updateData.tags = dto.tags;
       if (dto.locations !== undefined) updateData.locations = dto.locations;
+      if (dto.is_published !== undefined) updateData.is_published = dto.is_published;
 
       await tx.gallery_images.update({ where: { media_id: id }, data: updateData });
 
       if (dto.translations) {
         for (const t of dto.translations) {
+          const trData = {
+            title: t.title,
+            description: t.description ?? null,
+            meta_title: t.meta_title ?? null,
+            meta_description: t.meta_description ?? null,
+            og_image_id: t.og_image_id ?? null,
+          };
           await tx.gallery_image_translations.upsert({
             where: { media_id_lang: { media_id: id, lang: t.lang } },
-            create: { media_id: id, lang: t.lang, title: t.title, description: t.description ?? null },
-            update: { title: t.title, description: t.description ?? null },
+            create: { media_id: id, lang: t.lang, ...trData },
+            update: trData,
           });
         }
       }

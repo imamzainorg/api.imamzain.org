@@ -94,7 +94,7 @@ export class FeedsService {
         orderBy: [{ display_order: 'asc' }, { id: 'asc' }],
       }),
       this.prisma.books.findMany({
-        where: { deleted_at: null, book_translations: { some: { slug: { not: null } } } },
+        where: { deleted_at: null, is_published: true, book_translations: { some: { slug: { not: null } } } },
         select: {
           updated_at: true,
           created_at: true,
@@ -165,7 +165,7 @@ export class FeedsService {
         // with lang=null below) — don't ship the other languages' bodies.
         post_translations: { where: { is_default: true } },
       },
-      orderBy: [{ published_at: 'desc' }, { created_at: 'desc' }],
+      orderBy: [{ published_at: 'desc' }, { created_at: 'desc' }, { id: 'asc' }],
       take: limit,
     });
 

@@ -29,18 +29,21 @@ the API emits.
 | `post-categories:create` | Create post categories |
 | `post-categories:update` | Edit post categories |
 | `post-categories:delete` | Soft-delete + restore + list trash for post categories |
+| `books:read` | List / read drafts and unpublished books (admin) |
 | `books:create` | Add new books |
 | `books:update` | Edit book records |
 | `books:delete` | Soft-delete + restore + list trash for books |
 | `book-categories:create` | Create book categories |
 | `book-categories:update` | Edit book categories |
 | `book-categories:delete` | Soft-delete + restore + list trash for book categories |
+| `academic-papers:read` | List / read drafts and unpublished academic papers (admin) |
 | `academic-papers:create` | Add academic papers |
 | `academic-papers:update` | Edit academic papers |
 | `academic-papers:delete` | Soft-delete + restore + list trash for academic papers |
 | `academic-paper-categories:create` | Create academic paper categories |
 | `academic-paper-categories:update` | Edit academic paper categories |
 | `academic-paper-categories:delete` | Soft-delete + restore + list trash for academic paper categories |
+| `gallery:read` | List / read drafts and unpublished gallery images (admin) |
 | `gallery:create` | Add gallery images |
 | `gallery:update` | Edit gallery image metadata |
 | `gallery:delete` | Soft-delete + restore + list trash for gallery images |
@@ -261,8 +264,11 @@ change.
 | `POST_DELETED` | `DELETE /posts/:id` or `POST /posts/bulk/delete` (`changes.bulk === true` for bulk) |
 | `POST_RESTORED` | `POST /posts/:id/restore` |
 | `BOOK_CREATED` / `BOOK_UPDATED` / `BOOK_DELETED` / `BOOK_RESTORED` | Books CRUD |
+| `BOOK_PUBLISHED` / `BOOK_UNPUBLISHED` | `PATCH /books/:id/publish` |
 | `ACADEMIC_PAPER_CREATED` / `ACADEMIC_PAPER_UPDATED` / `ACADEMIC_PAPER_DELETED` / `ACADEMIC_PAPER_RESTORED` | Academic papers CRUD |
+| `ACADEMIC_PAPER_PUBLISHED` / `ACADEMIC_PAPER_UNPUBLISHED` | `PATCH /academic-papers/:id/publish` |
 | `GALLERY_IMAGE_CREATED` / `GALLERY_IMAGE_UPDATED` / `GALLERY_IMAGE_DELETED` / `GALLERY_IMAGE_RESTORED` | Gallery images CRUD |
+| `GALLERY_IMAGE_PUBLISHED` / `GALLERY_IMAGE_UNPUBLISHED` | `PATCH /gallery/:id/publish` |
 | `STATIC_PAGE_CREATED` / `STATIC_PAGE_UPDATED` / `STATIC_PAGE_DELETED` / `STATIC_PAGE_RESTORED` | Static pages CRUD |
 | `STATIC_PAGE_PUBLISHED` / `STATIC_PAGE_UNPUBLISHED` | `PATCH /static-pages/:id/publish` |
 | `AUDIO_CREATED` / `AUDIO_UPDATED` / `AUDIO_DELETED` / `AUDIO_RESTORED` | Audios CRUD |

@@ -151,6 +151,14 @@ export class CreateBookDto {
   @Min(1)
   parts?: number;
 
+  @ApiPropertyOptional({
+    example: true,
+    description: "Whether the book is publicly visible. Defaults to true — books are typically uploaded already-final.",
+  })
+  @IsOptional()
+  @IsBoolean()
+  is_published?: boolean;
+
   @ApiProperty({
     type: [BookTranslationDto],
     description: "Must include exactly one translation with is_default: true",
@@ -212,12 +220,23 @@ export class UpdateBookDto {
   @Min(1)
   parts?: number;
 
+  @ApiPropertyOptional({ example: true, description: "Whether the book is publicly visible." })
+  @IsOptional()
+  @IsBoolean()
+  is_published?: boolean;
+
   @ApiPropertyOptional({ type: [BookTranslationDto] })
   @IsOptional()
   @IsArray()
   @ValidateNested({ each: true })
   @Type(() => BookTranslationDto)
   translations?: BookTranslationDto[];
+}
+
+export class TogglePublishDto {
+  @ApiProperty({ example: true })
+  @IsBoolean()
+  is_published!: boolean;
 }
 
 export class BookQueryDto extends PaginationDto {

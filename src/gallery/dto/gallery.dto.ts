@@ -3,11 +3,13 @@ import { Transform, Type } from "class-transformer";
 import {
   ArrayMinSize,
   IsArray,
+  IsBoolean,
   IsDateString,
   IsOptional,
   IsString,
   IsUUID,
   Length,
+  MaxLength,
   MinLength,
   ValidateNested,
 } from "class-validator";
@@ -30,6 +32,23 @@ export class GalleryImageTranslationDto {
   @IsOptional()
   @IsString()
   description?: string;
+
+  @ApiPropertyOptional({ description: "SEO <title> override for this translation." })
+  @IsOptional()
+  @IsString()
+  @MaxLength(300)
+  meta_title?: string;
+
+  @ApiPropertyOptional({ description: "SEO meta description for this translation." })
+  @IsOptional()
+  @IsString()
+  @MaxLength(500)
+  meta_description?: string;
+
+  @ApiPropertyOptional({ format: "uuid", description: "Media ID used as the OpenGraph image for this translation." })
+  @IsOptional()
+  @IsUUID()
+  og_image_id?: string;
 }
 
 export class CreateGalleryImageDto {
@@ -76,6 +95,14 @@ export class CreateGalleryImageDto {
   @IsString({ each: true })
   locations?: string[];
 
+  @ApiPropertyOptional({
+    example: true,
+    description: "Whether the image is publicly visible. Defaults to true — photos are typically uploaded already-final.",
+  })
+  @IsOptional()
+  @IsBoolean()
+  is_published?: boolean;
+
   @ApiProperty({ type: [GalleryImageTranslationDto] })
   @IsArray()
   @ValidateNested({ each: true })
@@ -113,12 +140,23 @@ export class UpdateGalleryImageDto {
   @IsString({ each: true })
   locations?: string[];
 
+  @ApiPropertyOptional({ example: true, description: "Whether the image is publicly visible." })
+  @IsOptional()
+  @IsBoolean()
+  is_published?: boolean;
+
   @ApiPropertyOptional({ type: [GalleryImageTranslationDto] })
   @IsOptional()
   @IsArray()
   @ValidateNested({ each: true })
   @Type(() => GalleryImageTranslationDto)
   translations?: GalleryImageTranslationDto[];
+}
+
+export class TogglePublishDto {
+  @ApiProperty({ example: true })
+  @IsBoolean()
+  is_published!: boolean;
 }
 
 export class GalleryQueryDto extends PaginationDto {

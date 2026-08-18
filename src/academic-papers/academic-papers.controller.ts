@@ -1,4 +1,5 @@
 import { Body, Controller, Delete, Get, HttpCode, Param, Patch, Post, Query } from '@nestjs/common';
+import { Throttle } from '@nestjs/throttler';
 import {
   ApiBadRequestResponse,
   ApiCreatedResponse,
@@ -17,7 +18,7 @@ import { NotFoundErrorDto, ValidationErrorDto } from '../common/dto/api-response
 import { PaginationDto } from '../common/dto/pagination.dto';
 import { PublicCache } from '../common/decorators/public-cache.decorator';
 import { AcademicPapersService } from './academic-papers.service';
-import { AcademicPaperQueryDto, CreateAcademicPaperDto, UpdateAcademicPaperDto } from './dto/academic-paper.dto';
+import { AcademicPaperQueryDto, CreateAcademicPaperDto, TogglePublishDto, UpdateAcademicPaperDto } from './dto/academic-paper.dto';
 import {
   AcademicPaperCreatedResponseDto,
   AcademicPaperDetailResponseDto,
@@ -44,6 +45,32 @@ export class AcademicPapersController {
     return this.service.findAll(query, lang);
   }
 
+  @Get('admin')
+  @Auth('academic-papers:read')
+  @ApiOperation({
+    summary: 'List all academic papers including unpublished (admin)',
+    description: 'Returns drafts and published papers. Requires permission: `academic-papers:read`.',
+  })
+  @ApiQuery({ name: 'page', required: false, type: Number, example: 1 })
+  @ApiQuery({ name: 'limit', required: false, type: Number, example: 20 })
+  @ApiQuery({ name: 'category_id', required: false, type: String, description: 'Filter by academic paper category UUID' })
+  @ApiQuery({ name: 'search', required: false, type: String, example: 'فقه', description: 'Search across paper titles and abstracts' })
+  @ApiOkResponse({ type: AcademicPaperListResponseDto, description: 'Paginated list of all academic papers' })
+  @ApiBadRequestResponse({ type: ValidationErrorDto, description: 'Invalid query parameters (page < 1, limit out of 1–100, or non-integer values)' })
+  findAdmin(@Query() query: AcademicPaperQueryDto, @Lang() lang: string | null) {
+    return this.service.findAll(query, lang, true);
+  }
+
+  @Get('admin/:id')
+  @Auth('academic-papers:read')
+  @ApiOperation({ summary: 'Get a single academic paper by ID including unpublished (admin)', description: 'Requires permission: `academic-papers:read`. Returns drafts too.' })
+  @ApiParam({ name: 'id', format: 'uuid' })
+  @ApiOkResponse({ type: AcademicPaperDetailResponseDto, description: 'Academic paper detail with all translations (regardless of publish state)' })
+  @ApiNotFoundResponse({ type: NotFoundErrorDto, description: 'No academic paper with that ID exists, or it has been deleted' })
+  findAdminOne(@Param('id') id: string, @Lang() lang: string | null) {
+    return this.service.findOne(id, lang, true);
+  }
+
   @Get('trash')
   @Auth('academic-papers:delete')
   @ApiOperation({
@@ -64,28 +91,13 @@ export class AcademicPapersController {
   @Auth('academic-papers:delete')
   @ApiOperation({
     summary: 'Restore a soft-deleted academic paper',
-    description:
-      'Sets `deleted_at` back to null and reverses any per-translation slug suffix. Fails with 409 if the original slug was claimed by another paper meanwhile. Requires permission: `academic-papers:delete`.',
+    description: 'Sets `deleted_at` back to null. Requires permission: `academic-papers:delete`.',
   })
   @ApiParam({ name: 'id', format: 'uuid' })
   @ApiOkResponse({ type: AcademicPaperMessageResponseDto, description: 'Academic paper restored' })
   @ApiNotFoundResponse({ type: NotFoundErrorDto, description: 'No soft-deleted paper with that ID exists' })
   restore(@Param('id') id: string, @CurrentUser() user: CurrentUserPayload) {
     return this.service.restore(id, user.id);
-  }
-
-  @Get('by-slug/:slug')
-  @PublicCache(60, 300)
-  @ApiOperation({
-    summary: 'Get a single academic paper by slug (public)',
-    description:
-      'Resolves a paper by an editor-assigned translation slug, regardless of the visitor\'s Accept-Language. 404 if no live paper owns that slug. CDN-cacheable.',
-  })
-  @ApiParam({ name: 'slug', example: 'fiqh-al-imam-sajjad' })
-  @ApiOkResponse({ type: AcademicPaperDetailResponseDto, description: 'Academic paper detail with all translations' })
-  @ApiNotFoundResponse({ type: NotFoundErrorDto, description: 'No live paper owns that slug' })
-  findBySlug(@Param('slug') slug: string, @Lang() lang: string | null) {
-    return this.service.findBySlug(slug, lang);
   }
 
   @Get(':id')
@@ -96,6 +108,16 @@ export class AcademicPapersController {
   @ApiNotFoundResponse({ type: NotFoundErrorDto, description: 'No academic paper with that ID exists, or it has been deleted' })
   findOne(@Param('id') id: string, @Lang() lang: string | null) {
     return this.service.findOne(id, lang);
+  }
+
+  @Post(':id/view')
+  @Throttle({ default: { ttl: 60_000, limit: 30 } })
+  @ApiOperation({ summary: 'Record a view for an academic paper (public)', description: 'Increments the view counter. Rate-limited to 30 calls per minute per IP.' })
+  @ApiParam({ name: 'id', format: 'uuid' })
+  @ApiOkResponse({ type: AcademicPaperMessageResponseDto, description: 'View counter incremented by 1' })
+  @ApiNotFoundResponse({ type: NotFoundErrorDto, description: 'No paper with that ID exists, or it has been deleted' })
+  trackView(@Param('id') id: string) {
+    return this.service.trackView(id);
   }
 
   @Post()
@@ -117,6 +139,16 @@ export class AcademicPapersController {
   @ApiNotFoundResponse({ type: NotFoundErrorDto, description: 'No academic paper with that ID exists, or the new category_id does not exist or has been soft-deleted' })
   update(@Param('id') id: string, @Body() dto: UpdateAcademicPaperDto, @CurrentUser() user: CurrentUserPayload, @Lang() lang: string | null) {
     return this.service.update(id, dto, user.id, lang);
+  }
+
+  @Patch(':id/publish')
+  @Auth('academic-papers:update')
+  @ApiOperation({ summary: 'Publish or unpublish an academic paper', description: 'Requires permission: `academic-papers:update`.' })
+  @ApiParam({ name: 'id', format: 'uuid' })
+  @ApiOkResponse({ type: AcademicPaperDetailResponseDto })
+  @ApiNotFoundResponse({ type: NotFoundErrorDto, description: 'No academic paper with that ID exists, or it has been deleted' })
+  togglePublish(@Param('id') id: string, @Body() dto: TogglePublishDto, @CurrentUser() user: CurrentUserPayload, @Lang() lang: string | null) {
+    return this.service.togglePublish(id, dto.is_published, user.id, lang);
   }
 
   @Delete(':id')

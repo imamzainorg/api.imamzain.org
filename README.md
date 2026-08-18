@@ -301,7 +301,7 @@ For cross-cutting concepts the OpenAPI spec doesn't cover, the
 | Book Categories | `/book-categories` | |
 | Gallery Images | `/gallery` | |
 | Gallery Categories | `/gallery-categories` | |
-| Academic Papers | `/academic-papers` | Optional per-translation `slug` → public `GET /academic-papers/by-slug/:slug`. Per-translation SEO fields (`meta_title` / `meta_description` / `og_image`). |
+| Academic Papers | `/academic-papers` | No slug or SEO fields — the public site has no dedicated detail page for papers (they open in a modal), so there's no canonical URL for them to serve. |
 | Academic Paper Categories | `/academic-paper-categories` | |
 | Static Pages | `/static-pages` | Canonical rarely-changing pages (biography, about). Per-language `slug` + SEO fields. Public `GET /static-pages`, `/static-pages/by-slug/:slug`, `/static-pages/:id` (published only); admin `GET /static-pages/admin` + `/static-pages/admin/:id` reach drafts. |
 | Stores | `/stores` | "Where to buy / visit us" — a `store` is a city (translated `city_name`) with one or more nested sale-points (`/stores/:id/locations`) carrying phone + GPS. Public `GET /stores`, `/stores/:id`; admin CRUD under `stores:*`. |

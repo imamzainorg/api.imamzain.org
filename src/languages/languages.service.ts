@@ -124,6 +124,7 @@ export class LanguagesService implements OnApplicationBootstrap {
       actorId,
       action: AUDIT_ACTIONS.LANGUAGE_CREATED,
       resourceType: "language",
+      resourceId: language.code,
       changes: { method: "POST", path: "/api/v1/languages", code: language.code },
     });
 
@@ -153,6 +154,7 @@ export class LanguagesService implements OnApplicationBootstrap {
       actorId,
       action: AUDIT_ACTIONS.LANGUAGE_UPDATED,
       resourceType: "language",
+      resourceId: code,
       changes: { method: "PATCH", path: `/api/v1/languages/${code}`, code },
     });
 
@@ -175,6 +177,7 @@ export class LanguagesService implements OnApplicationBootstrap {
       actorId,
       action: AUDIT_ACTIONS.LANGUAGE_DELETED,
       resourceType: "language",
+      resourceId: code,
       changes: { method: "DELETE", path: `/api/v1/languages/${code}`, code },
     });
 

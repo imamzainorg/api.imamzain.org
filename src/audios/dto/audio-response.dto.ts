@@ -59,6 +59,9 @@ class AudioListItemDto {
   @ApiProperty({ example: true })
   is_published: boolean;
 
+  @ApiProperty({ example: 0 })
+  views: number;
+
   @ApiProperty({ example: '2026-05-11T06:34:12.287Z' })
   created_at: string;
 
