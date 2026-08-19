@@ -1,60 +1,16 @@
 import { ConflictException, Injectable, Logger, NotFoundException, OnApplicationBootstrap } from "@nestjs/common";
 import { languages, Prisma } from "@prisma/client";
-import { Transform } from "class-transformer";
-import {
-  IsBoolean,
-  IsOptional,
-  IsString,
-  Matches,
-  MinLength,
-} from "class-validator";
 import { PrismaService } from "../prisma/prisma.service";
 import { AuditService } from "../common/audit/audit.service";
 import { AUDIT_ACTIONS } from "../common/audit/audit.actions";
 import { TtlCache } from "../common/utils/ttl-cache.util";
+import { CreateLanguageDto, UpdateLanguageDto } from "./dto/language.dto";
 
 // Languages change on the order of "once per release" — basically static at
 // runtime. The cache TTL is longer than settings because the table is even
 // less mutable; we still want a TTL rather than infinite caching so an admin
 // add/remove eventually propagates without a redeploy.
 const LANGUAGES_CACHE_TTL_MS = 300_000;
-
-export class CreateLanguageDto {
-  // The column is Char(2) and language resolution is case-sensitive lowercase
-  // (LanguageMiddleware accepts only /^[a-z]{2}$/, resolveTranslation matches
-  // exactly). Normalise to lowercase and require exactly two ASCII letters so
-  // an over-long code can't 500 on insert and a stored code is always matchable.
-  @IsString()
-  @Transform(({ value }) => (typeof value === "string" ? value.toLowerCase().trim() : value))
-  @Matches(/^[a-z]{2}$/, { message: "code must be a 2-letter lowercase ISO 639-1 code" })
-  code!: string;
-
-  @IsString()
-  @MinLength(1)
-  name!: string;
-
-  @IsString()
-  @MinLength(1)
-  native_name!: string;
-
-  @IsOptional()
-  @IsBoolean()
-  is_active?: boolean;
-}
-
-export class UpdateLanguageDto {
-  @IsOptional()
-  @IsString()
-  name?: string;
-
-  @IsOptional()
-  @IsString()
-  native_name?: string;
-
-  @IsOptional()
-  @IsBoolean()
-  is_active?: boolean;
-}
 
 @Injectable()
 export class LanguagesService implements OnApplicationBootstrap {

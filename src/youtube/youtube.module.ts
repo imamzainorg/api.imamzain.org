@@ -23,8 +23,11 @@ export class YoutubeModule implements OnApplicationBootstrap {
   constructor(private readonly sync: YoutubeSyncService) {}
 
   onApplicationBootstrap() {
+    // unref() so this pending timer doesn't hold the process open — a
+    // shutdown signal received during the 30s window should still let the
+    // process exit promptly instead of waiting the timer out.
     setTimeout(() => {
       void this.sync.runGuardedSync('bootstrap');
-    }, 30_000);
+    }, 30_000).unref();
   }
 }

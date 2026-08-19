@@ -85,8 +85,7 @@ export class MediaService {
       );
     }
 
-    const publicBaseUrl = (process.env.R2_PUBLIC_BASE_URL ?? 'https://cdn.imamzain.org').replace(/\/$/, '');
-    const url = `${publicBaseUrl}/${dto.key}`;
+    const url = this.r2Service.publicUrlForKey(dto.key);
 
     // For new-format keys (`media/originals/<uuid>/...`) we pin the media
     // row's id to the same uuid baked into the path. That way the originals
@@ -278,39 +277,50 @@ export class MediaService {
     // — see 20260818170000_gallery_image_seo_fields). academic_paper_translations
     // .og_image_id was removed entirely (dead feature, never used) — no
     // longer a reference source to check here.
-    const [
-      postRef,
-      bookRef,
-      galleryRef,
-      attachRef,
-      postOgRef,
-      bookOgRef,
-      pageOgRef,
-      galleryOgRef,
-    ] = await Promise.all([
-      this.prisma.posts.count({ where: { cover_image_id: id } }),
-      this.prisma.books.count({ where: { cover_image_id: id } }),
-      this.prisma.gallery_images.count({ where: { media_id: id } }),
-      this.prisma.post_attachments.count({ where: { media_id: id } }),
-      this.prisma.post_translations.count({ where: { og_image_id: id } }),
-      this.prisma.book_translations.count({ where: { og_image_id: id } }),
-      this.prisma.static_page_translations.count({ where: { og_image_id: id } }),
-      this.prisma.gallery_image_translations.count({ where: { og_image_id: id } }),
-    ]);
+    // Check + delete run inside one transaction so the two steps execute
+    // back-to-back with no application-level gap between them, instead of
+    // the count queries and the delete being two separate round-trips a
+    // concurrent write could land in between. This narrows the race window
+    // to the transaction's own execution time; it doesn't eliminate it
+    // outright (that would need every writer that sets cover_image_id/
+    // og_image_id to also take a lock on this media row, which is out of
+    // scope here) — the FK constraints remain the real backstop, this just
+    // shrinks how long the gap they're backstopping actually is.
+    await this.prisma.$transaction(async (tx) => {
+      const [
+        postRef,
+        bookRef,
+        galleryRef,
+        attachRef,
+        postOgRef,
+        bookOgRef,
+        pageOgRef,
+        galleryOgRef,
+      ] = await Promise.all([
+        tx.posts.count({ where: { cover_image_id: id } }),
+        tx.books.count({ where: { cover_image_id: id } }),
+        tx.gallery_images.count({ where: { media_id: id } }),
+        tx.post_attachments.count({ where: { media_id: id } }),
+        tx.post_translations.count({ where: { og_image_id: id } }),
+        tx.book_translations.count({ where: { og_image_id: id } }),
+        tx.static_page_translations.count({ where: { og_image_id: id } }),
+        tx.gallery_image_translations.count({ where: { og_image_id: id } }),
+      ]);
 
-    if (
-      postRef + bookRef + galleryRef + attachRef + postOgRef + bookOgRef + pageOgRef + galleryOgRef >
-      0
-    ) {
-      throw new ConflictException('Media is still referenced by other records');
-    }
+      if (
+        postRef + bookRef + galleryRef + attachRef + postOgRef + bookOgRef + pageOgRef + galleryOgRef >
+        0
+      ) {
+        throw new ConflictException('Media is still referenced by other records');
+      }
 
-    // Delete the DB row first so a downstream R2 failure leaves only a
-    // detectable orphan blob (which the cleanup cron can sweep), instead
-    // of the previous order which kept the DB row pointing at a key that
-    // could already have been deleted in R2. media_variants rows cascade
-    // automatically via the FK; we only have to clean up R2 ourselves.
-    await this.prisma.media.delete({ where: { id } });
+      // Delete the DB row first so a downstream R2 failure leaves only a
+      // detectable orphan blob (which the cleanup cron can sweep), instead
+      // of the previous order which kept the DB row pointing at a key that
+      // could already have been deleted in R2. media_variants rows cascade
+      // automatically via the FK; we only have to clean up R2 ourselves.
+      await tx.media.delete({ where: { id } });
+    });
 
     const key = this.r2Service.keyFromPublicUrl(media.url);
     await Promise.all([

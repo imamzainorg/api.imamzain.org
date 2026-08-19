@@ -8,6 +8,7 @@ import { softDeleteSuffix, stripSoftDeleteSuffix } from '../common/utils/soft-de
 import { rethrowP2002AsConflict } from '../common/utils/prisma-error.util';
 import { assertExactlyOneDefault, resolveTranslation } from '../common/utils/translation.util';
 import { buildPaginationMeta, resolvePagination } from '../common/utils/pagination.util';
+import { publicWhere } from '../common/utils/visibility.util';
 import {
   AudioAdminQueryDto,
   AudioQueryDto,
@@ -94,7 +95,7 @@ export class AudiosService {
 
   async findAllPublic(query: AudioQueryDto, lang: string | null) {
     const { page, limit, skip } = resolvePagination(query);
-    const where: Prisma.audiosWhereInput = { deleted_at: null, is_published: true };
+    const where: Prisma.audiosWhereInput = publicWhere(true);
     if (query.speaker_id) where.speaker_id = query.speaker_id;
     if (query.search) this.applySearch(where, query.search);
     return this.listWith(where, page, limit, skip, lang);
@@ -147,7 +148,7 @@ export class AudiosService {
   /** Public detail by canonical slug. */
   async findBySlug(slug: string, lang: string | null) {
     const audio = await this.prisma.audios.findFirst({
-      where: { slug, deleted_at: null, is_published: true },
+      where: { slug, ...publicWhere(true) },
       select: AUDIO_DETAIL_SELECT,
     });
     if (!audio) throw new NotFoundException('Audio not found');
@@ -156,7 +157,7 @@ export class AudiosService {
 
   async trackView(id: string) {
     const result = await this.prisma.audios.updateMany({
-      where: { id, deleted_at: null, is_published: true },
+      where: { id, ...publicWhere(true) },
       data: { views: { increment: 1 } },
     });
     if (result.count === 0) throw new NotFoundException('Audio not found');
@@ -171,7 +172,7 @@ export class AudiosService {
   }
 
   async create(dto: CreateAudioDto, actorId: string, lang: string | null) {
-    assertExactlyOneDefault(dto.translations, 'Exactly one translation must have is_default: true');
+    assertExactlyOneDefault(dto.translations);
     if (dto.speaker_id) await this.assertSpeakerExists(dto.speaker_id);
     if (dto.slug) await this.assertSlugAvailable(dto.slug, null);
 
