@@ -52,14 +52,6 @@ export class PostTranslationDto {
   @MaxBytes()
   body!: string;
 
-  @ApiProperty({
-    example: "hayat-al-imam-zain",
-    description: "URL-friendly slug (lowercase, hyphens only)",
-  })
-  @IsString()
-  @Matches(/^[a-z0-9]+(?:-[a-z0-9]+)*$/)
-  slug!: string;
-
   @ApiPropertyOptional({
     example: true,
     description: "Exactly one translation must be the default",
@@ -116,6 +108,14 @@ export class CreatePostDto {
   @IsUUID()
   cover_image_id?: string;
 
+  @ApiProperty({
+    example: "hayat-al-imam-zain",
+    description: "URL-friendly, language-agnostic canonical slug (lowercase, hyphens only). Sets the public /posts/{slug} URL.",
+  })
+  @IsString()
+  @Matches(/^[a-z0-9]+(?:-[a-z0-9]+)*$/)
+  slug!: string;
+
   @ApiPropertyOptional({ example: false, default: false })
   @IsOptional()
   @IsBoolean()
@@ -170,6 +170,12 @@ export class UpdatePostDto {
   @IsOptional()
   @IsUUID()
   cover_image_id?: string;
+
+  @ApiPropertyOptional({ example: "hayat-al-imam-zain", description: "URL-friendly, language-agnostic canonical slug (lowercase, hyphens only)." })
+  @IsOptional()
+  @IsString()
+  @Matches(/^[a-z0-9]+(?:-[a-z0-9]+)*$/)
+  slug?: string;
 
   @ApiPropertyOptional({ example: true })
   @IsOptional()

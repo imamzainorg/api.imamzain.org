@@ -110,73 +110,64 @@ export class StaticPagesService {
     };
   }
 
-  /**
-   * Public slug lookup. A slug is unique per language; the same slug string can
-   * belong to one page in each language. Prefer the requested language when it
-   * has a row for this slug, otherwise return the page that owns the slug in
-   * any language — the canonical page must resolve regardless of the visitor's
-   * Accept-Language. The display translation is still resolved per `lang`.
-   */
+  /** Public detail by canonical slug — one language-agnostic slug per page. */
   async findBySlug(slug: string, lang: string | null) {
-    const baseWhere: Prisma.static_page_translationsWhereInput = {
-      slug,
-      static_pages: { deleted_at: null, is_published: true },
-    };
+    const page = await this.prisma.static_pages.findFirst({
+      where: { slug, deleted_at: null, is_published: true },
+      include: { static_page_translations: { include: { og_image: { select: OG_IMAGE_SELECT } } } },
+    });
+    if (!page) throw new NotFoundException('Static page not found');
 
-    let translation = lang
-      ? await this.prisma.static_page_translations.findFirst({
-          where: { ...baseWhere, lang },
-          include: { static_pages: { include: { static_page_translations: { include: { og_image: { select: OG_IMAGE_SELECT } } } } } },
-        })
-      : null;
-
-    if (!translation) {
-      translation = await this.prisma.static_page_translations.findFirst({
-        where: baseWhere,
-        orderBy: { lang: 'asc' },
-        include: { static_pages: { include: { static_page_translations: { include: { og_image: { select: OG_IMAGE_SELECT } } } } } },
-      });
-    }
-
-    if (!translation || !translation.static_pages) {
-      throw new NotFoundException('Static page not found');
-    }
-
-    const page = translation.static_pages;
     return {
       message: 'Static page fetched',
       data: { ...page, translation: resolveTranslation(page.static_page_translations, lang) },
     };
   }
 
+  /** Reject a slug that collides with another live static page's slug. */
+  private async assertSlugAvailable(slug: string, excludePageId: string | null) {
+    const conflict = await this.prisma.static_pages.findFirst({
+      where: { slug, ...(excludePageId ? { NOT: { id: excludePageId } } : {}) },
+      select: { id: true },
+    });
+    if (conflict) throw new ConflictException(`Slug "${slug}" is already used by another static page`);
+  }
+
   async create(dto: CreateStaticPageDto, actorId: string) {
+    await this.assertSlugAvailable(dto.slug, null);
+
     const translations = this.normaliseDefaults(dto.translations).map((t) => ({
       ...t,
       body: sanitizeEditorHtml(t.body),
     }));
 
-    const created = await this.prisma.$transaction(async (tx) => {
-      const row = await tx.static_pages.create({
-        data: {
-          display_order: dto.display_order ?? 0,
-          is_published: dto.is_published ?? true,
-        },
+    let created;
+    try {
+      created = await this.prisma.$transaction(async (tx) => {
+        const row = await tx.static_pages.create({
+          data: {
+            slug: dto.slug,
+            display_order: dto.display_order ?? 0,
+            is_published: dto.is_published ?? true,
+          },
+        });
+        await tx.static_page_translations.createMany({
+          data: translations.map((t) => ({
+            page_id: row.id,
+            lang: t.lang,
+            title: t.title,
+            body: t.body,
+            meta_title: t.meta_title ?? null,
+            meta_description: t.meta_description ?? null,
+            og_image_id: t.og_image_id ?? null,
+            is_default: t.is_default ?? false,
+          })),
+        });
+        return row;
       });
-      await tx.static_page_translations.createMany({
-        data: translations.map((t) => ({
-          page_id: row.id,
-          lang: t.lang,
-          title: t.title,
-          slug: t.slug,
-          body: t.body,
-          meta_title: t.meta_title ?? null,
-          meta_description: t.meta_description ?? null,
-          og_image_id: t.og_image_id ?? null,
-          is_default: t.is_default ?? false,
-        })),
-      });
-      return row;
-    });
+    } catch (err) {
+      rethrowP2002AsConflict(err, `Slug "${dto.slug}" is already used by another static page`);
+    }
 
     await this.audit.write({
       actorId,
@@ -194,9 +185,12 @@ export class StaticPagesService {
     const existing = await this.prisma.static_pages.findFirst({ where: { id, deleted_at: null } });
     if (!existing) throw new NotFoundException('Static page not found');
 
+    if (dto.slug !== undefined) await this.assertSlugAvailable(dto.slug, id);
+
     const ops: Prisma.PrismaPromise<unknown>[] = [];
 
     const scalarPatch: Prisma.static_pagesUpdateInput = { updated_at: new Date() };
+    if (dto.slug !== undefined) scalarPatch.slug = dto.slug;
     if (dto.display_order !== undefined) scalarPatch.display_order = dto.display_order;
     if (dto.is_published !== undefined) scalarPatch.is_published = dto.is_published;
     if (Object.keys(scalarPatch).length > 1) {
@@ -218,7 +212,6 @@ export class StaticPagesService {
               page_id: id,
               lang: t.lang,
               title: t.title,
-              slug: t.slug,
               body: t.body,
               meta_title: t.meta_title ?? null,
               meta_description: t.meta_description ?? null,
@@ -227,7 +220,6 @@ export class StaticPagesService {
             },
             update: {
               title: t.title,
-              slug: t.slug,
               body: t.body,
               meta_title: t.meta_title ?? null,
               meta_description: t.meta_description ?? null,
@@ -240,9 +232,13 @@ export class StaticPagesService {
     }
 
     // Apply scalar patch + every translation upsert atomically so a mid-batch
-    // slug conflict can't leave the page half-updated.
+    // conflict can't leave the page half-updated.
     if (ops.length > 0) {
-      await this.prisma.$transaction(ops);
+      try {
+        await this.prisma.$transaction(ops);
+      } catch (err) {
+        rethrowP2002AsConflict(err, `Slug "${dto.slug}" is already used by another static page`);
+      }
     }
 
     await this.audit.write({
@@ -297,17 +293,11 @@ export class StaticPagesService {
       }),
       this.prisma.static_pages.count({ where }),
     ]);
-    const items = rows.map((row) => {
-      const static_page_translations = row.static_page_translations.map((t) => ({
-        ...t,
-        slug: stripSoftDeleteSuffix(t.slug),
-      }));
-      return {
-        ...row,
-        static_page_translations,
-        translation: resolveTranslation(static_page_translations, null),
-      };
-    });
+    const items = rows.map((row) => ({
+      ...row,
+      slug: stripSoftDeleteSuffix(row.slug),
+      translation: resolveTranslation(row.static_page_translations, null),
+    }));
     return {
       message: 'Trash fetched',
       data: { items, pagination: buildPaginationMeta(page, limit, total) },
@@ -316,53 +306,38 @@ export class StaticPagesService {
 
   /**
    * Restore a soft-deleted page. Reverses the slug-suffix trick from
-   * softDelete; refused with 409 if a live translation has taken any of the
-   * original (lang, slug) pairs since the delete — operator must rename one
-   * side and retry.
+   * softDelete; refused with 409 if a live page has taken the original slug
+   * since the delete — operator must rename one side and retry.
    */
   async restore(id: string, actorId: string) {
     const page = await this.prisma.static_pages.findFirst({
       where: { id, deleted_at: { not: null } },
-      include: { static_page_translations: true },
     });
     if (!page) throw new NotFoundException('Deleted static page not found');
 
-    const restoredSlugs = page.static_page_translations.map((t) => ({
-      lang: t.lang,
-      original: stripSoftDeleteSuffix(t.slug),
-    }));
+    const originalSlug = stripSoftDeleteSuffix(page.slug);
 
     try {
       await this.prisma.$transaction(async (tx) => {
-        for (const { lang, original } of restoredSlugs) {
-          const conflict = await tx.static_page_translations.findFirst({
-            where: { lang, slug: original, NOT: { page_id: id } },
-          });
-          if (conflict) {
-            throw new ConflictException(
-              `Cannot restore: slug "${original}" (${lang}) is now used by another static page`,
-            );
-          }
+        const conflict = await tx.static_pages.findFirst({
+          where: { slug: originalSlug, deleted_at: null, NOT: { id } },
+          select: { id: true },
+        });
+        if (conflict) {
+          throw new ConflictException(`Cannot restore: slug "${originalSlug}" is now used by another static page`);
         }
 
-        for (const { lang, original } of restoredSlugs) {
-          await tx.static_page_translations.update({
-            where: { page_id_lang: { page_id: id, lang } },
-            data: { slug: original },
-          });
-        }
-
-        await tx.static_pages.update({ where: { id }, data: { deleted_at: null, updated_at: new Date() } });
+        await tx.static_pages.update({
+          where: { id },
+          data: { deleted_at: null, updated_at: new Date(), slug: originalSlug },
+        });
       });
     } catch (err) {
       // The pre-check above narrows the common case, but at READ COMMITTED a
-      // concurrent insert can still claim one of the (lang, slug) pairs between
-      // the check and the update — the DB unique constraint is the real
-      // backstop. Translate that raw P2002 into the same friendly 409.
-      rethrowP2002AsConflict(
-        err,
-        'Cannot restore: one of the original translation slugs was claimed by another static page',
-      );
+      // concurrent insert can still claim the slug between the check and the
+      // update — the DB unique constraint is the real backstop. Translate
+      // that raw P2002 into the same friendly 409.
+      rethrowP2002AsConflict(err, 'Cannot restore: the original slug was claimed by another static page');
     }
 
     await this.audit.write({
@@ -380,21 +355,14 @@ export class StaticPagesService {
     const page = await this.prisma.static_pages.findFirst({ where: { id, deleted_at: null } });
     if (!page) throw new NotFoundException('Static page not found');
 
-    // Free each translation's (lang, slug) unique constraint by suffixing the
-    // slug so a new page can claim the slug while this one sits in trash.
-    // Restore reverses the suffix.
+    // Free the slug's unique constraint by suffixing it so a new page can
+    // claim it while this one sits in trash. Restore reverses the suffix.
     const deletedAt = new Date();
     const suffix = softDeleteSuffix(deletedAt);
 
-    await this.prisma.$transaction(async (tx) => {
-      const translations = await tx.static_page_translations.findMany({ where: { page_id: id } });
-      for (const t of translations) {
-        await tx.static_page_translations.update({
-          where: { page_id_lang: { page_id: id, lang: t.lang } },
-          data: { slug: `${t.slug}${suffix}` },
-        });
-      }
-      await tx.static_pages.update({ where: { id }, data: { deleted_at: deletedAt } });
+    await this.prisma.static_pages.update({
+      where: { id },
+      data: { deleted_at: deletedAt, slug: `${page.slug}${suffix}` },
     });
 
     await this.audit.write({

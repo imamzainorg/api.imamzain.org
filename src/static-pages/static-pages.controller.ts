@@ -37,7 +37,7 @@ export class StaticPagesController {
   @ApiOperation({
     summary: 'List published static pages (public, paginated)',
     description:
-      'Returns pages that are published and not soft-deleted, ordered by `display_order`. Use Accept-Language to get translated title/slug/body. Response is CDN-cacheable (`public, max-age=300, s-maxage=1800`) and varies by `Accept-Language`.',
+      'Returns pages that are published and not soft-deleted, ordered by `display_order`. Use Accept-Language to get translated title/body; the slug is a single canonical value shared across languages. Response is CDN-cacheable (`public, max-age=300, s-maxage=1800`) and varies by `Accept-Language`.',
   })
   @ApiQuery({ name: 'page', required: false, type: Number, example: 1 })
   @ApiQuery({ name: 'limit', required: false, type: Number, example: 20 })
@@ -81,7 +81,7 @@ export class StaticPagesController {
   @ApiOperation({
     summary: 'List soft-deleted static pages (CMS trash view)',
     description:
-      'Paginated list of pages whose `deleted_at` is set. Translation slugs come back with the `__del_<timestamp>` suffix already stripped so the CMS can show the original slug. Requires permission: `static-pages:delete`.',
+      'Paginated list of pages whose `deleted_at` is set. The slug comes back with the `__del_<timestamp>` suffix already stripped so the CMS can show the original. Requires permission: `static-pages:delete`.',
   })
   @ApiQuery({ name: 'page', required: false, type: Number, example: 1 })
   @ApiQuery({ name: 'limit', required: false, type: Number, example: 20 })
@@ -95,7 +95,7 @@ export class StaticPagesController {
   @ApiOperation({
     summary: 'Get a single static page by slug (public)',
     description:
-      'Slug is unique per language. The page resolves regardless of the visitor\'s Accept-Language — the canonical page must always be reachable; the display translation still respects Accept-Language. Response is CDN-cacheable.',
+      "Resolves a page by its single, language-agnostic canonical slug — the display translation still respects Accept-Language. Response is CDN-cacheable.",
   })
   @ApiParam({ name: 'slug', example: 'imam-zain-biography' })
   @ApiOkResponse({ type: StaticPageDetailResponseDto, description: 'Static page detail with translations' })
@@ -110,12 +110,12 @@ export class StaticPagesController {
   @ApiOperation({
     summary: 'Restore a soft-deleted static page',
     description:
-      'Sets `deleted_at` back to null and unsuffixes each translation slug. Fails with 409 if any of the original `(lang, slug)` pairs has been claimed by another page in the meantime — rename the conflicting one first. Requires permission: `static-pages:delete`.',
+      'Sets `deleted_at` back to null and unsuffixes the slug. Fails with 409 if the original slug has been claimed by another page in the meantime — rename the conflicting one first. Requires permission: `static-pages:delete`.',
   })
   @ApiParam({ name: 'id', format: 'uuid' })
   @ApiOkResponse({ type: StaticPageMessageResponseDto, description: 'Static page restored' })
   @ApiNotFoundResponse({ type: NotFoundErrorDto, description: 'No soft-deleted page with that ID exists' })
-  @ApiConflictResponse({ type: ConflictErrorDto, description: 'A live page has taken one of the restored translation slugs' })
+  @ApiConflictResponse({ type: ConflictErrorDto, description: 'A live page has taken the restored slug' })
   restore(@Param('id') id: string, @CurrentUser() user: CurrentUserPayload) {
     return this.service.restore(id, user.id);
   }
@@ -155,6 +155,7 @@ export class StaticPagesController {
   })
   @ApiCreatedResponse({ type: StaticPageCreatedResponseDto, description: 'Static page created with all translations' })
   @ApiBadRequestResponse({ type: ValidationErrorDto, description: 'Validation failed' })
+  @ApiConflictResponse({ type: ConflictErrorDto, description: 'The slug is already used by another static page' })
   create(@Body() dto: CreateStaticPageDto, @CurrentUser() user: CurrentUserPayload) {
     return this.service.create(dto, user.id);
   }
@@ -169,6 +170,7 @@ export class StaticPagesController {
   @ApiOkResponse({ type: StaticPageDetailResponseDto, description: 'Updated static page' })
   @ApiBadRequestResponse({ type: ValidationErrorDto, description: 'Validation failed' })
   @ApiNotFoundResponse({ type: NotFoundErrorDto, description: 'No page with that ID exists, or it has been deleted' })
+  @ApiConflictResponse({ type: ConflictErrorDto, description: 'The slug is already used by another static page' })
   update(
     @Param('id') id: string,
     @Body() dto: UpdateStaticPageDto,
@@ -182,7 +184,7 @@ export class StaticPagesController {
   @ApiOperation({
     summary: 'Soft-delete a static page',
     description:
-      'Sets `deleted_at` and suffixes each translation slug so the `(lang, slug)` unique constraint is freed for another page. Restore is reversible. Requires permission: `static-pages:delete`.',
+      "Sets `deleted_at` and suffixes the slug so it's freed for another page to claim. Restore is reversible. Requires permission: `static-pages:delete`.",
   })
   @ApiParam({ name: 'id', format: 'uuid' })
   @ApiOkResponse({ type: StaticPageMessageResponseDto, description: 'Static page soft-deleted' })

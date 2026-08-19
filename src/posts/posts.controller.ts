@@ -62,7 +62,7 @@ export class PostsController {
   @Get('by-slug/:slug')
   @PublicCache(60)
   @ApiOperation({ summary: 'Get a published post by its translated slug (public)', description: 'Response is CDN-cacheable (`public, max-age=60, s-maxage=300`) and varies by `Accept-Language`.' })
-  @ApiParam({ name: 'slug', example: 'hayat-al-imam-zain', description: 'URL slug from a post translation' })
+  @ApiParam({ name: 'slug', example: 'hayat-al-imam-zain', description: "The post's canonical URL slug" })
   @ApiOkResponse({ type: PostDetailResponseDto, description: 'Post detail with all translations and attached media records' })
   @ApiNotFoundResponse({ type: NotFoundErrorDto, description: 'No published post with that slug exists in any language' })
   findBySlug(@Param('slug') slug: string, @Lang() lang: string | null) {
@@ -110,7 +110,7 @@ export class PostsController {
   @ApiOperation({
     summary: 'List soft-deleted posts (CMS trash view)',
     description:
-      'Returns posts whose `deleted_at` is set, paginated. Translation slugs are returned with the `__del_<timestamp>` suffix already stripped, so the CMS can show the original slug. Requires permission: `posts:delete`.',
+      'Returns posts whose `deleted_at` is set, paginated. The slug is returned with the `__del_<timestamp>` suffix already stripped, so the CMS can show the original slug. Requires permission: `posts:delete`.',
   })
   @ApiQuery({ name: 'page', required: false, type: Number, example: 1 })
   @ApiQuery({ name: 'limit', required: false, type: Number, example: 20 })
@@ -126,12 +126,12 @@ export class PostsController {
   @ApiOperation({
     summary: 'Restore a soft-deleted post',
     description:
-      'Sets `deleted_at` back to null and unsuffixes each translation slug. Fails with 409 if any of the original slugs has been taken by another post in the meantime — rename the conflicting one first. Requires permission: `posts:delete`.',
+      'Sets `deleted_at` back to null and unsuffixes the slug. Fails with 409 if the original slug has been taken by another post in the meantime — rename the conflicting one first. Requires permission: `posts:delete`.',
   })
   @ApiParam({ name: 'id', format: 'uuid' })
   @ApiOkResponse({ type: PostMessageResponseDto, description: 'Post restored' })
   @ApiNotFoundResponse({ type: NotFoundErrorDto, description: 'No soft-deleted post with that ID exists' })
-  @ApiConflictResponse({ type: ConflictErrorDto, description: 'A live post has taken one of the restored slugs' })
+  @ApiConflictResponse({ type: ConflictErrorDto, description: 'A live post has taken the restored slug' })
   restore(@Param('id') id: string, @CurrentUser() user: CurrentUserPayload) {
     return this.postsService.restore(id, user.id);
   }
@@ -162,7 +162,7 @@ export class PostsController {
   @ApiCreatedResponse({ type: PostCreatedResponseDto, description: 'Post created with all provided translations; returns the full post object including translation records and attachment list' })
   @ApiBadRequestResponse({ type: ValidationErrorDto, description: 'Validation failed, or translations did not contain exactly one is_default entry' })
   @ApiNotFoundResponse({ type: NotFoundErrorDto, description: 'No post category with that category_id exists, or the cover_image_id does not match any media record' })
-  @ApiConflictResponse({ type: ConflictErrorDto, description: 'A translation slug is already used by another post in the same language' })
+  @ApiConflictResponse({ type: ConflictErrorDto, description: 'The slug is already used by another post' })
   create(@Body() dto: CreatePostDto, @CurrentUser() user: CurrentUserPayload, @Lang() lang: string | null) {
     return this.postsService.create(dto, user.id, lang);
   }
@@ -174,7 +174,7 @@ export class PostsController {
   @ApiOkResponse({ type: PostDetailResponseDto, description: 'Updated post with all translations; if attachment_ids was provided the attachment list reflects the replacement' })
   @ApiBadRequestResponse({ type: ValidationErrorDto, description: 'Validation failed, or the resulting translations did not contain exactly one is_default entry' })
   @ApiNotFoundResponse({ type: NotFoundErrorDto, description: 'No post with that ID exists, or the new category_id / cover_image_id does not exist or has been soft-deleted' })
-  @ApiConflictResponse({ type: ConflictErrorDto, description: 'A translation slug is already used by another post in the same language' })
+  @ApiConflictResponse({ type: ConflictErrorDto, description: 'The slug is already used by another post' })
   update(
     @Param('id') id: string,
     @Body() dto: UpdatePostDto,
@@ -219,7 +219,7 @@ export class PostsController {
   @ApiOperation({
     summary: 'Bulk soft-delete posts',
     description:
-      'Soft-deletes every post in `ids` that is still live. Translation slugs are suffixed with `__del_<timestamp>` exactly like single-row delete, so the slugs become reusable. Missing / already-deleted ids are returned in `skipped`. Requires permission: `posts:delete`. Max 200 ids per call.',
+      'Soft-deletes every post in `ids` that is still live. Each slug is suffixed with `__del_<timestamp>` exactly like single-row delete, so it becomes reusable. Missing / already-deleted ids are returned in `skipped`. Requires permission: `posts:delete`. Max 200 ids per call.',
   })
   @ApiOkResponse({ type: PostBulkResponseDto, description: 'Counts of deleted and skipped posts' })
   @ApiBadRequestResponse({ type: ValidationErrorDto, description: 'Validation failed (empty ids, more than 200 ids, etc.)' })

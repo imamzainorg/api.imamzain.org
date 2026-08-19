@@ -24,9 +24,6 @@ class PostTranslationItemDto {
   @ApiProperty({ example: 'نص المنشور الكامل...' })
   body: string;
 
-  @ApiProperty({ example: 'hayat-al-imam-zain' })
-  slug: string;
-
   @ApiProperty({ example: true })
   is_default: boolean;
 
@@ -71,9 +68,6 @@ class PostListTranslationItemDto {
 
   @ApiPropertyOptional({ example: 'مقتطف من المنشور' })
   summary?: string;
-
-  @ApiProperty({ example: 'hayat-al-imam-zain' })
-  slug: string;
 
   @ApiProperty({ example: true })
   is_default: boolean;
@@ -169,6 +163,9 @@ class PostSummaryDto {
   @ApiPropertyOptional({ example: 'uuid-...', description: 'ID of the cover image media record' })
   cover_image_id?: string;
 
+  @ApiProperty({ example: 'hayat-al-imam-zain', description: 'Canonical, language-agnostic URL slug.' })
+  slug: string;
+
   @ApiProperty({ example: true })
   is_published: boolean;
 
@@ -224,6 +221,9 @@ class PostDetailDto {
 
   @ApiPropertyOptional({ example: 'uuid-...', description: 'ID of the cover image media record' })
   cover_image_id?: string;
+
+  @ApiProperty({ example: 'hayat-al-imam-zain', description: 'Canonical, language-agnostic URL slug.' })
+  slug: string;
 
   @ApiProperty({ example: true })
   is_published: boolean;

@@ -52,17 +52,6 @@ export class BookTranslationDto {
   @IsString()
   series?: string;
 
-  @ApiPropertyOptional({
-    example: "al-sahifa-al-sajjadiyya",
-    description:
-      "Optional editor slug. Lowercase latin letters, numbers and hyphens; unique per language. Sets the public /{lang}/books/{slug} URL. Omit to keep the book reachable only by UUID.",
-  })
-  @IsOptional()
-  @IsString()
-  @Matches(/^[a-z0-9]+(?:-[a-z0-9]+)*$/)
-  @MaxLength(200)
-  slug?: string;
-
   @ApiPropertyOptional({ description: "SEO <title> override for this translation." })
   @IsOptional()
   @IsString()
@@ -103,6 +92,17 @@ export class CreateBookDto {
   })
   @IsUUID()
   cover_image_id!: string;
+
+  @ApiPropertyOptional({
+    example: "al-sahifa-al-sajjadiyya",
+    description:
+      "Optional editor slug (single, language-agnostic). Lowercase latin letters, numbers and hyphens; unique. Sets the public /books/{slug} URL. Omit to keep the book reachable only by UUID.",
+  })
+  @IsOptional()
+  @IsString()
+  @Matches(/^[a-z0-9]+(?:-[a-z0-9]+)*$/)
+  @MaxLength(200)
+  slug?: string;
 
   @ApiPropertyOptional({ example: "978-9953-0-2287-6" })
   @IsOptional()
@@ -180,6 +180,13 @@ export class UpdateBookDto {
   @IsOptional()
   @IsUUID()
   cover_image_id?: string;
+
+  @ApiPropertyOptional({ example: "al-sahifa-al-sajjadiyya", description: "Optional editor slug (single, language-agnostic)." })
+  @IsOptional()
+  @IsString()
+  @Matches(/^[a-z0-9]+(?:-[a-z0-9]+)*$/)
+  @MaxLength(200)
+  slug?: string;
 
   @ApiPropertyOptional({ example: "978-9953-0-2287-6" })
   @IsOptional()

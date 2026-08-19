@@ -64,7 +64,7 @@ async function diagnosePosts() {
   for (const p of posts) {
     if (!p.slug) { noSlug.push(p); continue; }
 
-    const existing = await prisma.post_translations.findFirst({ where: { lang: 'ar', slug: p.slug } });
+    const existing = await prisma.posts.findFirst({ where: { slug: p.slug } });
     if (existing) { already.push(p); continue; }
 
     if (!p.category?.trim()) { noCat.push(p); continue; }

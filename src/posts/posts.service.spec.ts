@@ -8,6 +8,7 @@ const basePost = {
   id: "post-1",
   category_id: "cat-1",
   cover_image_id: null,
+  slug: "unwaan",
   is_published: true,
   published_at: new Date(),
   views: 10,
@@ -20,14 +21,12 @@ const basePost = {
       lang: "ar",
       title: "عنوان",
       body: "محتوى",
-      slug: "unwaan",
       is_default: true,
     },
     {
       lang: "en",
       title: "Title",
       body: "Body",
-      slug: "title",
       is_default: false,
     },
   ],
@@ -181,20 +180,21 @@ describe("PostsService", () => {
 
   describe("findBySlug", () => {
     it("returns post resolved from slug in a single query", async () => {
-      prisma.post_translations.findFirst.mockResolvedValue({
-        post_id: "post-1",
-        posts: basePost,
-      });
+      prisma.posts.findFirst.mockResolvedValue(basePost);
 
       const result = await service.findBySlug("unwaan", "ar");
 
       expect(result.data.id).toBe("post-1");
-      // findOne (a second posts.findFirst) must NOT fire — single query.
-      expect(prisma.posts.findFirst).not.toHaveBeenCalled();
+      expect(prisma.posts.findFirst).toHaveBeenCalledTimes(1);
+      expect(prisma.posts.findFirst).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({ slug: "unwaan", deleted_at: null, is_published: true }),
+        }),
+      );
     });
 
     it("throws NotFoundException when slug not found", async () => {
-      prisma.post_translations.findFirst.mockResolvedValue(null);
+      prisma.posts.findFirst.mockResolvedValue(null);
 
       await expect(
         service.findBySlug("nonexistent-slug", null),
@@ -235,20 +235,23 @@ describe("PostsService", () => {
       mockTx.posts.create.mockResolvedValue(created);
       mockTx.post_translations.createMany.mockResolvedValue({});
       prisma.$transaction.mockImplementation((cb: any) => cb(mockTx));
-      // After the transaction commits the service refetches the post with full
-      // includes so the response carries translations + attachments — same shape
-      // a GET /posts/:id would return.
-      prisma.posts.findFirst.mockResolvedValue({ ...basePost, id: "post-new" });
+      // First posts.findFirst call is the assertSlugAvailable pre-check (must
+      // find nothing); the second is the post-transaction refetch with full
+      // includes so the response carries translations + attachments — same
+      // shape a GET /posts/:id would return.
+      prisma.posts.findFirst
+        .mockResolvedValueOnce(null)
+        .mockResolvedValueOnce({ ...basePost, id: "post-new" });
 
       const result = await service.create(
         {
           category_id: "cat-1",
+          slug: "unwaan",
           translations: [
             {
               lang: "ar",
               title: "عنوان",
               body: "نص",
-              slug: "unwaan",
               is_default: true,
             },
           ],
@@ -271,12 +274,12 @@ describe("PostsService", () => {
         service.create(
           {
             category_id: "bad-cat",
+            slug: "s",
             translations: [
               {
                 lang: "ar",
                 title: "t",
                 body: "b",
-                slug: "s",
                 is_default: true,
               },
             ],
@@ -294,19 +297,18 @@ describe("PostsService", () => {
         service.create(
           {
             category_id: "cat-1",
+            slug: "s",
             translations: [
               {
                 lang: "ar",
                 title: "t",
                 body: "b",
-                slug: "s",
                 is_default: false,
               },
               {
                 lang: "en",
                 title: "t",
                 body: "b",
-                slug: "s",
                 is_default: false,
               },
             ],
@@ -324,19 +326,18 @@ describe("PostsService", () => {
         service.create(
           {
             category_id: "cat-1",
+            slug: "s",
             translations: [
               {
                 lang: "ar",
                 title: "t",
                 body: "b",
-                slug: "s",
                 is_default: true,
               },
               {
                 lang: "en",
                 title: "t",
                 body: "b",
-                slug: "s",
                 is_default: true,
               },
             ],
@@ -356,12 +357,12 @@ describe("PostsService", () => {
           {
             category_id: "cat-1",
             cover_image_id: "bad-media",
+            slug: "s",
             translations: [
               {
                 lang: "ar",
                 title: "t",
                 body: "b",
-                slug: "s",
                 is_default: true,
               },
             ],
@@ -377,14 +378,17 @@ describe("PostsService", () => {
       mockTx.posts.create.mockResolvedValue({ id: "post-new" });
       mockTx.post_translations.createMany.mockResolvedValue({});
       prisma.$transaction.mockImplementation((cb: any) => cb(mockTx));
-      prisma.posts.findFirst.mockResolvedValue({ ...basePost, id: "post-new" });
+      prisma.posts.findFirst
+        .mockResolvedValueOnce(null)
+        .mockResolvedValueOnce({ ...basePost, id: "post-new" });
 
       await service.create(
         {
           category_id: "cat-1",
+          slug: "s",
           is_published: true,
           translations: [
-            { lang: "ar", title: "t", body: "b", slug: "s", is_default: true },
+            { lang: "ar", title: "t", body: "b", is_default: true },
           ],
         },
         "user-1",
@@ -401,13 +405,16 @@ describe("PostsService", () => {
       mockTx.posts.create.mockResolvedValue({ id: "post-new" });
       mockTx.post_translations.createMany.mockResolvedValue({});
       prisma.$transaction.mockImplementation((cb: any) => cb(mockTx));
-      prisma.posts.findFirst.mockResolvedValue({ ...basePost, id: "post-new" });
+      prisma.posts.findFirst
+        .mockResolvedValueOnce(null)
+        .mockResolvedValueOnce({ ...basePost, id: "post-new" });
 
       await service.create(
         {
           category_id: "cat-1",
+          slug: "s",
           translations: [
-            { lang: "ar", title: "t", body: "b", slug: "s", is_default: true },
+            { lang: "ar", title: "t", body: "b", is_default: true },
           ],
         },
         "user-1",
@@ -543,20 +550,19 @@ describe("PostsService", () => {
   });
 
   describe("softDelete", () => {
-    it("sets deleted_at on the post and frees up translation slugs", async () => {
+    it("sets deleted_at on the post and frees up its slug", async () => {
       prisma.posts.findFirst.mockResolvedValue(basePost);
-      prisma.$transaction.mockImplementation((cb: any) => cb(mockTx));
 
       const result = await service.softDelete("post-1", "user-1");
 
-      expect(mockTx.posts.update).toHaveBeenCalledWith(
+      expect(prisma.posts.update).toHaveBeenCalledWith(
         expect.objectContaining({
-          data: expect.objectContaining({ deleted_at: expect.any(Date) }),
+          data: expect.objectContaining({
+            deleted_at: expect.any(Date),
+            slug: expect.stringContaining("unwaan__del_"),
+          }),
         }),
       );
-      // Slug suffixing is now a single raw UPDATE per softDelete call,
-      // replacing the per-translation findMany + update loop.
-      expect(mockTx.$executeRaw).toHaveBeenCalledTimes(1);
       expect(result.message).toBe("Post deleted");
     });
 

@@ -123,7 +123,7 @@ export class SearchService {
           title: matched?.title ?? '',
           summary: matched?.summary ?? null,
           lang: matched?.lang ?? '',
-          slug: matched?.slug ?? null,
+          slug: post.slug ?? null,
           cover_image_url: post.media?.url ?? null,
         };
       });
@@ -170,7 +170,7 @@ export class SearchService {
           title: matched?.title ?? '',
           summary: (matched?.description ?? matched?.author) ?? null,
           lang: matched?.lang ?? '',
-          slug: null,
+          slug: book.slug ?? null,
           cover_image_url: book.media?.url ?? null,
         };
       });

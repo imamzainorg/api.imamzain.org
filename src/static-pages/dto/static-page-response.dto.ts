@@ -8,9 +8,6 @@ class StaticPageTranslationDto {
   @ApiProperty({ example: 'سيرة الإمام زين العابدين' })
   title: string;
 
-  @ApiProperty({ example: 'imam-zain-biography' })
-  slug: string;
-
   @ApiProperty({ example: '<p>...rich HTML body...</p>' })
   body: string;
 
@@ -21,6 +18,9 @@ class StaticPageTranslationDto {
 class StaticPageDto {
   @ApiProperty({ example: 'uuid-...' })
   id: string;
+
+  @ApiProperty({ example: 'imam-zain-biography', description: 'Canonical, language-agnostic URL slug.' })
+  slug: string;
 
   @ApiProperty({ example: 0 })
   display_order: number;

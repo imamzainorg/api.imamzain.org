@@ -31,15 +31,6 @@ export class StaticPageTranslationDto {
   title!: string;
 
   @ApiProperty({
-    example: "imam-zain-biography",
-    description: "Lowercase letters, numbers and hyphens only. Unique per language.",
-  })
-  @IsString()
-  @Matches(/^[a-z0-9]+(?:-[a-z0-9]+)*$/)
-  @MaxLength(200)
-  slug!: string;
-
-  @ApiProperty({
     example: "<p>...rich HTML body...</p>",
     description:
       "Rich HTML body. Sanitised server-side (same allowlist as posts). Maximum 200 KB UTF-8.",
@@ -77,6 +68,15 @@ export class StaticPageTranslationDto {
 }
 
 export class CreateStaticPageDto {
+  @ApiProperty({
+    example: "imam-zain-biography",
+    description: "URL-friendly, language-agnostic canonical slug (lowercase, hyphens only). Sets the public /his-life/{slug} URL.",
+  })
+  @IsString()
+  @Matches(/^[a-z0-9]+(?:-[a-z0-9]+)*$/)
+  @MaxLength(200)
+  slug!: string;
+
   @ApiProperty({ type: [StaticPageTranslationDto] })
   @IsArray()
   @ValidateNested({ each: true })
@@ -97,6 +97,13 @@ export class CreateStaticPageDto {
 }
 
 export class UpdateStaticPageDto {
+  @ApiPropertyOptional({ example: "imam-zain-biography", description: "URL-friendly, language-agnostic canonical slug (lowercase, hyphens only)." })
+  @IsOptional()
+  @IsString()
+  @Matches(/^[a-z0-9]+(?:-[a-z0-9]+)*$/)
+  @MaxLength(200)
+  slug?: string;
+
   @ApiPropertyOptional({ type: [StaticPageTranslationDto] })
   @IsOptional()
   @IsArray()

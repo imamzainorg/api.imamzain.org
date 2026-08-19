@@ -34,7 +34,6 @@ const POST_LIST_TRANSLATION_SELECT = {
   lang: true,
   title: true,
   summary: true,
-  slug: true,
   is_default: true,
   meta_title: true,
   meta_description: true,
@@ -45,6 +44,7 @@ const POST_LIST_SELECT = {
   id: true,
   category_id: true,
   cover_image_id: true,
+  slug: true,
   is_published: true,
   is_featured: true,
   published_at: true,
@@ -178,36 +178,14 @@ export class PostsService {
     };
   }
 
+  /** Public detail by canonical slug — one language-agnostic slug per post. */
   async findBySlug(slug: string, lang: string | null) {
-    // A slug is unique per language (@@unique([lang, slug])); the same slug
-    // string can belong to one post in each language. Look it up by slug and
-    // prefer the requested language when it has a row for this slug, but never
-    // 404 just because the visitor's Accept-Language differs from the slug's
-    // own language — the canonical page must resolve in any locale. (The
-    // payload's display translation is still resolved per `lang` below.)
-    const baseWhere: Prisma.post_translationsWhereInput = {
-      slug,
-      posts: { deleted_at: null, is_published: true },
-    };
+    const post = await this.prisma.posts.findFirst({
+      where: { slug, deleted_at: null, is_published: true },
+      include: POST_DETAIL_INCLUDE,
+    });
+    if (!post) throw new NotFoundException('Post not found');
 
-    let translation = lang
-      ? await this.prisma.post_translations.findFirst({
-          where: { ...baseWhere, lang },
-          include: { posts: { include: POST_DETAIL_INCLUDE } },
-        })
-      : null;
-
-    if (!translation) {
-      translation = await this.prisma.post_translations.findFirst({
-        where: baseWhere,
-        orderBy: { lang: 'asc' },
-        include: { posts: { include: POST_DETAIL_INCLUDE } },
-      });
-    }
-
-    if (!translation || !translation.posts) throw new NotFoundException('Post not found');
-
-    const post = translation.posts;
     const decorated = post.post_translations.map(withReadingTime);
 
     return {
@@ -243,11 +221,7 @@ export class PostsService {
     }
 
     assertExactlyOneDefault(dto.translations, 'Exactly one translation must have is_default: true');
-
-    // Batched pre-check: one findMany covers every (lang, slug) up front so
-    // duplicate slugs surface as a useful 409 instead of N sequential queries
-    // followed by a P2002 from createMany.
-    await this.assertSlugsAvailable(this.prisma, dto.translations.map((t) => ({ lang: t.lang, slug: t.slug })));
+    await this.assertSlugAvailable(dto.slug, null);
 
     // Stamp published_at when a post is created already-published without an
     // explicit timestamp. A published post with published_at = NULL sorts
@@ -260,45 +234,50 @@ export class PostsService {
         ? new Date()
         : null;
 
-    const post = await this.prisma.$transaction(async (tx) => {
-      const created = await tx.posts.create({
-        data: {
-          category_id: dto.category_id,
-          cover_image_id: dto.cover_image_id ?? null,
-          is_published: isPublished,
-          is_featured: dto.is_featured ?? false,
-          published_at: publishedAt,
-          created_by: userId,
-        },
-      });
+    let post;
+    try {
+      post = await this.prisma.$transaction(async (tx) => {
+        const created = await tx.posts.create({
+          data: {
+            category_id: dto.category_id,
+            cover_image_id: dto.cover_image_id ?? null,
+            slug: dto.slug,
+            is_published: isPublished,
+            is_featured: dto.is_featured ?? false,
+            published_at: publishedAt,
+            created_by: userId,
+          },
+        });
 
-      await tx.post_translations.createMany({
-        data: dto.translations.map((t) => ({
-          post_id: created.id,
-          lang: t.lang,
-          title: t.title,
-          summary: t.summary ?? null,
-          body: sanitizeEditorHtml(t.body),
-          slug: t.slug,
-          is_default: t.is_default ?? false,
-          meta_title: t.meta_title ?? null,
-          meta_description: t.meta_description ?? null,
-          og_image_id: t.og_image_id ?? null,
-        })),
-      });
-
-      if (dto.attachment_ids && dto.attachment_ids.length > 0) {
-        await tx.post_attachments.createMany({
-          data: dto.attachment_ids.map((mediaId, index) => ({
+        await tx.post_translations.createMany({
+          data: dto.translations.map((t) => ({
             post_id: created.id,
-            media_id: mediaId,
-            display_order: index,
+            lang: t.lang,
+            title: t.title,
+            summary: t.summary ?? null,
+            body: sanitizeEditorHtml(t.body),
+            is_default: t.is_default ?? false,
+            meta_title: t.meta_title ?? null,
+            meta_description: t.meta_description ?? null,
+            og_image_id: t.og_image_id ?? null,
           })),
         });
-      }
 
-      return created;
-    });
+        if (dto.attachment_ids && dto.attachment_ids.length > 0) {
+          await tx.post_attachments.createMany({
+            data: dto.attachment_ids.map((mediaId, index) => ({
+              post_id: created.id,
+              media_id: mediaId,
+              display_order: index,
+            })),
+          });
+        }
+
+        return created;
+      });
+    } catch (err) {
+      rethrowP2002AsConflict(err, `Slug "${dto.slug}" is already used by another post`);
+    }
 
     this.audit.write({
       actorId: userId,
@@ -341,89 +320,89 @@ export class PostsService {
           throw new NotFoundException('One or more og_image_id values do not match any media record');
         }
       }
-
-      await this.assertSlugsAvailable(
-        this.prisma,
-        dto.translations.map((t) => ({ lang: t.lang, slug: t.slug })),
-        id,
-      );
     }
 
-    await this.prisma.$transaction(async (tx) => {
-      const updateData: Prisma.postsUpdateInput = { updated_at: new Date() };
-      if (dto.category_id !== undefined) updateData.post_categories = { connect: { id: dto.category_id } };
-      if (dto.cover_image_id !== undefined) {
-        updateData.media = dto.cover_image_id
-          ? { connect: { id: dto.cover_image_id } }
-          : { disconnect: true };
-      }
-      if (dto.is_published !== undefined) updateData.is_published = dto.is_published;
-      if (dto.is_featured !== undefined) updateData.is_featured = dto.is_featured;
-      if (dto.published_at !== undefined) {
-        updateData.published_at = dto.published_at ? new Date(dto.published_at) : null;
-      }
+    if (dto.slug !== undefined) await this.assertSlugAvailable(dto.slug, id);
 
-      // Stamp published_at = now when the post is (or is becoming) published
-      // but would still have no timestamp — otherwise it sorts NULLS FIRST and
-      // pins to the top of every public list/feed forever. (togglePublish
-      // already stamps; create/update previously did not.)
-      const willBePublished = dto.is_published ?? post.is_published;
-      const resolvedPublishedAt =
-        dto.published_at !== undefined
-          ? dto.published_at
-            ? new Date(dto.published_at)
-            : null
-          : post.published_at;
-      if (willBePublished && resolvedPublishedAt === null) {
-        updateData.published_at = new Date();
-      }
+    try {
+      await this.prisma.$transaction(async (tx) => {
+        const updateData: Prisma.postsUpdateInput = { updated_at: new Date() };
+        if (dto.category_id !== undefined) updateData.post_categories = { connect: { id: dto.category_id } };
+        if (dto.cover_image_id !== undefined) {
+          updateData.media = dto.cover_image_id
+            ? { connect: { id: dto.cover_image_id } }
+            : { disconnect: true };
+        }
+        if (dto.slug !== undefined) updateData.slug = dto.slug;
+        if (dto.is_published !== undefined) updateData.is_published = dto.is_published;
+        if (dto.is_featured !== undefined) updateData.is_featured = dto.is_featured;
+        if (dto.published_at !== undefined) {
+          updateData.published_at = dto.published_at ? new Date(dto.published_at) : null;
+        }
 
-      await tx.posts.update({ where: { id }, data: updateData });
+        // Stamp published_at = now when the post is (or is becoming) published
+        // but would still have no timestamp — otherwise it sorts NULLS FIRST and
+        // pins to the top of every public list/feed forever. (togglePublish
+        // already stamps; create/update previously did not.)
+        const willBePublished = dto.is_published ?? post.is_published;
+        const resolvedPublishedAt =
+          dto.published_at !== undefined
+            ? dto.published_at
+              ? new Date(dto.published_at)
+              : null
+            : post.published_at;
+        if (willBePublished && resolvedPublishedAt === null) {
+          updateData.published_at = new Date();
+        }
 
-      if (dto.translations) {
-        for (const t of dto.translations) {
-          const cleanBody = sanitizeEditorHtml(t.body);
-          const translationData = {
-            title: t.title,
-            summary: t.summary ?? null,
-            body: cleanBody,
-            slug: t.slug,
-            is_default: t.is_default ?? false,
-            meta_title: t.meta_title ?? null,
-            meta_description: t.meta_description ?? null,
-            og_image_id: t.og_image_id ?? null,
-          };
-          await tx.post_translations.upsert({
-            where: { post_id_lang: { post_id: id, lang: t.lang } },
-            create: { post_id: id, lang: t.lang, ...translationData },
-            update: translationData,
+        await tx.posts.update({ where: { id }, data: updateData });
+
+        if (dto.translations) {
+          for (const t of dto.translations) {
+            const cleanBody = sanitizeEditorHtml(t.body);
+            const translationData = {
+              title: t.title,
+              summary: t.summary ?? null,
+              body: cleanBody,
+              is_default: t.is_default ?? false,
+              meta_title: t.meta_title ?? null,
+              meta_description: t.meta_description ?? null,
+              og_image_id: t.og_image_id ?? null,
+            };
+            await tx.post_translations.upsert({
+              where: { post_id_lang: { post_id: id, lang: t.lang } },
+              create: { post_id: id, lang: t.lang, ...translationData },
+              update: translationData,
+            });
+          }
+
+          // Re-assert the single-default invariant once all upserts have landed:
+          // a partial update that flips is_default on one row must not leave 0
+          // or 2+ defaults.
+          const defaults = await tx.post_translations.count({
+            where: { post_id: id, is_default: true },
           });
+          if (defaults !== 1) {
+            throw new BadRequestException('Exactly one translation must have is_default: true');
+          }
         }
 
-        // Re-assert the single-default invariant once all upserts have landed:
-        // a partial update that flips is_default on one row must not leave 0
-        // or 2+ defaults.
-        const defaults = await tx.post_translations.count({
-          where: { post_id: id, is_default: true },
-        });
-        if (defaults !== 1) {
-          throw new BadRequestException('Exactly one translation must have is_default: true');
+        if (dto.attachment_ids !== undefined) {
+          await tx.post_attachments.deleteMany({ where: { post_id: id } });
+          if (dto.attachment_ids.length > 0) {
+            await tx.post_attachments.createMany({
+              data: dto.attachment_ids.map((mediaId, index) => ({
+                post_id: id,
+                media_id: mediaId,
+                display_order: index,
+              })),
+            });
+          }
         }
-      }
-
-      if (dto.attachment_ids !== undefined) {
-        await tx.post_attachments.deleteMany({ where: { post_id: id } });
-        if (dto.attachment_ids.length > 0) {
-          await tx.post_attachments.createMany({
-            data: dto.attachment_ids.map((mediaId, index) => ({
-              post_id: id,
-              media_id: mediaId,
-              display_order: index,
-            })),
-          });
-        }
-      }
-    });
+      });
+    } catch (err) {
+      rethrowP2002AsConflict(err, `Slug "${dto.slug}" is already used by another post`);
+    }
 
     this.audit.write({
       actorId: userId,
@@ -437,30 +416,13 @@ export class PostsService {
     return { message: 'Post updated', data };
   }
 
-  /**
-   * Single batched (lang, slug) availability check. One findMany replaces the
-   * per-translation findFirst loops that used to run inside the transaction.
-   * Pass `excludePostId` to skip rows that already belong to the post being
-   * updated (otherwise an unchanged slug would self-conflict).
-   */
-  private async assertSlugsAvailable(
-    db: PrismaService | Prisma.TransactionClient,
-    pairs: Array<{ lang: string; slug: string }>,
-    excludePostId?: string,
-  ): Promise<void> {
-    if (pairs.length === 0) return;
-    const where: Prisma.post_translationsWhereInput = {
-      OR: pairs.map((p) => ({ lang: p.lang, slug: p.slug })),
-    };
-    if (excludePostId) where.NOT = { post_id: excludePostId };
-    const conflicts = await db.post_translations.findMany({
-      where,
-      select: { lang: true, slug: true },
+  /** Reject a slug that collides with another live post's slug. */
+  private async assertSlugAvailable(slug: string, excludePostId: string | null): Promise<void> {
+    const conflict = await this.prisma.posts.findFirst({
+      where: { slug, ...(excludePostId ? { NOT: { id: excludePostId } } : {}) },
+      select: { id: true },
     });
-    if (conflicts.length > 0) {
-      const first = conflicts[0];
-      throw new ConflictException(`Slug "${first.slug}" is already in use for language ${first.lang}`);
-    }
+    if (conflict) throw new ConflictException(`Slug "${slug}" is already used by another post`);
   }
 
   async togglePublish(id: string, dto: TogglePublishDto, userId: string, lang: string | null) {
@@ -557,9 +519,8 @@ export class PostsService {
   }
 
   /**
-   * List soft-deleted posts (admin trash view). Translations and the
-   * suffixed slug come back as-is so the CMS can show the original slug
-   * by stripping `__del_<timestamp>` client-side if needed.
+   * List soft-deleted posts (admin trash view). The suffixed slug comes
+   * back stripped so the CMS can show the original slug directly.
    */
   async findTrash(page: number, limit: number) {
     const skip = (page - 1) * limit;
@@ -580,13 +541,10 @@ export class PostsService {
     ]);
 
     const mapped = items.map((post) => {
-      const post_translations = post.post_translations.map((t) => ({
-        ...t,
-        slug: stripSoftDeleteSuffix(t.slug),
-        reading_time_minutes: 0,
-      }));
+      const post_translations = post.post_translations.map((t) => ({ ...t, reading_time_minutes: 0 }));
       return {
         ...post,
+        slug: post.slug ? stripSoftDeleteSuffix(post.slug) : post.slug,
         post_translations,
         translation: resolveTranslation(post_translations, null),
       };
@@ -607,7 +565,6 @@ export class PostsService {
   async restore(id: string, userId: string) {
     const post = await this.prisma.posts.findFirst({
       where: { id, deleted_at: { not: null } },
-      include: { post_translations: true },
     });
     if (!post) throw new NotFoundException('Deleted post not found');
 
@@ -625,49 +582,31 @@ export class PostsService {
       );
     }
 
-    const restoredSlugs = post.post_translations.map((t) => ({
-      lang: t.lang,
-      original: stripSoftDeleteSuffix(t.slug),
-    }));
+    const originalSlug = post.slug ? stripSoftDeleteSuffix(post.slug) : null;
 
     try {
       await this.prisma.$transaction(async (tx) => {
-        // Single batched conflict-check across every (lang, original_slug).
-        const conflicts = await tx.post_translations.findMany({
-          where: {
-            OR: restoredSlugs.map(({ lang, original }) => ({ lang, slug: original })),
-            NOT: { post_id: id },
-          },
-          select: { lang: true, slug: true },
-        });
-        if (conflicts.length > 0) {
-          const first = conflicts[0];
-          throw new ConflictException(
-            `Cannot restore: slug "${first.slug}" (${first.lang}) is now used by another post`,
-          );
-        }
-
-        // Per-row updates: each translation's slug needs the suffix stripped to
-        // its own value. Prisma has no `update column = func(column)` shorthand;
-        // a raw query would work but loses the type safety the upserts give us.
-        for (const { lang, original } of restoredSlugs) {
-          await tx.post_translations.update({
-            where: { post_id_lang: { post_id: id, lang } },
-            data: { slug: original },
+        if (originalSlug) {
+          const conflict = await tx.posts.findFirst({
+            where: { slug: originalSlug, deleted_at: null, NOT: { id } },
+            select: { id: true },
           });
+          if (conflict) {
+            throw new ConflictException(`Cannot restore: slug "${originalSlug}" is now used by another post`);
+          }
         }
 
         await tx.posts.update({
           where: { id },
-          data: { deleted_at: null, updated_at: new Date() },
+          data: { deleted_at: null, updated_at: new Date(), ...(originalSlug ? { slug: originalSlug } : {}) },
         });
       });
     } catch (err) {
-      // The batched pre-check narrows the common case, but at READ COMMITTED a
-      // concurrent insert can claim one of the (lang, slug) pairs between the
-      // check and the update. The unique constraint is the real backstop —
-      // translate its P2002 into the same friendly 409 the pre-check produces.
-      rethrowP2002AsConflict(err, 'Cannot restore: one of the original translation slugs was claimed by another post');
+      // The pre-check narrows the common case, but at READ COMMITTED a
+      // concurrent insert can claim the slug between the check and the
+      // update. The unique constraint is the real backstop — translate its
+      // P2002 into the same friendly 409 the pre-check produces.
+      rethrowP2002AsConflict(err, 'Cannot restore: the original slug was claimed by another post');
     }
 
     this.audit.write({
@@ -755,10 +694,10 @@ export class PostsService {
   }
 
   /**
-   * Bulk soft-delete. Slug suffixing is done as a single raw UPDATE per
-   * translation table (one query, regardless of batch size); the deletion
-   * flag flip is a single updateMany on `posts`. Already-deleted or missing
-   * ids are returned in `skipped`.
+   * Bulk soft-delete. Slug suffixing is a single raw UPDATE on `posts`
+   * (one query, regardless of batch size); the deletion flag flip is a
+   * single updateMany. Already-deleted or missing ids are returned in
+   * `skipped`.
    */
   async bulkDelete(dto: BulkIdsDto, userId: string) {
     const uniqueIds = Array.from(new Set(dto.ids));
@@ -779,12 +718,12 @@ export class PostsService {
     const suffix = softDeleteSuffix(deletedAt);
 
     await this.prisma.$transaction(async (tx) => {
-      // Single raw UPDATE suffixes every translation slug across the batch in
-      // one DB round-trip instead of N findMany + M updates.
+      // Single raw UPDATE suffixes every post's slug across the batch in one
+      // DB round-trip instead of N findMany + M updates.
       await tx.$executeRaw`
-        UPDATE post_translations
+        UPDATE posts
         SET slug = slug || ${suffix}
-        WHERE post_id = ANY(${targetIds}::uuid[])
+        WHERE id = ANY(${targetIds}::uuid[])
       `;
       await tx.posts.updateMany({
         where: { id: { in: targetIds } },
@@ -812,20 +751,16 @@ export class PostsService {
     const post = await this.prisma.posts.findFirst({ where: { id, deleted_at: null } });
     if (!post) throw new NotFoundException('Post not found');
 
-    // Free up the (lang, slug) unique constraint by suffixing each translation
-    // slug with a marker that points back to the deletion. Without this, a
-    // soft-deleted post's slug stays reserved forever. Restore strips the
-    // suffix back off (see `restore`).
+    // Free up the slug's unique constraint by suffixing it with a marker
+    // that points back to the deletion. Without this, a soft-deleted post's
+    // slug stays reserved forever. Restore strips the suffix back off (see
+    // `restore`).
     const deletedAt = new Date();
     const suffix = softDeleteSuffix(deletedAt);
 
-    await this.prisma.$transaction(async (tx) => {
-      await tx.$executeRaw`
-        UPDATE post_translations
-        SET slug = slug || ${suffix}
-        WHERE post_id = ${id}::uuid
-      `;
-      await tx.posts.update({ where: { id }, data: { deleted_at: deletedAt } });
+    await this.prisma.posts.update({
+      where: { id },
+      data: { deleted_at: deletedAt, ...(post.slug ? { slug: `${post.slug}${suffix}` } : {}) },
     });
 
     this.audit.write({

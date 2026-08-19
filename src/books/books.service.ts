@@ -16,6 +16,7 @@ const BOOK_LIST_SELECT = {
   id: true,
   category_id: true,
   cover_image_id: true,
+  slug: true,
   isbn: true,
   pages: true,
   publish_year: true,
@@ -35,7 +36,6 @@ const BOOK_LIST_SELECT = {
       author: true,
       publisher: true,
       series: true,
-      slug: true,
       meta_title: true,
       meta_description: true,
       og_image_id: true,
@@ -106,14 +106,14 @@ export class BooksService {
     return { message: 'Book fetched', data: { ...book, translation: resolveTranslation(book.book_translations, lang) } };
   }
 
-  /** Public detail by editor slug — resolves regardless of the visitor's lang. Published only. */
+  /** Public detail by canonical slug — one language-agnostic slug per book. Published only. */
   async findBySlug(slug: string, lang: string | null) {
-    const match = await this.prisma.book_translations.findFirst({
-      where: { slug, books: { deleted_at: null, is_published: true } },
-      select: { book_id: true },
+    const match = await this.prisma.books.findFirst({
+      where: { slug, deleted_at: null, is_published: true },
+      select: { id: true },
     });
     if (!match) throw new NotFoundException('Book not found');
-    return this.findOne(match.book_id, lang);
+    return this.findOne(match.id, lang);
   }
 
   async togglePublish(id: string, isPublished: boolean, actorId: string, lang: string | null) {
@@ -146,29 +146,17 @@ export class BooksService {
   }
 
   /**
-   * Reject any provided slug that collides with another book's live (lang, slug)
-   * pair before we touch the DB. The partial unique index is the real backstop
-   * (a concurrent insert surfaces as P2002 → 409), but this gives a friendly
+   * Reject a slug that collides with another live book's slug before we
+   * touch the DB. The partial unique index is the real backstop (a
+   * concurrent insert surfaces as P2002 → 409), but this gives a friendly
    * message in the common case.
    */
-  private async assertSlugsAvailable(
-    translations: { lang: string; slug?: string | null }[],
-    excludeBookId: string | null,
-  ) {
-    for (const t of translations) {
-      if (!t.slug) continue;
-      const conflict = await this.prisma.book_translations.findFirst({
-        where: {
-          lang: t.lang,
-          slug: t.slug,
-          ...(excludeBookId ? { NOT: { book_id: excludeBookId } } : {}),
-        },
-        select: { book_id: true },
-      });
-      if (conflict) {
-        throw new ConflictException(`Slug "${t.slug}" (${t.lang}) is already used by another book`);
-      }
-    }
+  private async assertSlugAvailable(slug: string, excludeBookId: string | null) {
+    const conflict = await this.prisma.books.findFirst({
+      where: { slug, ...(excludeBookId ? { NOT: { id: excludeBookId } } : {}) },
+      select: { id: true },
+    });
+    if (conflict) throw new ConflictException(`Slug "${slug}" is already used by another book`);
   }
 
   async trackView(id: string) {
@@ -196,7 +184,7 @@ export class BooksService {
 
     assertExactlyOneDefault(dto.translations, 'Exactly one translation must have is_default: true');
 
-    await this.assertSlugsAvailable(dto.translations, null);
+    if (dto.slug) await this.assertSlugAvailable(dto.slug, null);
 
     let book;
     try {
@@ -205,6 +193,7 @@ export class BooksService {
           data: {
             category_id: dto.category_id,
             cover_image_id: dto.cover_image_id,
+            slug: dto.slug ?? null,
             isbn: dto.isbn ?? null,
             pages: dto.pages ?? null,
             publish_year: dto.publish_year ?? null,
@@ -227,7 +216,6 @@ export class BooksService {
             publisher: t.publisher ?? null,
             description: t.description ?? null,
             series: t.series ?? null,
-            slug: t.slug ?? null,
             meta_title: t.meta_title ?? null,
             meta_description: t.meta_description ?? null,
             og_image_id: t.og_image_id ?? null,
@@ -237,10 +225,13 @@ export class BooksService {
         return created;
       });
     } catch (err) {
-      // A concurrent insert could claim the same (lang, slug) between the
-      // pre-check and the createMany — translate the partial-unique-index P2002
-      // into the friendly 409.
-      rethrowP2002AsConflict(err, 'A book translation slug is already in use');
+      // A concurrent insert could claim the same slug (or ISBN) between the
+      // pre-check and the create — translate the unique-index P2002 into a
+      // friendly 409.
+      rethrowP2002AsConflict(
+        err,
+        dto.slug ? `Slug "${dto.slug}" is already used by another book` : 'A unique field (slug or ISBN) is already in use',
+      );
     }
 
     await this.audit.write({
@@ -276,55 +267,58 @@ export class BooksService {
       if (conflict) throw new ConflictException('A book with that ISBN already exists');
     }
 
-    if (dto.translations) await this.assertSlugsAvailable(dto.translations, id);
+    if (dto.slug) await this.assertSlugAvailable(dto.slug, id);
 
     try {
       await this.prisma.$transaction(async (tx) => {
-      // Build an explicit Prisma input — avoids spreading attacker-controlled
-      // DTO fields into a `data` payload that could include relation IDs we
-      // didn't intend to update.
-      const updateData: Prisma.booksUpdateInput = { updated_at: new Date() };
-      if (dto.category_id !== undefined) updateData.book_categories = { connect: { id: dto.category_id } };
-      if (dto.cover_image_id !== undefined) updateData.media = { connect: { id: dto.cover_image_id } };
-      if (dto.isbn !== undefined) updateData.isbn = dto.isbn;
-      if (dto.pages !== undefined) updateData.pages = dto.pages;
-      if (dto.publish_year !== undefined) updateData.publish_year = dto.publish_year;
-      if (dto.pdf_url !== undefined) updateData.pdf_url = dto.pdf_url;
-      if (dto.part_number !== undefined) updateData.part_number = dto.part_number;
-      if (dto.parts !== undefined) updateData.parts = dto.parts;
-      if (dto.is_published !== undefined) updateData.is_published = dto.is_published;
+        // Build an explicit Prisma input — avoids spreading attacker-controlled
+        // DTO fields into a `data` payload that could include relation IDs we
+        // didn't intend to update.
+        const updateData: Prisma.booksUpdateInput = { updated_at: new Date() };
+        if (dto.category_id !== undefined) updateData.book_categories = { connect: { id: dto.category_id } };
+        if (dto.cover_image_id !== undefined) updateData.media = { connect: { id: dto.cover_image_id } };
+        if (dto.slug !== undefined) updateData.slug = dto.slug;
+        if (dto.isbn !== undefined) updateData.isbn = dto.isbn;
+        if (dto.pages !== undefined) updateData.pages = dto.pages;
+        if (dto.publish_year !== undefined) updateData.publish_year = dto.publish_year;
+        if (dto.pdf_url !== undefined) updateData.pdf_url = dto.pdf_url;
+        if (dto.part_number !== undefined) updateData.part_number = dto.part_number;
+        if (dto.parts !== undefined) updateData.parts = dto.parts;
+        if (dto.is_published !== undefined) updateData.is_published = dto.is_published;
 
-      await tx.books.update({ where: { id }, data: updateData });
+        await tx.books.update({ where: { id }, data: updateData });
 
-      if (dto.translations) {
-        for (const t of dto.translations) {
-          const trData = {
-            title: t.title,
-            author: t.author ?? null,
-            publisher: t.publisher ?? null,
-            description: t.description ?? null,
-            series: t.series ?? null,
-            slug: t.slug ?? null,
-            meta_title: t.meta_title ?? null,
-            meta_description: t.meta_description ?? null,
-            og_image_id: t.og_image_id ?? null,
-            is_default: t.is_default ?? false,
-          };
-          await tx.book_translations.upsert({
-            where: { book_id_lang: { book_id: id, lang: t.lang } },
-            create: { book_id: id, lang: t.lang, ...trData },
-            update: trData,
-          });
+        if (dto.translations) {
+          for (const t of dto.translations) {
+            const trData = {
+              title: t.title,
+              author: t.author ?? null,
+              publisher: t.publisher ?? null,
+              description: t.description ?? null,
+              series: t.series ?? null,
+              meta_title: t.meta_title ?? null,
+              meta_description: t.meta_description ?? null,
+              og_image_id: t.og_image_id ?? null,
+              is_default: t.is_default ?? false,
+            };
+            await tx.book_translations.upsert({
+              where: { book_id_lang: { book_id: id, lang: t.lang } },
+              create: { book_id: id, lang: t.lang, ...trData },
+              update: trData,
+            });
+          }
+
+          const defaults = await tx.book_translations.count({ where: { book_id: id, is_default: true } });
+          if (defaults !== 1) {
+            throw new BadRequestException('Exactly one translation must have is_default: true');
+          }
         }
-
-        const defaults = await tx.book_translations.count({ where: { book_id: id, is_default: true } });
-        if (defaults !== 1) {
-          throw new BadRequestException('Exactly one translation must have is_default: true');
-        }
-      }
       });
     } catch (err) {
-      rethrowP2002AsConflict(err, 'A book translation slug is already in use');
+      rethrowP2002AsConflict(
+        err,
+        dto.slug ? `Slug "${dto.slug}" is already used by another book` : 'A unique field (slug or ISBN) is already in use',
+      );
     }
 
     await this.audit.write({
@@ -355,9 +349,10 @@ export class BooksService {
       this.prisma.books.count({ where }),
     ]);
 
-    // Strip the ISBN suffix in the response so the CMS shows the original.
+    // Strip the ISBN/slug suffixes in the response so the CMS shows the originals.
     const mapped = items.map((b) => ({
       ...b,
+      slug: b.slug ? stripSoftDeleteSuffix(b.slug) : b.slug,
       isbn: b.isbn ? stripSoftDeleteSuffix(b.isbn) : b.isbn,
       translation: resolveTranslation(b.book_translations, null),
     }));
@@ -376,7 +371,6 @@ export class BooksService {
   async restore(id: string, userId: string) {
     const book = await this.prisma.books.findFirst({
       where: { id, deleted_at: { not: null } },
-      include: { book_translations: true },
     });
     if (!book) throw new NotFoundException('Deleted book not found');
 
@@ -395,9 +389,7 @@ export class BooksService {
     }
 
     const restoredIsbn = book.isbn ? stripSoftDeleteSuffix(book.isbn) : null;
-    const restoredSlugs = book.book_translations
-      .filter((t) => t.slug)
-      .map((t) => ({ lang: t.lang, original: stripSoftDeleteSuffix(t.slug as string) }));
+    const restoredSlug = book.slug ? stripSoftDeleteSuffix(book.slug) : null;
 
     try {
       await this.prisma.$transaction(async (tx) => {
@@ -411,26 +403,24 @@ export class BooksService {
           }
         }
 
-        for (const { lang, original } of restoredSlugs) {
-          const conflict = await tx.book_translations.findFirst({
-            where: { lang, slug: original, NOT: { book_id: id } },
-            select: { book_id: true },
+        if (restoredSlug) {
+          const conflict = await tx.books.findFirst({
+            where: { slug: restoredSlug, deleted_at: null, NOT: { id } },
+            select: { id: true },
           });
           if (conflict) {
-            throw new ConflictException(`Cannot restore: slug "${original}" (${lang}) is now used by another book`);
+            throw new ConflictException(`Cannot restore: slug "${restoredSlug}" is now used by another book`);
           }
-        }
-
-        for (const { lang, original } of restoredSlugs) {
-          await tx.book_translations.update({
-            where: { book_id_lang: { book_id: id, lang } },
-            data: { slug: original },
-          });
         }
 
         await tx.books.update({
           where: { id },
-          data: { deleted_at: null, ...(restoredIsbn ? { isbn: restoredIsbn } : {}), updated_at: new Date() },
+          data: {
+            deleted_at: null,
+            updated_at: new Date(),
+            ...(restoredIsbn ? { isbn: restoredIsbn } : {}),
+            ...(restoredSlug ? { slug: restoredSlug } : {}),
+          },
         });
       });
     } catch (err) {
@@ -450,32 +440,20 @@ export class BooksService {
   }
 
   async softDelete(id: string, userId: string) {
-    const book = await this.prisma.books.findFirst({
-      where: { id, deleted_at: null },
-      include: { book_translations: true },
-    });
+    const book = await this.prisma.books.findFirst({ where: { id, deleted_at: null } });
     if (!book) throw new NotFoundException('Book not found');
 
-    // Free the unique ISBN and any per-translation slug by suffixing them;
-    // without this, recreating a book with the same ISBN/slug after deletion
-    // fails with a P2002 from the DB. Restore strips the suffix back off.
+    // Free the unique ISBN and slug by suffixing them; without this,
+    // recreating a book with the same ISBN/slug after deletion fails with a
+    // P2002 from the DB. Restore strips the suffix back off.
     const deletedAt = new Date();
     const suffix = softDeleteSuffix(deletedAt);
     const isbnUpdate = book.isbn ? { isbn: `${book.isbn}${suffix}` } : {};
+    const slugUpdate = book.slug ? { slug: `${book.slug}${suffix}` } : {};
 
-    await this.prisma.$transaction(async (tx) => {
-      for (const t of book.book_translations) {
-        if (t.slug) {
-          await tx.book_translations.update({
-            where: { book_id_lang: { book_id: id, lang: t.lang } },
-            data: { slug: `${t.slug}${suffix}` },
-          });
-        }
-      }
-      await tx.books.update({
-        where: { id },
-        data: { deleted_at: deletedAt, ...isbnUpdate },
-      });
+    await this.prisma.books.update({
+      where: { id },
+      data: { deleted_at: deletedAt, ...isbnUpdate, ...slugUpdate },
     });
 
     await this.audit.write({

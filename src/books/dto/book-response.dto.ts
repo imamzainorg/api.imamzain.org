@@ -113,6 +113,9 @@ class BookDto {
   @ApiProperty({ example: 'uuid-...', description: 'ID of the cover image media record' })
   cover_image_id: string;
 
+  @ApiPropertyOptional({ example: 'al-sahifa-al-sajjadiyya', nullable: true, description: 'Canonical, language-agnostic URL slug. Null if the book has no editor-assigned slug.' })
+  slug?: string | null;
+
   @ApiPropertyOptional({ example: '978-9953-0-2287-6' })
   isbn?: string;
 
@@ -169,6 +172,9 @@ class BookListItemDto {
 
   @ApiProperty({ example: 'uuid-...' })
   cover_image_id: string;
+
+  @ApiPropertyOptional({ example: 'al-sahifa-al-sajjadiyya', nullable: true })
+  slug?: string | null;
 
   @ApiPropertyOptional({ example: '978-9953-0-2287-6' })
   isbn?: string;
