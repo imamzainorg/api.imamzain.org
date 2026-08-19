@@ -230,6 +230,13 @@ record's `audio_url` / `pdf_url`. `durationSeconds` / `sizeMB` / `peaks`
 are computed client-side at upload time and POSTed with create — see
 `docs/CMS-INTEGRATION-NOTES.md` §17 for the browser extractor.
 
+Books and academic papers upload their PDF the same way: `POST
+/books/upload-url` / `POST /academic-papers/upload-url` (PDF only, 150 MB
+cap, no `content_type` to declare since it's always `application/pdf`),
+PUT the file, save the returned `publicUrl` onto `pdf_url`. Same
+no-confirm trade-off as the audios upload above — see
+`docs/CMS-INTEGRATION-NOTES.md` §21.
+
 ---
 
 ## Authentication flow

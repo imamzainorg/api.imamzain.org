@@ -95,4 +95,44 @@ describe('R2Service', () => {
       await expect(service.deleteObject('media/some-key.jpg')).resolves.toBeUndefined();
     });
   });
+
+  describe('presignAudioUpload', () => {
+    it('returns a 300 MB cap and the audio/ prefix for an audio MIME type', async () => {
+      const result = await service.presignAudioUpload('lecture.mp3', 'audio/mpeg');
+
+      expect(result.key).toBe('audio/test-uuid/lecture.mp3');
+      expect(result.publicUrl).toBe('https://cdn.imamzain.org/audio/test-uuid/lecture.mp3');
+      expect(result.maxBytes).toBe(300 * 1024 * 1024);
+    });
+
+    it('delegates PDF content to the audio/pdf/ prefix with a 50 MB cap', async () => {
+      const result = await service.presignAudioUpload('transcript.pdf', 'application/pdf');
+
+      expect(result.key).toBe('audio/pdf/test-uuid/transcript.pdf');
+      expect(result.publicUrl).toBe('https://cdn.imamzain.org/audio/pdf/test-uuid/transcript.pdf');
+      expect(result.maxBytes).toBe(50 * 1024 * 1024);
+    });
+
+    it('throws BadRequestException for a disallowed MIME type', async () => {
+      await expect(service.presignAudioUpload('video.mp4', 'video/mp4')).rejects.toThrow(
+        BadRequestException,
+      );
+    });
+  });
+
+  describe('presignDocumentUpload', () => {
+    it('builds a key under the given prefix and returns the given maxBytes, unrelated to the audio PDF cap', async () => {
+      const result = await service.presignDocumentUpload('al-sahifa.pdf', 'books/pdf/', 150 * 1024 * 1024);
+
+      expect(result.key).toBe('books/pdf/test-uuid/al-sahifa.pdf');
+      expect(result.publicUrl).toBe('https://cdn.imamzain.org/books/pdf/test-uuid/al-sahifa.pdf');
+      expect(result.maxBytes).toBe(150 * 1024 * 1024);
+    });
+
+    it('slugifies the filename and always appends a .pdf extension', async () => {
+      const result = await service.presignDocumentUpload('My Paper (Final).PDF', 'academic-papers/pdf/', 1);
+
+      expect(result.key).toBe('academic-papers/pdf/test-uuid/my-paper-final.pdf');
+    });
+  });
 });

@@ -60,6 +60,16 @@ const AUDIO_PDF_PREFIX = 'audio/pdf/';
 const MAX_AUDIO_BYTES = 300 * 1024 * 1024; // ~300 MB; long high-bitrate lectures
 const MAX_PDF_BYTES = 50 * 1024 * 1024; // ~50 MB; transcript / booklet PDFs
 
+// ── Document (book / academic-paper) PDF uploads ───────────────────────────
+// Same no-confirm, no-media-row shape as the audio companion-PDF upload above
+// (plain CDN URL saved straight onto the resource's `pdf_url` column) — just
+// a bigger cap, since these are full books/theses rather than a lecture
+// transcript. Deliberately its own constant, not a share of MAX_PDF_BYTES:
+// the two caps are sized for different content and should be free to diverge.
+export const DOCUMENT_PDF_BYTES = 150 * 1024 * 1024; // ~150 MB
+export const BOOK_PDF_PREFIX = 'books/pdf/';
+export const ACADEMIC_PAPER_PDF_PREFIX = 'academic-papers/pdf/';
+
 /** Match new-format original keys: `media/originals/<uuid>/<filename>`. */
 const ORIGINAL_KEY_PATTERN = /^media\/originals\/([0-9a-f-]{36})\//i;
 
@@ -191,12 +201,13 @@ export class R2Service {
       );
     }
 
+    if (isPdf) return this.presignDocumentUpload(filename, AUDIO_PDF_PREFIX, MAX_PDF_BYTES);
+
     const id = randomUUID();
     const slug = slugifyFilename(filename);
-    const ext = isPdf ? 'pdf' : AUDIO_EXTENSIONS[contentType];
+    const ext = AUDIO_EXTENSIONS[contentType];
     const safeName = `${slug || 'file'}.${ext}`;
-    const prefix = isPdf ? AUDIO_PDF_PREFIX : AUDIO_PREFIX;
-    const key = `${prefix}${id}/${safeName}`;
+    const key = `${AUDIO_PREFIX}${id}/${safeName}`;
 
     const command = new PutObjectCommand({
       Bucket: this.bucket,
@@ -206,7 +217,32 @@ export class R2Service {
 
     const uploadUrl = await getSignedUrl(this.client, command, { expiresIn: this.uploadUrlTtl });
     const publicUrl = `${this.publicBaseUrl}/${key}`;
-    const maxBytes = isPdf ? MAX_PDF_BYTES : MAX_AUDIO_BYTES;
+
+    return { uploadUrl, key, publicUrl, maxBytes: MAX_AUDIO_BYTES };
+  }
+
+  /**
+   * Presign a PUT for a PDF under an arbitrary key prefix — the shared core
+   * behind {@link presignAudioUpload}'s PDF branch and books'/academic-papers'
+   * document uploads. Same no-confirm, no-media-row trade-off throughout:
+   * the returned `publicUrl` is saved directly onto the resource's `pdf_url`
+   * column, with no server-side re-check of the uploaded file (validate size
+   * client-side before the PUT — `maxBytes` is advisory only).
+   */
+  async presignDocumentUpload(filename: string, keyPrefix: string, maxBytes: number) {
+    const id = randomUUID();
+    const slug = slugifyFilename(filename);
+    const safeName = `${slug || 'file'}.pdf`;
+    const key = `${keyPrefix}${id}/${safeName}`;
+
+    const command = new PutObjectCommand({
+      Bucket: this.bucket,
+      Key: key,
+      ContentType: PDF_MIME_TYPE,
+    });
+
+    const uploadUrl = await getSignedUrl(this.client, command, { expiresIn: this.uploadUrlTtl });
+    const publicUrl = `${this.publicBaseUrl}/${key}`;
 
     return { uploadUrl, key, publicUrl, maxBytes };
   }

@@ -7,6 +7,7 @@ import {
 import { BooksService } from "./books.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { AuditService } from "../common/audit/audit.service";
+import { R2Service } from "../storage/r2.service";
 
 const baseBook = {
   id: "book-1",
@@ -28,6 +29,7 @@ const baseBook = {
 describe("BooksService", () => {
   let service: BooksService;
   let prisma: any;
+  let r2: any;
 
   const mockTx = {
     books: { create: jest.fn(), update: jest.fn() },
@@ -59,11 +61,23 @@ describe("BooksService", () => {
           },
         },
         { provide: AuditService, useValue: { write: jest.fn().mockResolvedValue(true) } },
+        {
+          provide: R2Service,
+          useValue: {
+            presignDocumentUpload: jest.fn().mockResolvedValue({
+              uploadUrl: 'https://r2.example.com/signed',
+              key: 'books/pdf/uuid/book.pdf',
+              publicUrl: 'https://cdn.imamzain.org/books/pdf/uuid/book.pdf',
+              maxBytes: 150 * 1024 * 1024,
+            }),
+          },
+        },
       ],
     }).compile();
 
     service = module.get<BooksService>(BooksService);
     prisma = module.get(PrismaService);
+    r2 = module.get(R2Service);
   });
 
   afterEach(() => jest.clearAllMocks());
@@ -104,6 +118,16 @@ describe("BooksService", () => {
       await expect(service.findOne("ghost", null)).rejects.toThrow(
         NotFoundException,
       );
+    });
+  });
+
+  describe("requestPdfUploadUrl", () => {
+    it("delegates to r2.presignDocumentUpload with the books PDF prefix and 150 MB cap", async () => {
+      const result = await service.requestPdfUploadUrl({ filename: "book.pdf" });
+
+      expect(r2.presignDocumentUpload).toHaveBeenCalledWith("book.pdf", "books/pdf/", 150 * 1024 * 1024);
+      expect(result.message).toBe("Upload URL generated");
+      expect(result.data.publicUrl).toContain("books/pdf/");
     });
   });
 
