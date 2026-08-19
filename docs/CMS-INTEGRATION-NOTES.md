@@ -2353,17 +2353,30 @@ catch) — the only one of the three modules missing it; it now has the
 same `assertSlugAvailable` + `rethrowP2002AsConflict` pattern as the
 other two.
 
-### c. Old columns dropped (Phase C, part 2 — separate deploy)
+### c. Old columns dropped (Phase C, part 2 — separate PR, not merged yet)
 
-Migration `20260819110000` drops `post_translations.slug`,
-`book_translations.slug`, and `static_page_translations.slug` (plus
-their constraints), and tightens `posts.slug` / `static_pages.slug` to
-`NOT NULL` (`books.slug` stays nullable, matching `book_translations`
-before it). **Destructive — deploy separately after (a)+(b) are live and
-confirmed working**, per this project's migration-splitting practice:
-temporarily move this migration's folder out of `prisma/migrations/` for
-the deploy that ships (a)+(b), then move it back in for its own later,
-explicitly-confirmed deploy.
+A migration dropping `post_translations.slug`, `book_translations.slug`,
+and `static_page_translations.slug` (plus their constraints), and
+tightening `posts.slug` / `static_pages.slug` to `NOT NULL` (`books.slug`
+stays nullable, matching `book_translations` before it), is written and
+ready on branch `chore/content-slug-phase-c-drop-old-columns` —
+deliberately **not** included in this push's migrations.
+
+Why not just hold the folder out for one `prisma migrate deploy` call
+like this project's usual additive/destructive split: Render's build
+command runs `prisma migrate deploy` on every deploy off `main`, so
+"merged to main" and "will be applied" are effectively the same event
+here — there's no separate manual migrate step to control in isolation.
+The destructive migration therefore has to stay off `main` entirely
+until its own dedicated PR, not just out of one deploy invocation.
+`schema.prisma` already reflects the target end state (NOT NULL, old
+columns gone) even though the live database hasn't caught up yet — safe
+here because this repo hand-writes every migration (`migrate dev` is
+never used), so there's no auto-diff step to get confused by the gap.
+
+To ship it: open a PR from `chore/content-slug-phase-c-drop-old-columns`
+once (a)+(b) have been live in production and confirmed working, merge
+it on its own.
 
 ---
 
@@ -2383,7 +2396,8 @@ explicitly-confirmed deploy.
   allowlist yet — academic-paper and book `pdf_url` are still
   externally hosted).
 - Content-slug consolidation Phase C part 2 (see round 15, item c): the
-  destructive drop-old-columns migration (`20260819110000`) is written
-  and ready but must NOT ship in the same deploy as Phase B/C part 1 —
-  hold it out of `prisma migrate deploy` until part 1 has been live in
-  production and confirmed working, then apply it on its own.
+  destructive drop-old-columns migration is written and ready on branch
+  `chore/content-slug-phase-c-drop-old-columns` — deliberately kept off
+  `main` (not just out of one deploy call) since Render runs
+  `prisma migrate deploy` on every build off `main`. PR it once Phase
+  B/C part 1 has been live in production and confirmed working.
