@@ -30,6 +30,20 @@ SET "slug" = t."slug"
 FROM "static_page_translations" t
 WHERE t."page_id" = sp."id" AND t."is_default" = true AND sp."slug" IS NULL;
 
+-- Second-tier safety net: a row with ZERO translations at all (no default
+-- to backfill from — e.g. static_pages had 10 soft-deleted rows from a
+-- failed 2026-05-30 batch op, see round-14 audit §19.h) is invisible to the
+-- pre-flight check above, which only looks at deleted_at IS NULL rows.
+-- NOT NULL is a column-level constraint with no deleted_at exception, so
+-- any surviving NULL gets a synthetic, guaranteed-unique placeholder
+-- instead of blocking the migration. This caused a real failed deploy
+-- attempt (20260819110000, started 2026-08-19 06:50:53 UTC) before this
+-- fix was added — Postgres rolled the whole transaction back cleanly, no
+-- data was left inconsistent, but `prisma migrate resolve --rolled-back`
+-- was needed before deploys could proceed again.
+UPDATE "posts" SET "slug" = 'orphan-' || "id" WHERE "slug" IS NULL;
+UPDATE "static_pages" SET "slug" = 'orphan-' || "id" WHERE "slug" IS NULL;
+
 -- Tighten to NOT NULL, matching the requiredness the old translation-level
 -- column always had (books.slug stays nullable — book_translations.slug
 -- was always optional too).

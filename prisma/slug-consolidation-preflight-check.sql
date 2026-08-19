@@ -57,7 +57,8 @@ HAVING COUNT(*) > 1;
 
 -- 2. Rows that came out of Phase A's backfill with a NULL slug — meaning
 -- either no is_default=true translation exists, or (for books/papers only)
--- the default translation itself has a NULL slug.
+-- the default translation itself has a NULL slug. LIVE rows only — this is
+-- what actually matters for the public-facing app.
 SELECT 'posts: missing default-translation slug' AS issue, COUNT(*) AS row_count
 FROM posts WHERE slug IS NULL AND deleted_at IS NULL
 UNION ALL
@@ -65,3 +66,20 @@ SELECT 'static_pages: missing default-translation slug', COUNT(*)
 FROM static_pages WHERE slug IS NULL AND deleted_at IS NULL;
 -- (books is expected to have some NULLs — slug is optional there today,
 -- same as after the migration. Not a failure signal.)
+
+-- 2b. Same, but INCLUDING soft-deleted rows — this is what Phase C's
+-- `ALTER COLUMN slug SET NOT NULL` actually sees, since NOT NULL has no
+-- deleted_at exception. A non-zero result here did NOT show up in query 2
+-- (deleted_at-filtered) and broke a real deploy attempt on
+-- 20260819110000 (static_pages had 10 soft-deleted, zero-translation rows
+-- from a failed 2026-05-30 batch op — see round-14 audit §19.h). Phase C's
+-- migration now backfills a synthetic placeholder for any row this query
+-- still flags, so a non-zero result here is no longer blocking — but a
+-- non-zero count for posts specifically is worth a manual look, since posts
+-- shouldn't have zero-translation orphans the way that one static_pages
+-- batch op produced.
+SELECT 'posts: NULL slug incl. trash' AS issue, COUNT(*) AS row_count
+FROM posts WHERE slug IS NULL
+UNION ALL
+SELECT 'static_pages: NULL slug incl. trash', COUNT(*)
+FROM static_pages WHERE slug IS NULL;
