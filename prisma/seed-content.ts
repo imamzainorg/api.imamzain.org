@@ -208,11 +208,9 @@ async function seedPosts(): Promise<void> {
   for (const p of posts) {
     if (!p.slug) { skipped++; continue; }
 
-    // Idempotency: check if a post translation with this slug already exists
-    const existingTranslation = await prisma.post_translations.findFirst({
-      where: { lang: 'ar', slug: p.slug },
-    });
-    if (existingTranslation) { skipped++; continue; }
+    // Idempotency: check if a post with this slug already exists
+    const existingPost = await prisma.posts.findFirst({ where: { slug: p.slug } });
+    if (existingPost) { skipped++; continue; }
 
     const catName = p.category?.trim() ?? '';
     if (!catName) { skipped++; continue; }
@@ -244,6 +242,7 @@ async function seedPosts(): Promise<void> {
       data: {
         category_id: categoryId,
         cover_image_id: coverId,
+        slug: p.slug,
         published_at: safeParseDate(p.date),
         is_published: true,
         views: BigInt(p.views ?? 0),
@@ -253,7 +252,6 @@ async function seedPosts(): Promise<void> {
             title: p.title,
             summary: p.summary ?? null,
             body: p.content,
-            slug: p.slug,
             is_default: true,
           },
         },
@@ -543,13 +541,11 @@ async function seedStaticPages(): Promise<void> {
     if (!p.slug) { skipped++; continue; }
 
     // Idempotency: Arabic slug is the natural key
-    const existing = await prisma.static_page_translations.findFirst({
-      where: { lang: 'ar', slug: p.slug },
-    });
+    const existing = await prisma.static_pages.findFirst({ where: { slug: p.slug } });
     if (existing) { skipped++; continue; }
 
     const page = await prisma.static_pages.create({
-      data: { display_order: i, is_published: true },
+      data: { slug: p.slug, display_order: i, is_published: true },
     });
 
     await prisma.static_page_translations.create({
@@ -557,7 +553,6 @@ async function seedStaticPages(): Promise<void> {
         page_id: page.id,
         lang: 'ar',
         title: p.title ?? '',
-        slug: p.slug,
         body: p.content ?? '',
         is_default: true,
       },

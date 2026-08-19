@@ -73,10 +73,11 @@ export class HomepageService {
   private async news(lang: string | null) {
     const combined = await this.prisma.posts.findMany({
       where: { deleted_at: null, is_published: true },
-      include: {
+      select: {
+        slug: true,
         // Only the fields the mapper/resolveTranslation read — NOT the heavy
         // post_translations.body, which was being fetched then discarded.
-        post_translations: { select: { lang: true, is_default: true, slug: true, summary: true, title: true } },
+        post_translations: { select: { lang: true, is_default: true, summary: true, title: true } },
         media: { select: { url: true } },
       },
       orderBy: [{ is_featured: 'desc' }, { published_at: 'desc' }, { id: 'asc' }],
@@ -86,7 +87,7 @@ export class HomepageService {
     return combined.map((post) => {
       const t = resolveTranslation(post.post_translations, lang);
       return {
-        slug: t?.slug ?? null,
+        slug: post.slug ?? null,
         image: post.media?.url ?? null,
         summary: t?.summary ?? null,
         title: t?.title ?? null,
@@ -99,10 +100,14 @@ export class HomepageService {
   private async publications(lang: string | null) {
     const books = await this.prisma.books.findMany({
       where: { deleted_at: null, is_published: true },
-      include: {
+      select: {
+        id: true,
+        slug: true,
+        pages: true,
+        views: true,
         // Drop the heavy book_translations.description — the mapper only needs
-        // the title + slug (plus lang/is_default for resolveTranslation).
-        book_translations: { select: { lang: true, is_default: true, title: true, slug: true } },
+        // the title (plus lang/is_default for resolveTranslation).
+        book_translations: { select: { lang: true, is_default: true, title: true } },
         media: { select: { url: true } },
       },
       orderBy: [{ created_at: 'desc' }, { id: 'asc' }],
@@ -115,7 +120,7 @@ export class HomepageService {
         id: book.id,
         // Prefer the editor slug for a human/SEO-friendly URL; fall back to the
         // UUID for books that don't have a slug yet.
-        slug: t?.slug ?? book.id,
+        slug: book.slug ?? book.id,
         title: t?.title ?? null,
         image: book.media?.url ?? null,
         pages: book.pages,

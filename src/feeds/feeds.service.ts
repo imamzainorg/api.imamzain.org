@@ -31,8 +31,8 @@ function publicSiteBase(): string {
 // sitemap.xml a 404.
 //
 // Because there is no per-language URL, a row with several translations has one
-// canonical URL, not one per language. We emit the default translation's slug
-// and no hreflang alternates.
+// canonical URL, not one per language. We emit the resource's single
+// language-agnostic slug and no hreflang alternates.
 //
 // Two resources are deliberately absent:
 //   - academic papers: the site has no detail route (the scientific platform is
@@ -85,21 +85,17 @@ export class FeedsService {
     const [posts, pages, books] = await Promise.all([
       this.prisma.posts.findMany({
         where: { deleted_at: null, is_published: true },
-        include: { post_translations: { select: { lang: true, slug: true, is_default: true } } },
+        select: { slug: true, updated_at: true, published_at: true, created_at: true },
         orderBy: { published_at: 'desc' },
       }),
       this.prisma.static_pages.findMany({
         where: { deleted_at: null, is_published: true },
-        include: { static_page_translations: { select: { lang: true, slug: true, is_default: true } } },
+        select: { slug: true, updated_at: true, created_at: true },
         orderBy: [{ display_order: 'asc' }, { id: 'asc' }],
       }),
       this.prisma.books.findMany({
-        where: { deleted_at: null, is_published: true, book_translations: { some: { slug: { not: null } } } },
-        select: {
-          updated_at: true,
-          created_at: true,
-          book_translations: { select: { lang: true, slug: true, is_default: true } },
-        },
+        where: { deleted_at: null, is_published: true, slug: { not: null } },
+        select: { slug: true, updated_at: true, created_at: true },
       }),
     ]);
 
@@ -109,32 +105,25 @@ export class FeedsService {
     ];
 
     for (const post of posts) {
-      const t = resolveTranslation(post.post_translations, null);
-      if (!t) continue;
+      if (!post.slug) continue;
       const lastmod = (post.updated_at ?? post.published_at ?? post.created_at).toISOString();
-      this.pushUrlEntry(lines, postUrl(t.slug), lastmod);
+      this.pushUrlEntry(lines, postUrl(post.slug), lastmod);
     }
 
     // Static pages (biography, …) are public, indexable URLs too.
     for (const page of pages) {
-      const t = resolveTranslation(page.static_page_translations, null);
-      if (!t) continue;
+      if (!page.slug) continue;
       const lastmod = (page.updated_at ?? page.created_at).toISOString();
-      this.pushUrlEntry(lines, staticPageUrl(t.slug), lastmod);
+      this.pushUrlEntry(lines, staticPageUrl(page.slug), lastmod);
     }
 
     // Books with an editor slug get an indexable URL. Rows with no slug stay
     // UUID-only and are intentionally omitted (nothing SEO-friendly to
-    // advertise). Prefer the default translation, but fall back to any slugged
-    // one so a book whose default translation lacks a slug is still listed.
+    // advertise).
     for (const book of books) {
-      const slugged = book.book_translations.filter(
-        (t): t is (typeof book.book_translations)[number] & { slug: string } => !!t.slug,
-      );
-      if (slugged.length === 0) continue;
-      const t = resolveTranslation(slugged, null) ?? slugged[0];
+      if (!book.slug) continue;
       const lastmod = (book.updated_at ?? book.created_at).toISOString();
-      this.pushUrlEntry(lines, bookUrl(t.slug), lastmod);
+      this.pushUrlEntry(lines, bookUrl(book.slug), lastmod);
     }
 
     lines.push('</urlset>');
@@ -187,9 +176,9 @@ export class FeedsService {
 
     for (const post of posts) {
       const translation = resolveTranslation(post.post_translations, null);
-      if (!translation) continue;
+      if (!translation || !post.slug) continue;
 
-      const url = postUrl(translation.slug);
+      const url = postUrl(post.slug);
       const title = translation.title;
       const description = translation.summary ?? htmlToPlainExcerpt(translation.body ?? '');
       const pubDate = (post.published_at ?? post.created_at).toUTCString();

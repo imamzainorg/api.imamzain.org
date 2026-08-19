@@ -2242,8 +2242,9 @@ default translation) — additive only, the old translation-level column is
 still the one the API reads/writes. A pre-flight check for cross-language
 slug collisions (the old per-`lang` uniqueness allowed some that a global
 uniqueness would not) came back clean for all three. Phase B (unique
-constraint) and Phase C (app cutover + drop the old columns) are not yet
-built.
+constraint) and Phase C (app cutover + drop the old columns) shipped in
+Round 15 (§20) — part 2 of Phase C (the column drop) is still pending a
+separate deploy.
 
 ### c. `academic_papers`: dead slug/SEO feature removed
 
@@ -2313,7 +2314,60 @@ and the RSS feed's top-50 cutoff.
 
 ---
 
-## 20. Open follow-ups (still not in this push)
+## 20. Round 15 — content-slug consolidation Phase B + C
+
+Finishes the slug cleanup Round 14 started (§19.b). Posts, books and
+static_pages now work exactly like `audios`: one slug per resource, not
+one per language.
+
+### a. Global uniqueness (Phase B)
+
+Migration `20260819100000` adds a partial unique index —
+`uq_posts_slug` / `uq_books_slug` / `uq_static_pages_slug`, mirroring
+`uq_audios_slug` — to the spine-level `slug` column Phase A added.
+Additive/safe; deployed together with the app-code cutover below.
+
+### b. App-code cutover (Phase C, part 1)
+
+`slug` moved from a field on each translation to a single top-level
+field on the resource itself, on both the request DTOs (`CreatePostDto`
+etc.) and the response DTOs. This is a **breaking API change** — the
+admin panel must send/expect a top-level `slug` instead of a per-
+translation one before/alongside this deploying.
+
+`create` / `update` / `softDelete` / `restore` / `findBySlug` for
+posts, books, and static_pages were rewritten to read/write the spine
+column, following `audios.service.ts` as the reference pattern
+(`assertSlugAvailable`, single-column soft-delete suffixing, a single
+`findFirst` for `findBySlug` with no language fallback needed since the
+slug is language-agnostic now). `feeds.service.ts`,
+`homepage.service.ts`, and `prisma/seed-content.ts` /
+`prisma/seed-diagnose.ts` were updated to match.
+
+Two bugs fixed as a direct side effect of touching this code:
+`search.service.ts`'s `searchBooks` hardcoded `slug: null` in its hit
+mapping even though the slug was available — it now returns the real
+value, matching `searchPosts`. `static-pages.service.ts` `create`/
+`update` had no slug-collision handling at all (no pre-check, no P2002
+catch) — the only one of the three modules missing it; it now has the
+same `assertSlugAvailable` + `rethrowP2002AsConflict` pattern as the
+other two.
+
+### c. Old columns dropped (Phase C, part 2 — separate deploy)
+
+Migration `20260819110000` drops `post_translations.slug`,
+`book_translations.slug`, and `static_page_translations.slug` (plus
+their constraints), and tightens `posts.slug` / `static_pages.slug` to
+`NOT NULL` (`books.slug` stays nullable, matching `book_translations`
+before it). **Destructive — deploy separately after (a)+(b) are live and
+confirmed working**, per this project's migration-splitting practice:
+temporarily move this migration's folder out of `prisma/migrations/` for
+the deploy that ships (a)+(b), then move it back in for its own later,
+explicitly-confirmed deploy.
+
+---
+
+## 21. Open follow-ups (still not in this push)
 
 - Self-service password reset flow (would need an `email` column on
   `users` plus the `password_reset_tokens` table described in the
@@ -2328,9 +2382,8 @@ and the RSS feed's top-50 cutoff.
   `MAX_BYTES_BY_MIME`, but `application/pdf` is not on the MIME
   allowlist yet — academic-paper and book `pdf_url` are still
   externally hosted).
-- Content-slug consolidation Phase B/C (see round 14, item b): add the
-  global unique constraint to posts/books/static_pages' new spine-level
-  `slug` column, cut the ~4 modules' create/update/delete/restore/
-  findBySlug + `feeds.service.ts` over to reading/writing it, then drop
-  the old translation-level `slug` columns. Pre-flight check already ran
-  clean — safe to schedule whenever the app-code rewrite is wanted.
+- Content-slug consolidation Phase C part 2 (see round 15, item c): the
+  destructive drop-old-columns migration (`20260819110000`) is written
+  and ready but must NOT ship in the same deploy as Phase B/C part 1 —
+  hold it out of `prisma migrate deploy` until part 1 has been live in
+  production and confirmed working, then apply it on its own.

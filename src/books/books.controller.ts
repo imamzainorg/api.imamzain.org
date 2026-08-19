@@ -77,7 +77,7 @@ export class BooksController {
   @ApiOperation({
     summary: 'List soft-deleted books (CMS trash view)',
     description:
-      'Returns books with `deleted_at` set, paginated. ISBN is returned with the `__del_<timestamp>` suffix already stripped, so the CMS can show the original ISBN. Requires permission: `books:delete`.',
+      'Returns books with `deleted_at` set, paginated. ISBN and slug are returned with the `__del_<timestamp>` suffix already stripped, so the CMS can show the originals. Requires permission: `books:delete`.',
   })
   @ApiQuery({ name: 'page', required: false, type: Number, example: 1 })
   @ApiQuery({ name: 'limit', required: false, type: Number, example: 20 })
@@ -93,12 +93,12 @@ export class BooksController {
   @ApiOperation({
     summary: 'Restore a soft-deleted book',
     description:
-      'Sets `deleted_at` back to null and unsuffixes the ISBN. Fails with 409 if the original ISBN is now used by another book. Requires permission: `books:delete`.',
+      'Sets `deleted_at` back to null and unsuffixes the ISBN and slug. Fails with 409 if the original ISBN or slug is now used by another book. Requires permission: `books:delete`.',
   })
   @ApiParam({ name: 'id', format: 'uuid' })
   @ApiOkResponse({ type: BookMessageResponseDto, description: 'Book restored' })
   @ApiNotFoundResponse({ type: NotFoundErrorDto, description: 'No soft-deleted book with that ID exists' })
-  @ApiConflictResponse({ type: ConflictErrorDto, description: 'A live book has taken the restored ISBN' })
+  @ApiConflictResponse({ type: ConflictErrorDto, description: 'A live book has taken the restored ISBN or slug' })
   restore(@Param('id') id: string, @CurrentUser() user: CurrentUserPayload) {
     return this.booksService.restore(id, user.id);
   }
@@ -108,7 +108,7 @@ export class BooksController {
   @ApiOperation({
     summary: 'Get a single book by slug (public)',
     description:
-      'Resolves a book by an editor-assigned translation slug, regardless of the visitor\'s Accept-Language — the display translation still respects Accept-Language. 404 if no live book owns that slug. CDN-cacheable.',
+      "Resolves a book by its canonical, language-agnostic editor-assigned slug — the display translation still respects Accept-Language. 404 if no live book owns that slug. CDN-cacheable.",
   })
   @ApiParam({ name: 'slug', example: 'al-sahifa-al-sajjadiyya' })
   @ApiOkResponse({ type: BookDetailResponseDto, description: 'Book detail with all translations' })
@@ -143,7 +143,7 @@ export class BooksController {
   @ApiCreatedResponse({ type: BookCreatedResponseDto, description: 'Book created with all provided translations; returns the full book object' })
   @ApiBadRequestResponse({ type: ValidationErrorDto, description: 'Validation failed' })
   @ApiNotFoundResponse({ type: NotFoundErrorDto, description: 'No book category with that category_id exists, or the cover_image_id does not match any media record' })
-  @ApiConflictResponse({ type: ConflictErrorDto, description: 'A book with that ISBN already exists' })
+  @ApiConflictResponse({ type: ConflictErrorDto, description: 'A book with that ISBN or slug already exists' })
   create(@Body() dto: CreateBookDto, @CurrentUser() user: CurrentUserPayload, @Lang() lang: string | null) {
     return this.booksService.create(dto, user.id, lang);
   }
@@ -155,7 +155,7 @@ export class BooksController {
   @ApiOkResponse({ type: BookDetailResponseDto, description: 'Updated book with all translations' })
   @ApiBadRequestResponse({ type: ValidationErrorDto, description: 'Validation failed, or the resulting translations did not contain exactly one is_default entry' })
   @ApiNotFoundResponse({ type: NotFoundErrorDto, description: 'No book with that ID exists, or the new category_id / cover_image_id does not exist or has been soft-deleted' })
-  @ApiConflictResponse({ type: ConflictErrorDto, description: 'A book with that ISBN already exists' })
+  @ApiConflictResponse({ type: ConflictErrorDto, description: 'A book with that ISBN or slug already exists' })
   update(@Param('id') id: string, @Body() dto: UpdateBookDto, @CurrentUser() user: CurrentUserPayload, @Lang() lang: string | null) {
     return this.booksService.update(id, dto, user.id, lang);
   }
