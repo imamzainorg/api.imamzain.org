@@ -103,15 +103,44 @@ export type ResearchJson = {
 
 export type JournalJson = {
   id: string;
-  translations?: { languageid: number; title: string; authors?: string[]; publicationVenue?: string; pagenam?: number }[];
+  translations?: { languageid: number; title: string; authors?: string[]; publicationVenue?: string; language?: string; pagenam?: number }[];
   publishedYear?: string; pdfUrl?: string;
 };
 
 export type StudentJson = {
   id: string;
-  translations?: { languageid: number; title: string; authors?: string[]; publicationVenue?: string; category?: string; pagenam?: number }[];
+  translations?: { languageid: number; title: string; authors?: string[]; publicationVenue?: string; category?: string; language?: string; pagenam?: number }[];
   publishedYear?: string; pdfUrl?: string;
 };
+
+/**
+ * Normalise the free-text language labels used across the legacy JSON
+ * exports (Arabic "عربي"/"العربية", Persian "فارسي", English written as
+ * either "انجليزي" or literal "English") down to the ISO 639-1 codes this
+ * project's `languages` table already uses. Unknown labels are dropped
+ * rather than guessed — see the caller for how an empty result is handled.
+ *
+ * Some records express a bilingual document as one compound string (e.g.
+ * student.json's "العربية - انجليزي"), so each label is split on common
+ * separators before mapping.
+ */
+const LANGUAGE_LABEL_TO_CODE: Record<string, string> = {
+  'عربي': 'ar', 'العربية': 'ar',
+  'فارسي': 'fa', 'فارسى': 'fa',
+  'انجليزي': 'en', 'إنجليزي': 'en', 'english': 'en',
+};
+
+export function normalizeDocumentLanguages(labels: (string | undefined | null)[]): string[] {
+  const codes = new Set<string>();
+  for (const label of labels) {
+    if (!label) continue;
+    for (const part of label.split(/[-/,]/)) {
+      const code = LANGUAGE_LABEL_TO_CODE[part.trim().toLowerCase()];
+      if (code) codes.add(code);
+    }
+  }
+  return [...codes];
+}
 
 export type HadithJson = { id: number; content: string };
 
