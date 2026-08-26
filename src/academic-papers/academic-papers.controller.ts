@@ -16,6 +16,8 @@ import { CurrentUser, CurrentUserPayload } from '../common/decorators/current-us
 import { Lang } from '../common/decorators/language.decorator';
 import { NotFoundErrorDto, ValidationErrorDto } from '../common/dto/api-response.dto';
 import { PaginationDto } from '../common/dto/pagination.dto';
+import { RequestPdfUploadUrlDto } from '../common/dto/request-pdf-upload-url.dto';
+import { DocumentUploadUrlResponseDto } from '../common/dto/upload-url-response.dto';
 import { PublicCache } from '../common/decorators/public-cache.decorator';
 import { AcademicPapersService } from './academic-papers.service';
 import { AcademicPaperQueryDto, CreateAcademicPaperDto, TogglePublishDto, UpdateAcademicPaperDto } from './dto/academic-paper.dto';
@@ -118,6 +120,21 @@ export class AcademicPapersController {
   @ApiNotFoundResponse({ type: NotFoundErrorDto, description: 'No paper with that ID exists, or it has been deleted' })
   trackView(@Param('id') id: string) {
     return this.service.trackView(id);
+  }
+
+  @Post('upload-url')
+  @Auth('academic-papers:create')
+  @Throttle({ default: { limit: 60, ttl: 60_000 } })
+  @ApiOperation({
+    summary: 'Request a pre-signed R2 upload URL for a paper PDF',
+    description:
+      'PUT the file directly to R2 with the returned `uploadUrl` (same `Content-Type: application/pdf` header as the PUT), then save `publicUrl` onto `pdf_url` via POST/PATCH (no confirm step). ' +
+      'Max 150 MB; `maxBytes` is advisory only — validate before the PUT. Requires permission: `academic-papers:create`.',
+  })
+  @ApiOkResponse({ type: DocumentUploadUrlResponseDto })
+  @ApiBadRequestResponse({ type: ValidationErrorDto, description: 'Missing or invalid filename' })
+  requestPdfUploadUrl(@Body() dto: RequestPdfUploadUrlDto) {
+    return this.service.requestPdfUploadUrl(dto);
   }
 
   @Post()

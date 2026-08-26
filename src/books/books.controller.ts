@@ -17,6 +17,8 @@ import { CurrentUser, CurrentUserPayload } from '../common/decorators/current-us
 import { Lang } from '../common/decorators/language.decorator';
 import { ConflictErrorDto, NotFoundErrorDto, ValidationErrorDto } from '../common/dto/api-response.dto';
 import { PaginationDto } from '../common/dto/pagination.dto';
+import { RequestPdfUploadUrlDto } from '../common/dto/request-pdf-upload-url.dto';
+import { DocumentUploadUrlResponseDto } from '../common/dto/upload-url-response.dto';
 import { PublicCache } from '../common/decorators/public-cache.decorator';
 import { BookQueryDto, CreateBookDto, TogglePublishDto, UpdateBookDto } from './dto/book.dto';
 import {
@@ -135,6 +137,21 @@ export class BooksController {
   @ApiNotFoundResponse({ type: NotFoundErrorDto, description: 'No book with that ID exists, or it has been deleted' })
   trackView(@Param('id') id: string) {
     return this.booksService.trackView(id);
+  }
+
+  @Post('upload-url')
+  @Auth('books:create')
+  @Throttle({ default: { limit: 60, ttl: 60_000 } })
+  @ApiOperation({
+    summary: 'Request a pre-signed R2 upload URL for a book PDF',
+    description:
+      'PUT the file directly to R2 with the returned `uploadUrl` (same `Content-Type: application/pdf` header as the PUT), then save `publicUrl` onto `pdf_url` via POST/PATCH (no confirm step). ' +
+      'Max 150 MB; `maxBytes` is advisory only — validate before the PUT. Requires permission: `books:create`.',
+  })
+  @ApiOkResponse({ type: DocumentUploadUrlResponseDto })
+  @ApiBadRequestResponse({ type: ValidationErrorDto, description: 'Missing or invalid filename' })
+  requestPdfUploadUrl(@Body() dto: RequestPdfUploadUrlDto) {
+    return this.booksService.requestPdfUploadUrl(dto);
   }
 
   @Post()

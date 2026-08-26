@@ -7,6 +7,8 @@ import { rethrowP2002AsConflict } from '../common/utils/prisma-error.util';
 import { assertExactlyOneDefault, resolveTranslation } from '../common/utils/translation.util';
 import { buildPaginationMeta, resolvePagination } from '../common/utils/pagination.util';
 import { publicWhere } from '../common/utils/visibility.util';
+import { ACADEMIC_PAPER_PDF_PREFIX, DOCUMENT_PDF_BYTES, R2Service } from '../storage/r2.service';
+import { RequestPdfUploadUrlDto } from '../common/dto/request-pdf-upload-url.dto';
 import { AcademicPaperQueryDto, CreateAcademicPaperDto, UpdateAcademicPaperDto } from './dto/academic-paper.dto';
 
 // List queries drop the abstract (heavy free-text) from translations.
@@ -49,7 +51,14 @@ export class AcademicPapersService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly audit: AuditService,
+    private readonly r2: R2Service,
   ) {}
+
+  /** Pre-sign an R2 PUT for a paper PDF; the CMS saves the returned publicUrl onto pdf_url. */
+  async requestPdfUploadUrl(dto: RequestPdfUploadUrlDto) {
+    const result = await this.r2.presignDocumentUpload(dto.filename, ACADEMIC_PAPER_PDF_PREFIX, DOCUMENT_PDF_BYTES);
+    return { message: 'Upload URL generated', data: result };
+  }
 
   async findAll(query: AcademicPaperQueryDto, lang: string | null, isAdmin = false) {
     const { page, limit, skip } = resolvePagination(query);

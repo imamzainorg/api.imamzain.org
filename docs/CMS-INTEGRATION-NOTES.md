@@ -2380,7 +2380,40 @@ it on its own.
 
 ---
 
-## 21. Open follow-ups (still not in this push)
+## 21. Round 16 — PDF upload support (books, academic-papers)
+
+Books and academic papers could only ever store an externally-hosted PDF
+URL typed into a text box — no way to upload a file through this API and
+get a URL back. Closed the gap, following the exact shape `audios`
+already uses for its own optional companion-PDF upload (no confirm step,
+no DB row for the upload itself, no image-variant pipeline involvement):
+
+- `R2Service.presignAudioUpload`'s PDF branch was generalized into a
+  standalone `presignDocumentUpload(filename, keyPrefix, maxBytes)`,
+  which `presignAudioUpload` now calls for its own PDF case (still its
+  own 50 MB cap, unchanged) — no logic duplicated between the two.
+- New `POST /books/upload-url` and `POST /academic-papers/upload-url`
+  (`@Auth('<resource>:create')`, 60/min throttle, matching audios'
+  route): PDF-only, 150 MB cap (`docs/CMS-INTEGRATION-NOTES.md` §12.a
+  and the `MAX_BYTES_BY_MIME` comment in `r2.service.ts` both already
+  flagged 150 MB as the intended figure for this). Client PUTs the file
+  to the returned `uploadUrl`, then saves `publicUrl` onto `pdf_url` via
+  the existing `POST`/`PATCH` — no new field, no schema change.
+- Shared `RequestPdfUploadUrlDto` (just `filename` — unlike audios'
+  version there's no `content_type` to declare, since these two routes
+  only ever accept PDF) and `DocumentUploadUrlResponseDto`, both in
+  `src/common/dto/`, reused by both modules rather than duplicated.
+
+**Same trade-off as audios, deliberately not fixed here:** no
+server-side re-verification of the uploaded file's actual size/type (no
+`HeadObject` confirm step) — `maxBytes` is advisory, trusted from the
+client. Fixing that for all three (audios + books + academic-papers)
+together, with the media pipeline's confirm-step pattern, is a bigger
+piece of work than this round; noted in Open follow-ups.
+
+---
+
+## 22. Open follow-ups (still not in this push)
 
 - Self-service password reset flow (would need an `email` column on
   `users` plus the `password_reset_tokens` table described in the
@@ -2391,10 +2424,11 @@ it on its own.
 - Versioning / revision history on content edits.
 - Sitemap-index / chunked sub-sitemaps once published-post count
   approaches the 50k-URL cap (likely years away).
-- PDF uploads through `/media/*` (cap infrastructure is in place at
-  `MAX_BYTES_BY_MIME`, but `application/pdf` is not on the MIME
-  allowlist yet — academic-paper and book `pdf_url` are still
-  externally hosted).
+- PDF/audio uploads (`audios`, `books`, `academic-papers`) have no
+  confirm step, size/type re-check, or orphan-upload sweep — `maxBytes`
+  is advisory only, trusted from the client (see round 16). Closing this
+  would mean adopting the media pipeline's confirm-step pattern for all
+  three.
 - Content-slug consolidation Phase C part 2 (see round 15, item c): the
   destructive drop-old-columns migration is written and ready on branch
   `chore/content-slug-phase-c-drop-old-columns` — deliberately kept off
