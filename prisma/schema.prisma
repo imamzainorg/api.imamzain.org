@@ -55,6 +55,10 @@ model academic_papers {
   pdf_url                     String?
   uploaded_by                 String?                       @db.Uuid
   views                       BigInt                        @default(0)
+  // What language the actual PDF is written in (migration 20260819120000) —
+  // distinct from academic_paper_translations.lang (the title text's
+  // language). See the books.document_languages comment for the full split.
+  document_languages          String[]                      @default([])
   is_published                Boolean                       @default(true)
   created_at                  DateTime                      @default(now()) @db.Timestamptz(6)
   updated_at                  DateTime                      @default(now()) @db.Timestamptz(6)
@@ -147,6 +151,10 @@ model books {
   slug              String?
   views             BigInt              @default(0)
   is_published      Boolean             @default(true)
+  // What language(s) the actual PDF is written in (migration 20260819120000)
+  // — distinct from book_translations.lang, which is the title/author text's
+  // language. Array: bilingual editions are real in this library.
+  document_languages String[]           @default([])
   created_at        DateTime            @default(now()) @db.Timestamptz(6)
   updated_at        DateTime            @default(now()) @db.Timestamptz(6)
   added_by          String?             @db.Uuid

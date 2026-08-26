@@ -18,6 +18,7 @@ import {
   detectMimeType,
   safeParseDate,
   getOrCreateSpeaker,
+  normalizeDocumentLanguages,
 } from './lib/seed-utils';
 import type {
   BookJson,
@@ -78,10 +79,17 @@ const GALLERY_CAT_SLUG: Record<string, string> = {
   'مجالس': 'majalis',
 };
 
+// The old single "رسائل جامعية" (university theses) category was split into
+// three by degree level. Every existing thesis's level is recoverable from
+// student.json's own translations[0].category field ("بكالوريوس"/"رسالة
+// ماجستير"/"دكتوراه") — see DEGREE_LABEL_TO_CATKEY below — so nothing about
+// this split is guesswork.
 const ACADEMIC_CATS = [
-  { key: 'conference', ar: 'بحوث المؤتمرات العلمية', ar_slug: 'buhuth-al-mutamarat' },
-  { key: 'journals',   ar: 'بحوث في دوريات علمية',   ar_slug: 'buhuth-fi-dawriyyat' },
-  { key: 'student',    ar: 'رسائل جامعية',           ar_slug: 'rasail-jamiiyya' },
+  { key: 'conference',       ar: 'بحوث المؤتمرات العلمية', ar_slug: 'buhuth-al-mutamarat' },
+  { key: 'journals',         ar: 'بحوث في دوريات علمية',   ar_slug: 'buhuth-fi-dawriyyat' },
+  { key: 'thesis_bachelor',  ar: 'رسائل البكالوريوس',      ar_slug: 'rasail-bachelors' },
+  { key: 'thesis_master',    ar: 'رسائل الماجستير',        ar_slug: 'rasail-master' },
+  { key: 'thesis_phd',       ar: 'رسائل الدكتوراه',        ar_slug: 'rasail-phd' },
 ];
 
 // ── Category helpers ──────────────────────────────────────────────────────────
@@ -169,7 +177,9 @@ async function seedBooks(): Promise<void> {
         pdf_url: b.pdf?.trim() ? normalizeUrl(b.pdf) : null,
         part_number: b.partNumber != null ? (parseInt(String(b.partNumber), 10) || null) : null,
         parts: b.totalParts != null ? (parseInt(String(b.totalParts), 10) || null) : null,
-        views: BigInt(b.views ?? 0),
+        // views intentionally NOT seeded from JSON — starts at the column
+        // default (0). The legacy counts aren't real usage data for this API.
+        document_languages: normalizeDocumentLanguages(Array.isArray(b.language) ? b.language : [b.language]),
         book_translations: {
           create: {
             lang: 'ar',
@@ -245,7 +255,7 @@ async function seedPosts(): Promise<void> {
         slug: p.slug,
         published_at: safeParseDate(p.date),
         is_published: true,
-        views: BigInt(p.views ?? 0),
+        // views intentionally NOT seeded from JSON — starts at 0, same as books.
         post_translations: {
           create: {
             lang: 'ar',
@@ -392,14 +402,24 @@ async function seedResearchPapers(categoryId: string): Promise<void> {
   console.log(`  ✓ ${created} conference papers seeded, ${skipped} skipped`);
 }
 
+// journals.json / student.json encode each title variant's own language as
+// `languageid`, NOT the free-text `language` field (which is the SOURCE
+// DOCUMENT's language, redundantly repeated on every translation of that
+// record — that's what feeds document_languages below). Only 1 and 2 occur
+// in the data: 1 is always the Arabic-rendered title (used for the Arabic
+// UI and as the idempotency key), 2 — present only when the source isn't
+// Arabic — is the original-language title.
+const JOURNAL_LANGUAGEID_TO_LANG: Record<number, string> = { 1: 'ar', 2: 'fa' };
+
 async function seedJournals(categoryId: string): Promise<void> {
   const journals = loadJson<JournalJson[]>('journals.json');
   let created = 0;
   let skipped = 0;
 
   for (const j of journals) {
-    const t = j.translations?.[0];
-    const arTitle = t?.title?.trim() ?? '';
+    const translations = j.translations ?? [];
+    const primary = translations.find((t) => t.languageid === 1) ?? translations[0];
+    const arTitle = primary?.title?.trim() ?? '';
 
     if (j.pdfUrl) {
       const existing = await prisma.academic_papers.findFirst({ where: { pdf_url: j.pdfUrl, category_id: categoryId } });
@@ -413,27 +433,39 @@ async function seedJournals(categoryId: string): Promise<void> {
       if (existing) { skipped++; continue; }
     }
 
-    const authors = (t?.authors ?? []).filter(Boolean);
+    const documentLanguages = normalizeDocumentLanguages(translations.map((t) => t.language));
 
-    // Paper + Arabic translation in ONE nested create so a crash can't leave a
-    // translation-less paper behind.
+    // One row per title variant the source actually provides — recovers the
+    // ~225 records that carry a second, original-language title alongside
+    // the Arabic one (previously dropped: only translations[0] was ever read).
+    const translationCreates = translations
+      .map((t) => {
+        const lang = JOURNAL_LANGUAGEID_TO_LANG[t.languageid];
+        if (!lang) return null; // unseen languageid — skip rather than guess
+        return {
+          lang,
+          title: t.title?.trim() ?? '',
+          abstract: null,
+          authors: (t.authors ?? []).filter(Boolean),
+          keywords: [],
+          publication_venue: t.publicationVenue ?? null,
+          page_count: t.pagenam ?? null,
+          is_default: t.languageid === 1,
+        };
+      })
+      .filter((t): t is NonNullable<typeof t> => t !== null);
+
+    if (translationCreates.length === 0) { skipped++; continue; }
+
+    // Paper + every translation in ONE nested create so a crash can't leave a
+    // partially-translated paper behind.
     await prisma.academic_papers.create({
       data: {
         category_id: categoryId,
         published_year: j.publishedYear ?? null,
         pdf_url: j.pdfUrl ?? null,
-        academic_paper_translations: {
-          create: {
-            lang: 'ar',
-            title: arTitle,
-            abstract: null,
-            authors,
-            keywords: [],
-            publication_venue: t?.publicationVenue ?? null,
-            page_count: t?.pagenam ?? null,
-            is_default: true,
-          },
-        },
+        document_languages: documentLanguages,
+        academic_paper_translations: { create: translationCreates },
       },
     });
 
@@ -443,7 +475,20 @@ async function seedJournals(categoryId: string): Promise<void> {
   console.log(`  ✓ ${created} journal articles seeded, ${skipped} skipped`);
 }
 
-async function seedStudentTheses(categoryId: string): Promise<void> {
+// Every thesis in student.json already carries its own degree level in
+// translations[0].category — confirmed against the live data: exactly these
+// 3 values, 85 + 38 + 9 = 132 (every record), matching the pre-existing
+// bachelors/master/phd split already present in R2's research/student/ tree.
+// Nothing here is inferred; it's a straight read of a field the old seeder
+// discarded (it used to fold this into the venue string instead — see git
+// history — losing the ability to filter/query by degree level).
+const DEGREE_LABEL_TO_CATKEY: Record<string, string> = {
+  'بكالوريوس': 'thesis_bachelor',
+  'رسالة ماجستير': 'thesis_master',
+  'دكتوراه': 'thesis_phd',
+};
+
+async function seedStudentTheses(catMap: Map<string, string>): Promise<void> {
   const theses = loadJson<StudentJson[]>('student.json');
   let created = 0;
   let skipped = 0;
@@ -451,6 +496,15 @@ async function seedStudentTheses(categoryId: string): Promise<void> {
   for (const s of theses) {
     const t = s.translations?.[0];
     const arTitle = t?.title?.trim() ?? '';
+
+    const degreeLabel = t?.category?.trim() ?? '';
+    const catKey = DEGREE_LABEL_TO_CATKEY[degreeLabel];
+    if (!catKey) {
+      throw new Error(
+        `Unmapped thesis degree label "${degreeLabel}" (paper id ${s.id}) — add it to DEGREE_LABEL_TO_CATKEY in seed-content.ts`,
+      );
+    }
+    const categoryId = catMap.get(catKey)!;
 
     if (s.pdfUrl) {
       const existing = await prisma.academic_papers.findFirst({ where: { pdf_url: s.pdfUrl, category_id: categoryId } });
@@ -465,9 +519,7 @@ async function seedStudentTheses(categoryId: string): Promise<void> {
     }
 
     const authors = (t?.authors ?? []).filter(Boolean);
-    const degreeLabel = t?.category ?? null; // e.g. "بكالوريوس", "دكتوراه"
-    const venue = t?.publicationVenue ?? null;
-    const arVenue = degreeLabel ? `${degreeLabel} — ${venue ?? ''}`.replace(/\s+/g, ' ').trim() : venue ?? null;
+    const documentLanguages = normalizeDocumentLanguages([t?.language]);
 
     // Paper + Arabic translation in ONE nested create so a crash can't leave a
     // translation-less paper behind.
@@ -476,6 +528,7 @@ async function seedStudentTheses(categoryId: string): Promise<void> {
         category_id: categoryId,
         published_year: s.publishedYear ?? null,
         pdf_url: s.pdfUrl ?? null,
+        document_languages: documentLanguages,
         academic_paper_translations: {
           create: {
             lang: 'ar',
@@ -483,7 +536,7 @@ async function seedStudentTheses(categoryId: string): Promise<void> {
             abstract: null,
             authors,
             keywords: [],
-            publication_venue: arVenue,
+            publication_venue: t?.publicationVenue ?? null,
             page_count: t?.pagenam ?? null,
             is_default: true,
           },
@@ -735,8 +788,8 @@ async function main() {
   console.log('→ Journal articles (journals.json)');
   await seedJournals(academicCatMap.get('journals')!);
 
-  console.log('→ Student theses (student.json)');
-  await seedStudentTheses(academicCatMap.get('student')!);
+  console.log('→ Student theses (student.json, split bachelor/master/phd)');
+  await seedStudentTheses(academicCatMap);
 
   console.log('\n→ Daily hadiths');
   await seedHadiths();
