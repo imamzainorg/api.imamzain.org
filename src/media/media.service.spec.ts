@@ -56,10 +56,25 @@ describe('MediaService', () => {
               deleteMany: jest.fn().mockResolvedValue({}),
             },
             audit_logs: { create: jest.fn().mockResolvedValue({}) },
+            // The tx object mirrors the top-level mocks below (same jest.fn
+            // references) so a test's `prisma.posts.count.mockResolvedValue(...)`
+            // / `expect(prisma.media.delete)...` still work whether the real
+            // code calls `this.prisma.X` directly or `tx.X` inside a
+            // `$transaction(async (tx) => ...)` callback (confirmUpload uses
+            // its own `create`, since that one isn't asserted against the
+            // top-level mock — see prismaMediaCreate).
             $transaction: jest.fn().mockImplementation(async (cb: any) =>
               cb({
-                media: { create: prismaMediaCreate },
+                media: { create: prismaMediaCreate, delete: prisma.media.delete },
                 pending_media_uploads: { deleteMany: jest.fn().mockResolvedValue({}) },
+                posts: { count: prisma.posts.count },
+                books: { count: prisma.books.count },
+                gallery_images: { count: prisma.gallery_images.count },
+                post_attachments: { count: prisma.post_attachments.count },
+                post_translations: { count: prisma.post_translations.count },
+                book_translations: { count: prisma.book_translations.count },
+                static_page_translations: { count: prisma.static_page_translations.count },
+                gallery_image_translations: { count: prisma.gallery_image_translations.count },
               }),
             ),
           },
@@ -68,6 +83,7 @@ describe('MediaService', () => {
           provide: R2Service,
           useValue: {
             generateUploadUrl: jest.fn(),
+            publicUrlForKey: jest.fn().mockImplementation((key: string) => `https://cdn.imamzain.org/${key}`),
             objectExists: jest.fn().mockResolvedValue(true),
             headObject: jest.fn().mockResolvedValue({
               contentType: 'image/jpeg',

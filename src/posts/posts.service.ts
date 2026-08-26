@@ -12,6 +12,7 @@ import { rethrowP2002AsConflict } from '../common/utils/prisma-error.util';
 import { assertExactlyOneDefault, resolveTranslation } from '../common/utils/translation.util';
 import { buildPaginationMeta, resolvePagination } from '../common/utils/pagination.util';
 import { ADVISORY_LOCK_KEYS, withAdvisoryLock } from '../common/utils/advisory-lock.util';
+import { publicWhere } from '../common/utils/visibility.util';
 import { MEDIA_VARIANT_SELECT, OG_IMAGE_SELECT, PUBLIC_MEDIA_SELECT } from '../common/crud/media-selects';
 import { BulkIdsDto, BulkPublishDto, CreatePostDto, PostQueryDto, PostSort, PostStatus, TogglePublishDto, UpdatePostDto } from './dto/post.dto';
 
@@ -181,7 +182,7 @@ export class PostsService {
   /** Public detail by canonical slug — one language-agnostic slug per post. */
   async findBySlug(slug: string, lang: string | null) {
     const post = await this.prisma.posts.findFirst({
-      where: { slug, deleted_at: null, is_published: true },
+      where: { slug, ...publicWhere(true) },
       include: POST_DETAIL_INCLUDE,
     });
     if (!post) throw new NotFoundException('Post not found');
@@ -220,7 +221,7 @@ export class PostsService {
       }
     }
 
-    assertExactlyOneDefault(dto.translations, 'Exactly one translation must have is_default: true');
+    assertExactlyOneDefault(dto.translations);
     await this.assertSlugAvailable(dto.slug, null);
 
     // Stamp published_at when a post is created already-published without an
@@ -511,7 +512,7 @@ export class PostsService {
    */
   async trackView(id: string) {
     const result = await this.prisma.posts.updateMany({
-      where: { id, deleted_at: null, is_published: true },
+      where: { id, ...publicWhere(true) },
       data: { views: { increment: 1 } },
     });
     if (result.count === 0) throw new NotFoundException('Post not found');

@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { resolveTranslation } from '../common/utils/translation.util';
+import { publicWhere } from '../common/utils/visibility.util';
 import { DailyHadithsService } from '../daily-hadiths/daily-hadiths.service';
 import { YoutubeService } from '../youtube/youtube.service';
 
@@ -72,7 +73,7 @@ export class HomepageService {
    */
   private async news(lang: string | null) {
     const combined = await this.prisma.posts.findMany({
-      where: { deleted_at: null, is_published: true },
+      where: publicWhere(true),
       select: {
         slug: true,
         // Only the fields the mapper/resolveTranslation read — NOT the heavy
@@ -99,7 +100,7 @@ export class HomepageService {
 
   private async publications(lang: string | null) {
     const books = await this.prisma.books.findMany({
-      where: { deleted_at: null, is_published: true },
+      where: publicWhere(true),
       select: {
         id: true,
         slug: true,
@@ -153,7 +154,7 @@ export class HomepageService {
 
   private async gallerySlider() {
     const images = await this.prisma.gallery_images.findMany({
-      where: { deleted_at: null, is_published: true },
+      where: publicWhere(true),
       include: { media: { select: { url: true } } },
       orderBy: [{ created_at: 'desc' }, { media_id: 'asc' }],
       take: GALLERY_SLIDER_COUNT,
@@ -169,7 +170,7 @@ export class HomepageService {
 
   private async galleryCategories(lang: string | null) {
     const categories = await this.prisma.gallery_categories.findMany({
-      where: { deleted_at: null },
+      where: publicWhere(false),
       include: {
         // gallery_category_translations has no is_default column (unlike the
         // other translation tables), so selecting it made every request throw.

@@ -6,13 +6,14 @@ import { AUDIT_ACTIONS } from '../common/audit/audit.actions';
 import { rethrowP2002AsConflict } from '../common/utils/prisma-error.util';
 import { assertExactlyOneDefault, resolveTranslation } from '../common/utils/translation.util';
 import { buildPaginationMeta, resolvePagination } from '../common/utils/pagination.util';
+import { publicWhere } from '../common/utils/visibility.util';
 import { CreateSpeakerDto, SpeakerQueryDto, UpdateSpeakerDto } from './dto/speaker.dto';
 
 // Includes the per-language rows plus a filtered count of the speaker's live,
 // published audios — drives the "N lectures" badge on the public list.
 const SPEAKER_INCLUDE = {
   speaker_translations: true,
-  _count: { select: { audios: { where: { is_published: true, deleted_at: null } } } },
+  _count: { select: { audios: { where: publicWhere(true) } } },
 } satisfies Prisma.speakersInclude;
 
 type SpeakerRow = Prisma.speakersGetPayload<{ include: typeof SPEAKER_INCLUDE }>;
@@ -70,7 +71,7 @@ export class SpeakersService {
   // ── Writes ──────────────────────────────────────────────────────────────────
 
   async create(dto: CreateSpeakerDto, actorId: string, lang: string | null) {
-    assertExactlyOneDefault(dto.translations, 'Exactly one translation must have is_default: true');
+    assertExactlyOneDefault(dto.translations);
 
     let created;
     try {

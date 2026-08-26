@@ -5,6 +5,7 @@ import { AuditService } from '../common/audit/audit.service';
 import { AUDIT_ACTIONS } from '../common/audit/audit.actions';
 import { resolveTranslation } from '../common/utils/translation.util';
 import { buildPaginationMeta, resolvePagination } from '../common/utils/pagination.util';
+import { publicWhere } from '../common/utils/visibility.util';
 import { MEDIA_VARIANT_SELECT, OG_IMAGE_SELECT, PUBLIC_MEDIA_SELECT } from '../common/crud/media-selects';
 import { CreateGalleryImageDto, GalleryQueryDto, UpdateGalleryImageDto } from './dto/gallery.dto';
 
@@ -98,7 +99,7 @@ export class GalleryService {
 
   async trackView(id: string) {
     const result = await this.prisma.gallery_images.updateMany({
-      where: { media_id: id, deleted_at: null, is_published: true },
+      where: { media_id: id, ...publicWhere(true) },
       data: { views: { increment: 1 } },
     });
     if (result.count === 0) throw new NotFoundException('Gallery image not found');

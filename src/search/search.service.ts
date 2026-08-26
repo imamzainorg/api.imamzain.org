@@ -106,9 +106,18 @@ export class SearchService {
 
     const ids = matches.map((m) => m.post_id);
 
+    // `body` stays selected despite being the heaviest field — it's one of the
+    // two fields matchFields checks below, not just display data. Everything
+    // else non-essential (meta_title/meta_description/og_image_id, the full
+    // media row) is dropped.
     const rows = await this.prisma.posts.findMany({
       where: { id: { in: ids } },
-      include: { post_translations: true, media: true },
+      select: {
+        id: true,
+        slug: true,
+        post_translations: { select: { lang: true, title: true, summary: true, body: true, is_default: true } },
+        media: { select: { url: true } },
+      },
     });
     const byId = new Map(rows.map((r) => [r.id, r]));
 
@@ -155,7 +164,14 @@ export class SearchService {
 
     const rows = await this.prisma.books.findMany({
       where: { id: { in: ids } },
-      include: { book_translations: true, media: true },
+      select: {
+        id: true,
+        slug: true,
+        book_translations: {
+          select: { lang: true, title: true, author: true, description: true, is_default: true },
+        },
+        media: { select: { url: true } },
+      },
     });
     const byId = new Map(rows.map((r) => [r.id, r]));
 
@@ -198,7 +214,10 @@ export class SearchService {
 
     const rows = await this.prisma.academic_papers.findMany({
       where: { id: { in: ids } },
-      include: { academic_paper_translations: true },
+      select: {
+        id: true,
+        academic_paper_translations: { select: { lang: true, title: true, abstract: true, is_default: true } },
+      },
     });
     const byId = new Map(rows.map((r) => [r.id, r]));
 
@@ -241,7 +260,11 @@ export class SearchService {
 
     const rows = await this.prisma.gallery_images.findMany({
       where: { media_id: { in: ids } },
-      include: { gallery_image_translations: true, media: true },
+      select: {
+        media_id: true,
+        gallery_image_translations: { select: { lang: true, title: true, description: true, is_default: true } },
+        media: { select: { url: true } },
+      },
     });
     const byId = new Map(rows.map((r) => [r.media_id, r]));
 

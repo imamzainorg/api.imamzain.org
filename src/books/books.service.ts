@@ -8,6 +8,7 @@ import { softDeleteSuffix, stripSoftDeleteSuffix } from '../common/utils/soft-de
 import { rethrowP2002AsConflict } from '../common/utils/prisma-error.util';
 import { assertExactlyOneDefault, resolveTranslation } from '../common/utils/translation.util';
 import { buildPaginationMeta, resolvePagination } from '../common/utils/pagination.util';
+import { publicWhere } from '../common/utils/visibility.util';
 import { BOOK_PDF_PREFIX, DOCUMENT_PDF_BYTES, R2Service } from '../storage/r2.service';
 import { RequestPdfUploadUrlDto } from '../common/dto/request-pdf-upload-url.dto';
 import { BookQueryDto, CreateBookDto, UpdateBookDto } from './dto/book.dto';
@@ -118,7 +119,7 @@ export class BooksService {
   /** Public detail by canonical slug — one language-agnostic slug per book. Published only. */
   async findBySlug(slug: string, lang: string | null) {
     const match = await this.prisma.books.findFirst({
-      where: { slug, deleted_at: null, is_published: true },
+      where: { slug, ...publicWhere(true) },
       select: { id: true },
     });
     if (!match) throw new NotFoundException('Book not found');
@@ -170,7 +171,7 @@ export class BooksService {
 
   async trackView(id: string) {
     const result = await this.prisma.books.updateMany({
-      where: { id, deleted_at: null, is_published: true },
+      where: { id, ...publicWhere(true) },
       data: { views: { increment: 1 } },
     });
     if (result.count === 0) throw new NotFoundException('Book not found');
@@ -191,7 +192,7 @@ export class BooksService {
       if (existing) throw new ConflictException('A book with that ISBN already exists');
     }
 
-    assertExactlyOneDefault(dto.translations, 'Exactly one translation must have is_default: true');
+    assertExactlyOneDefault(dto.translations);
 
     if (dto.slug) await this.assertSlugAvailable(dto.slug, null);
 
