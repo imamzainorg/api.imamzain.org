@@ -25,15 +25,3 @@ export function assertExactlyOneDefault(
   const count = (translations ?? []).filter((t) => t.is_default === true).length;
   if (count !== 1) throw new BadRequestException(message);
 }
-
-/**
- * Write-invariant for partial updates: the provided subset may flip at most
- * one row to default (the untouched rows keep the existing single default).
- */
-export function assertAtMostOneDefault(
-  translations: ReadonlyArray<{ is_default?: boolean | null }> | null | undefined,
-  message = 'At most one translation may have is_default = true',
-): void {
-  const count = (translations ?? []).filter((t) => t.is_default === true).length;
-  if (count > 1) throw new BadRequestException(message);
-}

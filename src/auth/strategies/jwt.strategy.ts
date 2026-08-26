@@ -4,6 +4,7 @@ import { PassportStrategy } from '@nestjs/passport';
 import { ExtractJwt, Strategy } from 'passport-jwt';
 import { PrismaService } from '../../prisma/prisma.service';
 import { RedisService } from '../../common/redis/redis.service';
+import { TtlCache } from '../../common/utils/ttl-cache.util';
 
 // In-process cache of the user row we need on every authenticated request.
 // JWTs already prove the token was signed by us and not expired; the only
@@ -25,36 +26,9 @@ interface CachedUser {
   username: string;
   token_version: number;
   deleted: boolean;
-  expiresAt: number;
 }
 
-const userCache = new Map<string, CachedUser>();
-
-function cacheGet(id: string): CachedUser | null {
-  const entry = userCache.get(id);
-  if (!entry) return null;
-  if (entry.expiresAt < Date.now()) {
-    userCache.delete(id);
-    return null;
-  }
-  return entry;
-}
-
-function cacheSet(id: string, user: Omit<CachedUser, 'expiresAt'>): void {
-  // Trim aggressively when the map grows beyond a soft cap. A real LRU would
-  // be better but this keeps the strategy file self-contained.
-  if (userCache.size > 10_000) {
-    const cutoff = Date.now();
-    for (const [k, v] of userCache) {
-      if (v.expiresAt < cutoff) userCache.delete(k);
-    }
-  }
-  userCache.set(id, { ...user, expiresAt: Date.now() + USER_CACHE_TTL_MS });
-}
-
-function cacheDelete(id: string): void {
-  userCache.delete(id);
-}
+const userCache = new TtlCache<CachedUser>(USER_CACHE_TTL_MS);
 
 // Module-level reference to the RedisService, populated in onModuleInit.
 // Lets the free-function `invalidateJwtUserCache` publish without requiring
@@ -68,7 +42,7 @@ let redisRef: RedisService | null = null;
  * other instances will simply age out the entry after USER_CACHE_TTL_MS.
  */
 export function invalidateJwtUserCache(userId: string): void {
-  cacheDelete(userId);
+  userCache.delete(userId);
   // Fire-and-forget across instances; ordering doesn't matter and a missed
   // publish just means the peer ages out the stale row naturally.
   void redisRef?.publish(JWT_CACHE_CHANNEL, userId);
@@ -98,12 +72,12 @@ export class JwtStrategy extends PassportStrategy(Strategy) implements OnModuleI
   async onModuleInit(): Promise<void> {
     redisRef = this.redis;
     await this.redis.subscribe(JWT_CACHE_CHANNEL, (_channel, userId) => {
-      cacheDelete(userId);
+      userCache.delete(userId);
     });
   }
 
   async validate(payload: { sub: string; username: string; permissions: string[]; token_version?: number }) {
-    let cached = cacheGet(payload.sub);
+    let cached = userCache.get(payload.sub);
     if (!cached) {
       const row = await this.prisma.users.findUnique({
         where: { id: payload.sub },
@@ -115,9 +89,8 @@ export class JwtStrategy extends PassportStrategy(Strategy) implements OnModuleI
         username: row.username,
         token_version: row.token_version,
         deleted: row.deleted_at !== null,
-        expiresAt: 0,
       };
-      cacheSet(row.id, cached);
+      userCache.set(row.id, cached);
     }
 
     if (cached.deleted) throw new UnauthorizedException();

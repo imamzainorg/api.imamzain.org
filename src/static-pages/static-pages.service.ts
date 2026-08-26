@@ -1,30 +1,21 @@
-import { ConflictException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuditService } from '../common/audit/audit.service';
 import { AUDIT_ACTIONS } from '../common/audit/audit.actions';
 import { sanitizeEditorHtml } from '../common/utils/html-sanitize.util';
 import { softDeleteSuffix, stripSoftDeleteSuffix } from '../common/utils/soft-delete.util';
-import { resolveTranslation } from '../common/utils/translation.util';
+import { assertExactlyOneDefault, resolveTranslation } from '../common/utils/translation.util';
 import { buildPaginationMeta, resolvePagination } from '../common/utils/pagination.util';
 import { rethrowP2002AsConflict } from '../common/utils/prisma-error.util';
+import { publicWhere } from '../common/utils/visibility.util';
+import { OG_IMAGE_SELECT } from '../common/crud/media-selects';
 import {
   CreateStaticPageDto,
   StaticPageQueryDto,
   TogglePublishStaticPageDto,
   UpdateStaticPageDto,
 } from './dto/static-page.dto';
-
-// Resolvable per-translation OG image for SEO meta tags (detail only).
-const OG_IMAGE_SELECT = {
-  id: true,
-  url: true,
-  filename: true,
-  alt_text: true,
-  mime_type: true,
-  width: true,
-  height: true,
-} satisfies Prisma.mediaSelect;
 
 @Injectable()
 export class StaticPagesService {
@@ -33,24 +24,10 @@ export class StaticPagesService {
     private readonly audit: AuditService,
   ) {}
 
-  /**
-   * Apply the project's `is_default` invariant — exactly one translation per
-   * resource carries the flag, and it's the fallback resolveTranslation uses
-   * when the requested lang has no row. If the caller didn't set one, pin it
-   * to the first translation so the row is never stranded with all-false.
-   */
-  private normaliseDefaults<T extends { is_default?: boolean }>(translations: T[]): T[] {
-    const explicit = translations.find((t) => t.is_default === true);
-    if (explicit) {
-      return translations.map((t) => ({ ...t, is_default: t === explicit }));
-    }
-    return translations.map((t, i) => ({ ...t, is_default: i === 0 }));
-  }
-
   /** Public list: published pages only, ordered by display_order then id. */
   async findAllPublic(lang: string | null, pageInput: number, limitInput: number) {
     const { page, limit, skip } = resolvePagination({ page: pageInput, limit: limitInput });
-    const where: Prisma.static_pagesWhereInput = { deleted_at: null, is_published: true };
+    const where: Prisma.static_pagesWhereInput = publicWhere(true);
     const [pages, total] = await Promise.all([
       this.prisma.static_pages.findMany({
         where,
@@ -113,7 +90,7 @@ export class StaticPagesService {
   /** Public detail by canonical slug — one language-agnostic slug per page. */
   async findBySlug(slug: string, lang: string | null) {
     const page = await this.prisma.static_pages.findFirst({
-      where: { slug, deleted_at: null, is_published: true },
+      where: { slug, ...publicWhere(true) },
       include: { static_page_translations: { include: { og_image: { select: OG_IMAGE_SELECT } } } },
     });
     if (!page) throw new NotFoundException('Static page not found');
@@ -135,8 +112,9 @@ export class StaticPagesService {
 
   async create(dto: CreateStaticPageDto, actorId: string) {
     await this.assertSlugAvailable(dto.slug, null);
+    assertExactlyOneDefault(dto.translations);
 
-    const translations = this.normaliseDefaults(dto.translations).map((t) => ({
+    const translations = dto.translations.map((t) => ({
       ...t,
       body: sanitizeEditorHtml(t.body),
     }));
@@ -187,58 +165,47 @@ export class StaticPagesService {
 
     if (dto.slug !== undefined) await this.assertSlugAvailable(dto.slug, id);
 
-    const ops: Prisma.PrismaPromise<unknown>[] = [];
+    try {
+      await this.prisma.$transaction(async (tx) => {
+        const scalarPatch: Prisma.static_pagesUpdateInput = { updated_at: new Date() };
+        if (dto.slug !== undefined) scalarPatch.slug = dto.slug;
+        if (dto.display_order !== undefined) scalarPatch.display_order = dto.display_order;
+        if (dto.is_published !== undefined) scalarPatch.is_published = dto.is_published;
+        if (Object.keys(scalarPatch).length > 1) {
+          await tx.static_pages.update({ where: { id }, data: scalarPatch });
+        }
 
-    const scalarPatch: Prisma.static_pagesUpdateInput = { updated_at: new Date() };
-    if (dto.slug !== undefined) scalarPatch.slug = dto.slug;
-    if (dto.display_order !== undefined) scalarPatch.display_order = dto.display_order;
-    if (dto.is_published !== undefined) scalarPatch.is_published = dto.is_published;
-    if (Object.keys(scalarPatch).length > 1) {
-      ops.push(this.prisma.static_pages.update({ where: { id }, data: scalarPatch }));
-    }
-
-    if (dto.translations && dto.translations.length > 0) {
-      // Sanitize bodies and pin a default like create() so PATCHing a
-      // translation set never leaves the row with zero defaults.
-      const translations = this.normaliseDefaults(dto.translations).map((t) => ({
-        ...t,
-        body: sanitizeEditorHtml(t.body),
-      }));
-      for (const t of translations) {
-        ops.push(
-          this.prisma.static_page_translations.upsert({
-            where: { page_id_lang: { page_id: id, lang: t.lang } },
-            create: {
-              page_id: id,
-              lang: t.lang,
+        if (dto.translations && dto.translations.length > 0) {
+          for (const t of dto.translations) {
+            const trData = {
               title: t.title,
-              body: t.body,
+              body: sanitizeEditorHtml(t.body),
               meta_title: t.meta_title ?? null,
               meta_description: t.meta_description ?? null,
               og_image_id: t.og_image_id ?? null,
               is_default: t.is_default ?? false,
-            },
-            update: {
-              title: t.title,
-              body: t.body,
-              meta_title: t.meta_title ?? null,
-              meta_description: t.meta_description ?? null,
-              og_image_id: t.og_image_id ?? null,
-              is_default: t.is_default ?? false,
-            },
-          }),
-        );
-      }
-    }
+            };
+            await tx.static_page_translations.upsert({
+              where: { page_id_lang: { page_id: id, lang: t.lang } },
+              create: { page_id: id, lang: t.lang, ...trData },
+              update: trData,
+            });
+          }
 
-    // Apply scalar patch + every translation upsert atomically so a mid-batch
-    // conflict can't leave the page half-updated.
-    if (ops.length > 0) {
-      try {
-        await this.prisma.$transaction(ops);
-      } catch (err) {
-        rethrowP2002AsConflict(err, `Slug "${dto.slug}" is already used by another static page`);
-      }
+          // Re-assert the single-default invariant once all upserts have landed
+          // (matches posts/books): a partial update that flips is_default on
+          // one row must not leave the page with 0 or 2+ defaults across the
+          // full translation set, not just the rows in this request.
+          const defaults = await tx.static_page_translations.count({
+            where: { page_id: id, is_default: true },
+          });
+          if (defaults !== 1) {
+            throw new BadRequestException('Exactly one translation must have is_default: true');
+          }
+        }
+      });
+    } catch (err) {
+      rethrowP2002AsConflict(err, `Slug "${dto.slug}" is already used by another static page`);
     }
 
     await this.audit.write({

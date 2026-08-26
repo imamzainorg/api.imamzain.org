@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { resolveTranslation } from '../common/utils/translation.util';
+import { publicWhere } from '../common/utils/visibility.util';
 
 /** Strip rich-text HTML to a plain summary for feed `<description>` tags. */
 function htmlToPlainExcerpt(html: string, maxChars = 280): string {
@@ -84,17 +85,17 @@ export class FeedsService {
     // order (posts, pages, books).
     const [posts, pages, books] = await Promise.all([
       this.prisma.posts.findMany({
-        where: { deleted_at: null, is_published: true },
+        where: publicWhere(true),
         select: { slug: true, updated_at: true, published_at: true, created_at: true },
         orderBy: { published_at: 'desc' },
       }),
       this.prisma.static_pages.findMany({
-        where: { deleted_at: null, is_published: true },
+        where: publicWhere(true),
         select: { slug: true, updated_at: true, created_at: true },
         orderBy: [{ display_order: 'asc' }, { id: 'asc' }],
       }),
       this.prisma.books.findMany({
-        where: { deleted_at: null, is_published: true, slug: { not: null } },
+        where: { ...publicWhere(true), slug: { not: null } },
         select: { slug: true, updated_at: true, created_at: true },
       }),
     ]);
@@ -148,7 +149,7 @@ export class FeedsService {
    */
   async buildPostsRss(limit = 50): Promise<string> {
     const posts = await this.prisma.posts.findMany({
-      where: { deleted_at: null, is_published: true },
+      where: publicWhere(true),
       include: {
         // The feed only ever emits the default translation (resolveTranslation
         // with lang=null below) — don't ship the other languages' bodies.

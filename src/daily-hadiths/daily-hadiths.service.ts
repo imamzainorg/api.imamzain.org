@@ -138,7 +138,7 @@ export class DailyHadithsService {
   }
 
   async create(dto: CreateDailyHadithDto, userId: string) {
-    assertExactlyOneDefault(dto.translations, 'Exactly one translation must have is_default: true');
+    assertExactlyOneDefault(dto.translations);
 
     // If display_order omitted, append to the end so new hadiths don't
     // collide with existing ones.

@@ -151,7 +151,7 @@ export class StaticPagesController {
   @Auth('static-pages:create')
   @ApiOperation({
     summary: 'Create a static page with translations',
-    description: 'Requires permission: `static-pages:create`. Bodies are HTML-sanitised server-side.',
+    description: 'Requires permission: `static-pages:create`. Bodies are HTML-sanitised server-side. Exactly one translation must have `is_default: true`.',
   })
   @ApiCreatedResponse({ type: StaticPageCreatedResponseDto, description: 'Static page created with all translations' })
   @ApiBadRequestResponse({ type: ValidationErrorDto, description: 'Validation failed' })
@@ -164,7 +164,7 @@ export class StaticPagesController {
   @Auth('static-pages:update')
   @ApiOperation({
     summary: 'Update a static page (scalar fields and/or translations)',
-    description: 'Updates `display_order`, `is_published`, and any provided translations. Requires permission: `static-pages:update`.',
+    description: 'Updates `display_order`, `is_published`, and any provided translations. If translations are provided, the resulting full translation set must still have exactly one `is_default: true`. Requires permission: `static-pages:update`.',
   })
   @ApiParam({ name: 'id', format: 'uuid' })
   @ApiOkResponse({ type: StaticPageDetailResponseDto, description: 'Updated static page' })

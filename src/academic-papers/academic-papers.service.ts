@@ -6,6 +6,7 @@ import { AUDIT_ACTIONS } from '../common/audit/audit.actions';
 import { rethrowP2002AsConflict } from '../common/utils/prisma-error.util';
 import { assertExactlyOneDefault, resolveTranslation } from '../common/utils/translation.util';
 import { buildPaginationMeta, resolvePagination } from '../common/utils/pagination.util';
+import { publicWhere } from '../common/utils/visibility.util';
 import { AcademicPaperQueryDto, CreateAcademicPaperDto, UpdateAcademicPaperDto } from './dto/academic-paper.dto';
 
 // List queries drop the abstract (heavy free-text) from translations.
@@ -100,7 +101,7 @@ export class AcademicPapersService {
 
   async trackView(id: string) {
     const result = await this.prisma.academic_papers.updateMany({
-      where: { id, deleted_at: null, is_published: true },
+      where: { id, ...publicWhere(true) },
       data: { views: { increment: 1 } },
     });
     if (result.count === 0) throw new NotFoundException('Paper not found');
@@ -140,7 +141,7 @@ export class AcademicPapersService {
     const category = await this.prisma.academic_paper_categories.findFirst({ where: { id: dto.category_id, deleted_at: null } });
     if (!category) throw new NotFoundException('Category not found');
 
-    assertExactlyOneDefault(dto.translations, 'Exactly one translation must have is_default: true');
+    assertExactlyOneDefault(dto.translations);
 
     let paper;
     try {

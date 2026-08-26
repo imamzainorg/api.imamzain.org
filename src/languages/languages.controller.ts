@@ -13,7 +13,8 @@ import { Auth } from '../common/decorators/auth.decorator';
 import { CurrentUser, CurrentUserPayload } from '../common/decorators/current-user.decorator';
 import { ConflictErrorDto, NotFoundErrorDto, ValidationErrorDto } from '../common/dto/api-response.dto';
 import { PublicCache } from '../common/decorators/public-cache.decorator';
-import { CreateLanguageDto, LanguagesService, UpdateLanguageDto } from './languages.service';
+import { LanguagesService } from './languages.service';
+import { CreateLanguageDto, UpdateLanguageDto } from './dto/language.dto';
 import {
   LanguageDetailResponseDto,
   LanguageListResponseDto,
