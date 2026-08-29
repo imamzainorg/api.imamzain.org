@@ -149,8 +149,15 @@ async function bootstrap() {
   }
   // ─────────────────────────────────────────────────────────────────────────
 
+  // Bind explicitly to 0.0.0.0 rather than letting Node pick. Node's default
+  // (the unspecified address) does accept external connections, but container
+  // platforms — Cloud Run in particular — document an explicit all-interfaces
+  // bind as the requirement, and an implicit one is the kind of thing that
+  // silently becomes loopback-only after a Node or framework upgrade.
+  // PORT is injected by the platform (Cloud Run sets 8080); 3000 is the local
+  // development fallback.
   const port = process.env.PORT ?? 3000;
-  await app.listen(port);
+  await app.listen(port, "0.0.0.0");
 
   const logger = app.get(Logger);
   logger.log(`Server running on port ${port}`, "Bootstrap");
