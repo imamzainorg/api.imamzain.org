@@ -24,6 +24,18 @@ const VARIANT_QUALITY = 82;
  */
 const SHARP_LIMIT_INPUT_PIXELS = 50_000_000;
 
+/**
+ * Derived rather than written as `sharp.Metadata`. sharp 0.35 moved its
+ * declarations to `dist/index.d.mts` / `.d.cts` behind an `exports` map, and
+ * this project compiles with `module: commonjs` and no explicit
+ * `moduleResolution`, so TypeScript falls back to node10 resolution — which
+ * ignores `exports` and cannot read the `.d.mts` the `types` field points at.
+ * Naming the namespace therefore resolves only against a stale `lib/index.d.ts`
+ * left behind by an in-place upgrade, and breaks on a clean `npm ci`.
+ * Reading the type off the method keeps this correct however sharp ships it.
+ */
+type SharpMetadata = Awaited<ReturnType<ReturnType<typeof sharp>['metadata']>>;
+
 export interface VariantRow {
   id: string;
   width: number;
@@ -60,7 +72,7 @@ export class ImageVariantService {
     // sideways phone photos come out the right way up in every variant.
     const base = sharp(original, { limitInputPixels: SHARP_LIMIT_INPUT_PIXELS }).rotate();
 
-    let metadata: sharp.Metadata;
+    let metadata: SharpMetadata;
     try {
       metadata = await base.metadata();
     } catch (err) {
