@@ -24,6 +24,7 @@ const BOOK_LIST_SELECT = {
   pages: true,
   publish_year: true,
   pdf_url: true,
+  document_languages: true,
   part_number: true,
   parts: true,
   views: true,
@@ -208,6 +209,7 @@ export class BooksService {
             pages: dto.pages ?? null,
             publish_year: dto.publish_year ?? null,
             pdf_url: dto.pdf_url ?? null,
+            document_languages: dto.document_languages ?? [],
             part_number: dto.part_number ?? null,
             parts: dto.parts ?? null,
             // Books are typically uploaded already-final by staff (unlike posts,
@@ -292,6 +294,7 @@ export class BooksService {
         if (dto.pages !== undefined) updateData.pages = dto.pages;
         if (dto.publish_year !== undefined) updateData.publish_year = dto.publish_year;
         if (dto.pdf_url !== undefined) updateData.pdf_url = dto.pdf_url;
+        if (dto.document_languages !== undefined) updateData.document_languages = dto.document_languages;
         if (dto.part_number !== undefined) updateData.part_number = dto.part_number;
         if (dto.parts !== undefined) updateData.parts = dto.parts;
         if (dto.is_published !== undefined) updateData.is_published = dto.is_published;

@@ -71,6 +71,7 @@ export class FormsService {
     // directly instead of going through the relation connect form.
     const updateData: Prisma.proxy_visit_requestsUncheckedUpdateInput = {};
     if (dto.status) updateData.status = dto.status as Prisma.proxy_visit_requestsUncheckedUpdateInput['status'];
+    if (dto.notes !== undefined) updateData.notes = dto.notes;
 
     // Only stamp processed_by/processed_at when the status is actually
     // transitioning into a terminal state. Re-PATCHing the same status used
@@ -224,6 +225,7 @@ export class FormsService {
     const prevStatus = record.status;
     const updateData: Prisma.contact_submissionsUncheckedUpdateInput = {};
     if (dto.status) updateData.status = dto.status as Prisma.contact_submissionsUncheckedUpdateInput['status'];
+    if (dto.notes !== undefined) updateData.notes = dto.notes;
     // Only stamp responder fields on transition into RESPONDED.
     if (dto.status === 'RESPONDED' && prevStatus !== 'RESPONDED') {
       updateData.responded_by = adminId;

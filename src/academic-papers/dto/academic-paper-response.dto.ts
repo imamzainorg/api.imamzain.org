@@ -95,6 +95,9 @@ class AcademicPaperDto {
   @ApiPropertyOptional({ example: 'https://cdn.imamzain.org/papers/paper.pdf' })
   pdf_url?: string;
 
+  @ApiProperty({ example: ['ar'], description: 'ISO 639-1 codes for the language(s) the PDF itself is written in — distinct from the catalogue translations. Empty array when unknown.' })
+  document_languages: string[];
+
   @ApiProperty({ example: 0 })
   views: number;
 
@@ -132,6 +135,9 @@ class AcademicPaperListItemDto {
 
   @ApiPropertyOptional({ example: 'https://cdn.imamzain.org/papers/paper.pdf' })
   pdf_url?: string;
+
+  @ApiProperty({ example: ['ar'], description: 'ISO 639-1 codes for the language(s) the PDF itself is written in — distinct from the catalogue translations. Empty array when unknown.' })
+  document_languages: string[];
 
   @ApiProperty({ example: 0 })
   views: number;

@@ -93,6 +93,17 @@ export class CreateAcademicPaperDto {
   pdf_url?: string;
 
   @ApiPropertyOptional({
+    example: ["ar"],
+    description:
+      "ISO 639-1 codes for the language(s) the PDF itself is written in. Distinct from `translations[].lang`, which describes the catalogue metadata — a paper can be catalogued in Arabic while the document is Persian. Defaults to an empty array.",
+  })
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  @Length(2, 2, { each: true })
+  document_languages?: string[];
+
+  @ApiPropertyOptional({
     example: true,
     description: "Whether the paper is publicly visible. Defaults to true — papers are typically uploaded already-final.",
   })
@@ -128,6 +139,16 @@ export class UpdateAcademicPaperDto {
   @IsOptional()
   @IsUrl()
   pdf_url?: string;
+
+  @ApiPropertyOptional({
+    example: ["ar", "fa"],
+    description: "ISO 639-1 codes for the language(s) the PDF itself is written in. Replaces the whole array when supplied.",
+  })
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  @Length(2, 2, { each: true })
+  document_languages?: string[];
 
   @ApiPropertyOptional({ example: true, description: "Whether the paper is publicly visible." })
   @IsOptional()
