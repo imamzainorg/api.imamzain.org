@@ -176,6 +176,18 @@ describe("FormsService", () => {
       expect(whatsappService.sendProxyVisitCompletion).not.toHaveBeenCalled();
     });
 
+    it("persists an admin note, independently of any status change", async () => {
+      prisma.proxy_visit_requests.findFirst.mockResolvedValue(baseProxyVisit);
+
+      await service.updateProxyVisit("pv-1", { notes: "Visit completed; photos sent." }, "admin-1");
+
+      const data = prisma.proxy_visit_requests.update.mock.calls.at(-1)[0].data;
+      expect(data.notes).toBe("Visit completed; photos sent.");
+      expect(data.status).toBeUndefined();
+      // A note on its own must not trigger the COMPLETED WhatsApp message.
+      expect(whatsappService.sendProxyVisitCompletion).not.toHaveBeenCalled();
+    });
+
     it("throws NotFoundException when not found", async () => {
       prisma.proxy_visit_requests.findFirst.mockResolvedValue(null);
 
@@ -271,6 +283,26 @@ describe("FormsService", () => {
           }),
         }),
       );
+    });
+
+    it("persists an admin note, independently of any status change", async () => {
+      prisma.contact_submissions.findFirst.mockResolvedValue(baseContact);
+
+      await service.updateContact("contact-1", { notes: "Replied by phone." }, "admin-1");
+
+      const data = prisma.contact_submissions.update.mock.calls.at(-1)[0].data;
+      expect(data.notes).toBe("Replied by phone.");
+      // No status supplied — the status transition side-effects must not fire.
+      expect(data.status).toBeUndefined();
+      expect(data.responded_by).toBeUndefined();
+    });
+
+    it("clears an admin note when passed an empty string", async () => {
+      prisma.contact_submissions.findFirst.mockResolvedValue(baseContact);
+
+      await service.updateContact("contact-1", { notes: "" }, "admin-1");
+
+      expect(prisma.contact_submissions.update.mock.calls.at(-1)[0].data.notes).toBe("");
     });
 
     it("throws NotFoundException when not found", async () => {

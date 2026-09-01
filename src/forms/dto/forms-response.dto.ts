@@ -17,6 +17,12 @@ class ProxyVisitDto {
   @ApiProperty({ example: 'PENDING', enum: ['PENDING', 'APPROVED', 'COMPLETED', 'REJECTED'] })
   status: string;
 
+  @ApiPropertyOptional({
+    example: 'Visit completed 2026-02-03; photos sent to the family.',
+    description: 'Internal admin note, settable via PATCH. Always null on the public submit response.',
+  })
+  notes?: string;
+
   @ApiProperty({ example: '2024-01-01T00:00:00.000Z' })
   created_at: string;
 }
@@ -42,6 +48,12 @@ class ContactDto {
 
   @ApiProperty({ example: 'NEW', enum: ['NEW', 'RESPONDED', 'SPAM'] })
   status: string;
+
+  @ApiPropertyOptional({
+    example: 'Replied by phone; caller asked for the Arabic edition.',
+    description: 'Internal admin note, settable via PATCH. Always null on the public submit response.',
+  })
+  notes?: string;
 
   @ApiProperty({ example: '2024-01-01T00:00:00.000Z' })
   created_at: string;

@@ -72,4 +72,13 @@ export class UpdateContactDto {
   @IsOptional()
   @IsISO8601()
   responded_at?: string;
+
+  @ApiPropertyOptional({
+    example: "Replied by phone; caller asked for the Arabic edition.",
+    description: "Internal admin note. Never returned by any public endpoint — only the authenticated forms views expose it.",
+  })
+  @IsOptional()
+  @IsString()
+  @MaxLength(2000)
+  notes?: string;
 }

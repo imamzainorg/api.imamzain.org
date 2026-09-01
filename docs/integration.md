@@ -264,6 +264,24 @@ tokens with rotation + reuse detection. The flow:
 └─────────────┘  (old refresh_token now revoked)
 ```
 
+### Login request body
+
+Accounts are identified by **`username`, not email** — the `users` table
+has no email column at all, so there is no "forgot password by email"
+flow. Password resets are admin-driven via
+`POST /users/:id/reset-password`.
+
+```jsonc
+// POST /api/v1/auth/login
+{ "username": "superadmin", "password": "…" }
+```
+
+Sending `{ "email": … }` fails with a 400 and
+`"property email should not exist"` — global validation runs with
+`forbidNonWhitelisted: true`, so unknown keys are rejected outright
+rather than ignored. That strictness applies to every write endpoint:
+send only the documented fields.
+
 ### Token lifetimes
 
 - **Access token (JWT):** 24h. Always sent in `Authorization: Bearer

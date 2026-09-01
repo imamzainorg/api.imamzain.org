@@ -157,6 +157,36 @@ describe("BooksService", () => {
       expect(result.data.translation).toBeDefined();
     });
 
+    it("persists document_languages, defaulting to an empty array", async () => {
+      prisma.book_categories.findFirst.mockResolvedValue({ id: "cat-1" });
+      prisma.media.findUnique.mockResolvedValue({ id: "media-1" });
+      mockTx.books.create.mockResolvedValue(baseBook);
+      mockTx.book_translations.createMany.mockResolvedValue({});
+      prisma.$transaction.mockImplementation((cb: any) => cb(mockTx));
+      prisma.books.findFirst.mockResolvedValue(baseBook);
+
+      const translations = [{ lang: "ar", title: "كتاب", is_default: true }];
+
+      await service.create(
+        { category_id: "cat-1", cover_image_id: "media-1", translations, document_languages: ["ar", "fa"] },
+        "user-1",
+        null,
+      );
+      expect(mockTx.books.create).toHaveBeenLastCalledWith(
+        expect.objectContaining({ data: expect.objectContaining({ document_languages: ["ar", "fa"] }) }),
+      );
+
+      // Omitted by the caller — the column is NOT NULL, so it must default to []
+      await service.create(
+        { category_id: "cat-1", cover_image_id: "media-1", translations },
+        "user-1",
+        null,
+      );
+      expect(mockTx.books.create).toHaveBeenLastCalledWith(
+        expect.objectContaining({ data: expect.objectContaining({ document_languages: [] }) }),
+      );
+    });
+
     it("throws NotFoundException when category not found", async () => {
       prisma.book_categories.findFirst.mockResolvedValue(null);
 

@@ -128,6 +128,9 @@ class BookDto {
   @ApiPropertyOptional({ example: 'https://cdn.imamzain.org/books/al-sahifa-al-sajjadiyya.pdf', description: 'Direct URL of the downloadable book PDF.' })
   pdf_url?: string;
 
+  @ApiProperty({ example: ['ar'], description: 'ISO 639-1 codes for the language(s) the PDF itself is written in — distinct from the catalogue translations. Empty array when unknown.' })
+  document_languages: string[];
+
   @ApiPropertyOptional({ example: 1 })
   part_number?: number;
 
@@ -187,6 +190,9 @@ class BookListItemDto {
 
   @ApiPropertyOptional({ example: 'https://cdn.imamzain.org/books/al-sahifa-al-sajjadiyya.pdf', description: 'Direct URL of the downloadable book PDF.' })
   pdf_url?: string;
+
+  @ApiProperty({ example: ['ar'], description: 'ISO 639-1 codes for the language(s) the PDF itself is written in — distinct from the catalogue translations. Empty array when unknown.' })
+  document_languages: string[];
 
   @ApiPropertyOptional({ example: 1 })
   part_number?: number;

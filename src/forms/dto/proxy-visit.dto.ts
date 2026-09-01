@@ -70,4 +70,13 @@ export class UpdateProxyVisitDto {
   @IsOptional()
   @IsISO8601()
   processed_at?: string;
+
+  @ApiPropertyOptional({
+    example: "Visit completed 2026-02-03; photos sent to the family.",
+    description: "Internal admin note. Never returned by any public endpoint — only the authenticated forms views expose it.",
+  })
+  @IsOptional()
+  @IsString()
+  @MaxLength(2000)
+  notes?: string;
 }

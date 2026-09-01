@@ -2413,7 +2413,85 @@ piece of work than this round; noted in Open follow-ups.
 
 ---
 
-## 22. Open follow-ups (still not in this push)
+## 22. Round 17 — CMS-readiness audit fixes
+
+A full pre-CMS verification pass over the deployed API (routes, guards,
+data integrity, live probes). Headline: the API is in good shape — 300
+unit tests green, zero schema drift, zero unreachable routes, and no
+data-integrity defects across ~2,000 content rows. Three real gaps came
+out of it, all fixed here.
+
+**a. `document_languages` was write-only.** Round 15 added the column,
+the migration, and the seeder that populates it (138 books, 1,193
+papers), but never wired it into the API layer. Detail endpoints
+happened to return it — they use Prisma `include`, which emits every
+scalar — while the **list** endpoints omitted it (both list queries use
+an explicit `*_LIST_SELECT`) and, more importantly, **no DTO accepted
+it**, so the CMS could neither set nor change it. Now:
+
+- `document_languages` added to `BOOK_LIST_SELECT` and
+  `PAPER_LIST_SELECT`, so lists and detail agree.
+- Accepted on create + update for both modules, validated as an array
+  of ISO 639-1 codes (`@Length(2, 2, { each: true })`).
+- Omitting it on create yields `[]` — the column is `NOT NULL` with a
+  `[]` default, so it must never be sent as `null`.
+- On update it **replaces** the whole array; there is no add/remove
+  semantic.
+
+Worth restating because it trips people up: `document_languages`
+describes the language of the **PDF itself**, and is independent of
+`translations[].lang`, which describes the **catalogue metadata**. A
+thesis can be catalogued in Arabic while the document is Persian. The
+seeder derives it from the source corpus's own language labels.
+
+**b. `notes` on the two live form tables couldn't be set.**
+`contact_submissions.notes` and `proxy_visit_requests.notes` existed in
+the schema but appeared nowhere in `src/` — admins could change a
+submission's status but not record *why*. Both `PATCH` DTOs now accept
+`notes` (max 2,000 chars). Two properties the tests pin down:
+
+- A note can be saved **without** a status change, and doing so does not
+  fire the status-transition side-effects (no `responded_by` stamp, no
+  COMPLETED WhatsApp message).
+- Passing `""` clears the note; omitting the key leaves it untouched.
+
+Reads already returned it — the forms queries use no `select`, so
+`notes` surfaces automatically on the authenticated list/detail views.
+It is never exposed publicly: every forms read requires `forms:read`,
+and the public submit response always has it as `null`.
+
+**c. `.env.example` documented a pooling setup that exhausts itself.**
+See the rewritten header in that file. Short version: `DATABASE_URL`
+belongs on the **transaction** pooler (port 6543) with an explicit
+`connection_limit`; port 5432 is **session** mode and is for
+`DIRECT_URL` / migrations only. Pointing the app at 5432 gives you
+session-mode connection scarcity *and* no prepared statements. This is
+config, not code — the deployed environment must be updated separately.
+
+### Verified, not changed
+
+Recorded so the next audit doesn't re-derive them:
+
+- **Slugs are deliberately uneven.** `posts` and `static_pages` have
+  required slugs. `books` and `audios` have *optional* ones ("omit to
+  keep the book reachable only by UUID") and today **every row is
+  null**, so `/books/by-slug/…` and `/audios/by-slug/…` always 404 —
+  working endpoints with no data behind them yet. `academic_papers` has
+  no slug column at all, on the spine or the translations, so all 1,260
+  are UUID-only. Not a bug; do assume UUID addressing in the CMS.
+- **14 mutating routes are intentionally unauthenticated** (5 `:id/view`
+  counters, login/refresh/logout, contest start/submit, the two public
+  form submissions, newsletter subscribe/unsubscribe). Every one is
+  rate-limited. No admin route is unguarded, and all 70 permissions
+  referenced by `@Auth()` exist in the seeded set — no route is
+  unreachable.
+- **`/docs` and `/openapi.json` are reachable in production.** That is
+  `EXPOSE_DOCS`-gated and useful while the CMS is being built; flip it
+  off when that stops being true.
+
+---
+
+## 23. Open follow-ups (still not in this push)
 
 - Self-service password reset flow (would need an `email` column on
   `users` plus the `password_reset_tokens` table described in the
@@ -2429,9 +2507,17 @@ piece of work than this round; noted in Open follow-ups.
   is advisory only, trusted from the client (see round 16). Closing this
   would mean adopting the media pipeline's confirm-step pattern for all
   three.
-- Content-slug consolidation Phase C part 2 (see round 15, item c): the
-  destructive drop-old-columns migration is written and ready on branch
-  `chore/content-slug-phase-c-drop-old-columns` — deliberately kept off
-  `main` (not just out of one deploy call) since Render runs
-  `prisma migrate deploy` on every build off `main`. PR it once Phase
-  B/C part 1 has been live in production and confirmed working.
+- Backfill slugs for `books` and `audios` (all null today, so their
+  `by-slug` routes are dead), and decide whether `academic_papers`
+  should gain a slug at all — it is the largest corpus (1,260 rows) and
+  the only content type with no pretty-URL option. Both are product
+  calls, not defects; see round 17.
+- No HTTP-level (supertest) tests. The 300 unit tests cover service
+  logic and the three integration specs hit a real database, but no test
+  exercises a route through the guard + pipe + interceptor stack, so
+  wiring regressions (a missing `@Auth`, a DTO that rejects a valid
+  body) would not be caught by CI.
+
+**Closed since the last round:** content-slug consolidation Phase C part
+2 shipped in PR #12 — the drop-old-columns migration is applied in
+production and `prisma migrate status` reports no drift.

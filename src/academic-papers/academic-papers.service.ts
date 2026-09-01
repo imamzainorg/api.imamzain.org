@@ -17,6 +17,7 @@ const PAPER_LIST_SELECT = {
   category_id: true,
   published_year: true,
   pdf_url: true,
+  document_languages: true,
   uploaded_by: true,
   views: true,
   is_published: true,
@@ -160,6 +161,7 @@ export class AcademicPapersService {
             category_id: dto.category_id,
             published_year: dto.published_year ?? null,
             pdf_url: dto.pdf_url ?? null,
+            document_languages: dto.document_languages ?? [],
             // Papers are typically uploaded already-final by staff — default to
             // published, matching books/audios.
             is_published: dto.is_published ?? true,
@@ -221,6 +223,7 @@ export class AcademicPapersService {
       }
       if (dto.published_year !== undefined) updateData.published_year = dto.published_year;
       if (dto.pdf_url !== undefined) updateData.pdf_url = dto.pdf_url;
+      if (dto.document_languages !== undefined) updateData.document_languages = dto.document_languages;
       if (dto.is_published !== undefined) updateData.is_published = dto.is_published;
 
       await tx.academic_papers.update({ where: { id }, data: updateData });

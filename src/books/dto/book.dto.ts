@@ -132,6 +132,17 @@ export class CreateBookDto {
   pdf_url?: string;
 
   @ApiPropertyOptional({
+    example: ["ar"],
+    description:
+      "ISO 639-1 codes for the language(s) the PDF itself is written in. Distinct from `translations[].lang`, which describes the catalogue metadata — a book can be catalogued in Arabic and English while the document is Arabic-only. Defaults to an empty array.",
+  })
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  @Length(2, 2, { each: true })
+  document_languages?: string[];
+
+  @ApiPropertyOptional({
     example: 1,
     description: "Part number within a multi-volume series",
     minimum: 1,
@@ -214,6 +225,16 @@ export class UpdateBookDto {
   @MaxLength(2000)
   @Matches(HTTP_URL, { message: "pdf_url must be an http(s) URL" })
   pdf_url?: string;
+
+  @ApiPropertyOptional({
+    example: ["ar", "fa"],
+    description: "ISO 639-1 codes for the language(s) the PDF itself is written in. Replaces the whole array when supplied.",
+  })
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  @Length(2, 2, { each: true })
+  document_languages?: string[];
 
   @ApiPropertyOptional({ example: 2, minimum: 1 })
   @IsOptional()
