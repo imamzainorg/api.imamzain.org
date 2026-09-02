@@ -15,6 +15,7 @@ reuses everywhere.
 - [Media upload (two-step flow)](#media-upload-two-step-flow)
 - [Rich-text body sanitisation](#rich-text-body-sanitisation)
 - [Newsletter unsubscribe scheme](#newsletter-unsubscribe-scheme)
+- [Form submissions (admin workflow)](#form-submissions-admin-workflow)
 - [Rate limiting](#rate-limiting)
 - [Public URL conventions](#public-url-conventions)
 - [Cron schedules](#cron-schedules)
@@ -187,23 +188,51 @@ below.
 
 ### Human-readable URLs (`by-slug`)
 
-Posts and static pages have always had per-language slugs. Books now
-accept an **optional** editor slug per translation too, exposed at
-`GET /books/by-slug/:slug`. Slugs are nullable — a book without one stays
-reachable only by UUID, and `by-slug` returns 404 for it. Set a slug via
-the translation object on create / update.
+**Slugs are a single, top-level, language-agnostic column on the record —
+never a per-translation field.** They used to be per-language; the
+content-slug consolidation (rounds 15–16) moved every content type onto one
+canonical slug. Send it as a sibling of `category_id`, *not* inside the
+translation object:
 
-Academic papers do **not** have a slug or `by-slug` route — the public
+```jsonc
+// ✅ correct
+{ "slug": "al-sahifa-al-sajjadiyya", "translations": [{ "lang": "ar", "title": "…" }] }
+
+// ❌ 400 — validation runs forbidNonWhitelisted, so an unknown key in the
+//    translation object is rejected outright rather than ignored
+{ "translations": [{ "lang": "ar", "title": "…", "slug": "…" }] }
+```
+
+Support is deliberately uneven — check this table before building routing:
+
+| Resource | Slug | `by-slug` route | Notes |
+| --- | --- | --- | --- |
+| Posts | **required** | `GET /posts/by-slug/:slug` | Always set. |
+| Static pages | **required** | resolved by slug | Always set. |
+| Books | *optional* | `GET /books/by-slug/:slug` | **Every production row is currently `null`** — see below. |
+| Audios | *optional* | `GET /audios/by-slug/:slug` | **Every production row is currently `null`** — see below. |
+| Academic papers | none | — | No column at all; UUID only. |
+| Speakers, categories, media | none | — | UUID only. |
+
+> ⚠️ **Books and audios have no slugs in production today.** The columns,
+> the routes and the collision handling all work, but nothing has ever set a
+> value — so `GET /books/by-slug/…` and `GET /audios/by-slug/…` currently
+> **404 for every input**. Address books and audios by UUID until an editor
+> starts assigning slugs. The CMS should treat the slug field as an optional
+> editor input, and the public site must not assume a book has a pretty URL.
+
+Academic papers have **no** slug or `by-slug` route by design — the public
 site has no dedicated detail page for papers (they open in a modal on
 `/research/scientific-platform`), so a canonical per-paper URL would have
-nothing to be linked from. An earlier round added slug + SEO fields to
-academic papers mirroring books; they were removed after confirming no
-production row ever set them and no route ever served them.
+nothing to link to. An earlier round added slug + SEO fields to academic
+papers mirroring books; they were removed after confirming no production row
+ever set them and no route ever served them. All 1,260 papers are
+UUID-addressed.
 
-**Audios** accept an **optional** canonical `slug` (a single,
-language-agnostic column — the English slug is stable for SEO), exposed at
-`GET /audios/by-slug/:slug` with the same nullable semantics. Speakers are
-addressed by UUID only (no slug).
+Slugs are validated as `^[a-z0-9]+(?:-[a-z0-9]+)*$` (lowercase latin,
+digits, single hyphens) and are unique among live rows; a collision returns
+409. Soft-delete suffixes the slug so it can be reused — see
+[Soft delete and restore](#soft-delete-and-restore).
 
 ### Audios + speakers (i18n)
 
@@ -393,6 +422,33 @@ Arabic search that hits an English summary will return the English row
 — this is intentional, so search results faithfully reflect what was
 indexed.
 
+### `document_languages` — the language of the *file*, not the metadata
+
+Books and academic papers carry a second, unrelated language field, and
+conflating the two is the most common mistake here:
+
+| Field | Describes | Drives |
+| --- | --- | --- |
+| `translations[].lang` | the **catalogue metadata** — title, author, abstract | `Accept-Language` resolution, the `translation` field |
+| `document_languages` | the **PDF itself** | nothing automatic; display only |
+
+A thesis can be catalogued in Arabic while the document is Persian, and a
+book catalogued in both Arabic and English can have an Arabic-only PDF.
+`document_languages` is **never** used for language resolution — it exists
+so the UI can show a "متوفر بالفارسية" style badge and so readers know what
+they're downloading.
+
+- Type: `string[]` of ISO 639-1 codes, e.g. `["ar"]`, `["ar", "fa"]`.
+- Returned on both list and detail for books and academic papers.
+- Accepted on create and update. **Omit it and you get `[]`** — the column
+  is `NOT NULL`, so never send `null`.
+- On update it **replaces the whole array**; there is no add/remove
+  semantic. Send the full desired set every time.
+
+Current production data: every book has it populated; 1,193 of 1,260 papers
+do (the remaining 67 had no language label in the source corpus and are
+`[]`). Treat `[]` as "unknown", not as "no languages".
+
 ---
 
 ## Soft delete and restore
@@ -417,10 +473,16 @@ never appear in normal list / detail queries.
 
 ### Suffix scheme for unique columns
 
-For resources with unique columns scoped to live rows (post / static-page
-/ category translation slugs, the new optional book / academic-paper
-translation slugs, `books.isbn`, and `users.username`), the API suffixes
-the value on delete to free it up:
+For resources with unique columns scoped to live rows, the API suffixes the
+value on delete to free it up. Those columns are:
+
+- the top-level `slug` on posts, static pages, books and audios (one per
+  row — see [Human-readable URLs](#human-readable-urls-by-slug));
+- the per-language `slug` on **category** translations, which are the one
+  place a slug is still scoped to a translation;
+- `books.isbn` and `users.username`.
+
+Academic papers have no slug, so nothing is suffixed for them.
 
 ```text
 slug:  "hayat-al-imam-zain"  →  "hayat-al-imam-zain__del_1715472000"
@@ -693,6 +755,59 @@ Both are idempotent. Permission: `newsletter:update`.
 
 ---
 
+## Form submissions (admin workflow)
+
+The public site writes to `POST /forms/contact` and
+`POST /forms/proxy-visit` (both unauthenticated + rate-limited). Everything
+else is the CMS inbox and needs `forms:read` / `forms:update` /
+`forms:delete`.
+
+| Route | Permission |
+| --- | --- |
+| `GET /forms/contacts`, `GET /forms/proxy-visits` | `forms:read` |
+| `PATCH /forms/contacts/:id`, `PATCH /forms/proxy-visits/:id` | `forms:update` |
+| `DELETE …/:id`, `GET …/trash`, `POST …/:id/restore` | `forms:delete` |
+
+> ⚠️ **Setting a proxy visit to `COMPLETED` sends a real WhatsApp message
+> to the visitor's phone number.** It fires only on an actual transition
+> *into* `COMPLETED` (re-PATCHing `COMPLETED` does not re-send), and it is
+> fire-and-forget — a failed send is logged but never fails your request, so
+> a `200` does **not** mean the message was delivered. Do not use this
+> endpoint to "test" status changes against real submissions.
+
+**Statuses and their side-effects**
+
+| Resource | Statuses | On transition |
+| --- | --- | --- |
+| Contact | `NEW` → `RESPONDED` \| `SPAM` | Entering `RESPONDED` stamps `responded_by` (the acting admin) + `responded_at`. |
+| Proxy visit | `PENDING` → `APPROVED` \| `COMPLETED` \| `REJECTED` | Entering any of the three stamps `processed_by` + `processed_at`. Entering `COMPLETED` **also sends WhatsApp**. |
+
+Stamping only happens when the status genuinely changes, so re-sending the
+same status is idempotent and won't clobber the original actor or
+timestamp. You may override the timestamp by passing `responded_at` /
+`processed_at` (ISO 8601); omit it and the server uses now.
+
+**`notes` — internal admin annotation**
+
+Both resources accept an optional `notes` string (max 2,000 chars) on
+`PATCH`. It is independent of `status`:
+
+```jsonc
+// Save a note without touching status — fires no side-effects at all
+PATCH /forms/proxy-visits/:id
+{ "notes": "Visit completed 2026-02-03; photos sent to the family." }
+```
+
+Pass `""` to clear it; omit the key to leave it untouched. `notes` is
+returned on the authenticated list/detail views and is **never** exposed
+publicly — it is always `null` on the public submit response.
+
+Both resources soft-delete: `DELETE` sets `deleted_at`, `GET …/trash` lists
+deleted rows, and `POST …/:id/restore` brings one back. See
+[Soft delete and restore](#soft-delete-and-restore).
+
+---
+
 ## Rate limiting
 
 A global throttler (`@nestjs/throttler`) sets a ceiling of **1000
@@ -711,6 +826,9 @@ per-endpoint limits:
 | `POST /forms/proxy-visit` | 300 / hour / IP | Same |
 | `POST /posts/:id/view` | 30 / min / IP | View-counter abuse |
 | `POST /books/:id/view` | 30 / min / IP | Same |
+| `POST /academic-papers/:id/view` | 30 / min / IP | Same |
+| `POST /audios/:id/view` | 30 / min / IP | Same |
+| `POST /gallery/:id/view` | 30 / min / IP | Same — `:id` is the **media** UUID |
 | `GET /health` | 60 / min / IP | Generous; uptime probes only |
 
 Hitting any limit returns **429 Too Many Requests** with the standard
@@ -763,12 +881,20 @@ Books without a slug are intentionally omitted (no SEO-friendly URL to
 advertise). Books are currently reachable at both `/library/books/{slug}`
 and `/publications/{slug}`; the sitemap advertises the former.
 
+> ⚠️ **In practice the sitemap currently contains posts and static pages
+> only — 89 URLs.** Because no book or audio has ever been given a slug and
+> academic papers have no slug column, 138 books, 310 audios and 1,260
+> papers are all absent from it. That is the direct SEO cost of the empty
+> slug columns described in
+> [Human-readable URLs](#human-readable-urls-by-slug); backfilling book and
+> audio slugs is what would put them in.
+
 ### No hreflang alternates
 
 Because there is no per-language URL, a row's translations all resolve
 to one canonical URL. Emitting one `<url>` per translation would
 advertise the same page several times, so the sitemap emits **one entry
-per row**, using the default translation's slug.
+per row**, using the row's single canonical `slug`.
 
 The front-end **must** match these URL patterns for the sitemap to be
 correct. Changing the front-end's URL structure means updating the

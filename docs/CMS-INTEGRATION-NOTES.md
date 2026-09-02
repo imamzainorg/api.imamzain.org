@@ -2468,6 +2468,34 @@ belongs on the **transaction** pooler (port 6543) with an explicit
 session-mode connection scarcity *and* no prepared statements. This is
 config, not code — the deployed environment must be updated separately.
 
+**d. `integration.md` had gone stale on slugs — the one that would actually
+have broken CMS work.** The handbook still described the *pre-consolidation*
+model: "Posts and static pages have always had per-language slugs… Set a
+slug via the translation object on create / update." After rounds 15–16 that
+is wrong for every content type — the slug is a single top-level column on
+the row, and nesting it inside a translation object is rejected outright by
+`forbidNonWhitelisted`. An agent following the old text would have written
+a create payload that 400s and had no obvious reason why. Rewritten with a
+per-resource support table, plus:
+
+- the empty-slug reality (books and audios are 100% null, so their
+  `by-slug` routes 404 for every input today);
+- the sitemap consequence, which makes the cost concrete — it currently
+  carries **89 URLs** (79 posts + 10 static pages) and *zero* books, audios
+  or papers;
+- the same correction in the soft-delete suffix section, which also claimed
+  academic papers had translation slugs (they have no slug at all), and in
+  the hreflang note;
+- a `document_languages` subsection under Language resolution, since the
+  field is most likely to be confused with `translations[].lang`;
+- a new **Form submissions (admin workflow)** section — there was none, and
+  the forms inbox is a whole CMS screen. It documents the status enums,
+  which transitions stamp `processed_by` / `responded_by`, the new `notes`
+  field, and — the reason it matters — that moving a proxy visit to
+  `COMPLETED` **sends a real WhatsApp message to the visitor**, fire-and-
+  forget, so a 200 does not mean it was delivered;
+- the three missing view-counter endpoints in the rate-limit table.
+
 ### Verified, not changed
 
 Recorded so the next audit doesn't re-derive them:
