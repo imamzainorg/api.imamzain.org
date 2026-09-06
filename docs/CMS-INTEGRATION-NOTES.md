@@ -2636,7 +2636,56 @@ gone.
 
 ---
 
-## 24. Open follow-ups (still not in this push)
+## 24. Round 19 — /today's random fallback is now locked per day
+
+Round 18 made the random fallback genuinely random on *every* call, by
+design — nothing was written back. In practice that meant two visitors on
+the same day with nothing scheduled could see different hadiths, since
+each origin hit (and each CDN edge's first cache fill) drew independently.
+That's not what "hadith of the day" should mean, so the draw is now
+locked the first time it happens each day.
+
+**Mechanism.** A new table, `daily_hadith_random_picks`, one row per UTC
+date, written once: the first `/today` request that finds nothing
+scheduled draws a hadith at random from the unscheduled pool and records
+the winner. Every later request that day reads this row instead of
+drawing again. The next calendar day has no row yet and draws fresh.
+
+**Still never touches `display_date`.** The lock only ever writes to
+`daily_hadith_random_picks`, never to the hadith's own `display_date` —
+scheduling remains a purely deliberate editor action. A schedule added
+for a date *after* that date already has a lock still wins unconditionally,
+every request checks "is anything scheduled today" first, before ever
+looking at the lock table.
+
+**Empty days are locked too.** If nothing is scheduled and the
+unscheduled pool is also empty, that "empty" outcome is locked in the
+same way (`hadith_id: null`), so a hadith added later that same day
+doesn't retroactively give the day content it didn't show earlier.
+
+**Once locked, a later soft-delete doesn't unpick it** — same precedent
+as `display_date` lookups already followed. `/today` keeps returning that
+hadith's content until the day rolls over, even if it's deleted an hour
+later.
+
+**Concurrency.** Two simultaneous first-requests for the same day both
+try to create the lock row; the loser's `create` hits a P2002 (the
+`pick_date` primary key), and the loser re-reads and returns the winner's
+row instead of its own draw — so a burst of traffic right at UTC midnight
+still converges on one answer.
+
+**Migration:** `20260906140000_hadith_random_pick_lock`, additive only
+(one new table). Applied to production before this round's code deployed
+— safe either order, since the old code never reads it.
+
+Tests: `daily-hadiths.service.spec.ts` gained cases for the fresh-draw,
+same-day-reuse, concurrent-race, locked-empty, and lock-persists-through-
+soft-delete paths; the two `getToday` cases whose premise was "different
+hadiths on repeated calls is fine" were replaced.
+
+---
+
+## 25. Open follow-ups (still not in this push)
 
 - Self-service password reset flow (would need an `email` column on
   `users` plus the `password_reset_tokens` table described in the
