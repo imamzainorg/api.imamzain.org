@@ -11,6 +11,7 @@ import {
 } from '@nestjs/common';
 import {
   ApiBadRequestResponse,
+  ApiConflictResponse,
   ApiCreatedResponse,
   ApiHeader,
   ApiNotFoundResponse,
@@ -25,22 +26,17 @@ import { CurrentUser, CurrentUserPayload } from '../common/decorators/current-us
 import { Lang } from '../common/decorators/language.decorator';
 import { PublicCache } from '../common/decorators/public-cache.decorator';
 import {
+  ConflictErrorDto,
   NotFoundErrorDto,
   ValidationErrorDto,
 } from '../common/dto/api-response.dto';
 import { DailyHadithsService } from './daily-hadiths.service';
-import {
-  CreateDailyHadithDto,
-  DailyHadithQueryDto,
-  PinDailyHadithDto,
-  UpdateDailyHadithDto,
-} from './dto/daily-hadith.dto';
+import { CreateDailyHadithDto, DailyHadithQueryDto, UpdateDailyHadithDto } from './dto/daily-hadith.dto';
 import {
   DailyHadithDetailResponseDto,
   DailyHadithListResponseDto,
   DailyHadithMessageResponseDto,
-  DailyHadithPinListResponseDto,
-  DailyHadithPinSavedResponseDto,
+  PublicHadithListResponseDto,
   TodayHadithResponseDto,
 } from './dto/daily-hadith-response.dto';
 import { PaginationDto } from '../common/dto/pagination.dto';
@@ -58,42 +54,64 @@ export class DailyHadithsController {
   @ApiOperation({
     summary: "Today's hadith (public)",
     description:
-      'Picks one hadith per UTC calendar day so every visitor sees the same hadith all day. Rotation cycles through active hadiths ordered by `(display_order asc, id asc)` indexed by `daysSinceEpoch % count`. An editor pin for today (via `POST /daily-hadiths/pins`) overrides the rotation for that one day. Returns `data: null` when the table is empty. Response is CDN-cacheable (`public, max-age=900, s-maxage=3600`) and varies by `Accept-Language` — the per-day stable key means a single edge cache serves the whole day.',
+      "Returns the hadith deliberately scheduled to today's UTC calendar date, if an editor set one. Otherwise falls back to a hadith drawn uniformly at random from every unscheduled hadith — genuinely random on each call, nothing is written back, so a hadith is never auto-scheduled to a date just by being shown here. A hadith that's already scheduled to some other date is never eligible as a random filler. Returns `data: null` only when the table is empty or every hadith is scheduled elsewhere. Response is CDN-cacheable (`public, max-age=900, s-maxage=3600`) and varies by `Accept-Language`; note that within the cache window, a repeat visit may keep seeing whichever random pick was cached first on a day with nothing scheduled.",
   })
   @ApiOkResponse({
     type: TodayHadithResponseDto,
-    description: "Today's hadith for the requested language, or null when no active hadiths exist",
+    description: "Today's hadith for the requested language, or null when none is available",
   })
   getToday(@Lang() lang: string | null) {
     return this.service.getToday(lang);
   }
 
+  @Get()
+  @PublicCache(300, 1800)
+  @ApiOperation({
+    summary: 'Browse hadiths (public)',
+    description:
+      'A pure lookup — never falls back to a random pick, that only happens on `/today`. Pass `date` for the single hadith scheduled to that exact day (or nothing, if none is). Pass `from`+`to` for every hadith scheduled within that inclusive range, ordered by date. Pass neither for a plain paginated browse of every hadith, scheduled or not, newest first.',
+  })
+  @ApiQuery({ name: 'date', required: false, type: String, example: '2026-05-15', description: 'Exact scheduled date. Mutually exclusive with from/to.' })
+  @ApiQuery({ name: 'from', required: false, type: String, example: '2026-05-01', description: 'Range start (inclusive). Requires `to`.' })
+  @ApiQuery({ name: 'to', required: false, type: String, example: '2026-05-31', description: 'Range end (inclusive). Requires `from`.' })
+  @ApiQuery({ name: 'page', required: false, type: Number, example: 1 })
+  @ApiQuery({ name: 'limit', required: false, type: Number, example: 20 })
+  @ApiOkResponse({ type: PublicHadithListResponseDto, description: 'Paginated hadith results' })
+  @ApiBadRequestResponse({
+    type: ValidationErrorDto,
+    description: 'Invalid query: malformed/impossible date, date combined with from/to, from without to (or vice versa), from after to, or invalid pagination',
+  })
+  findPublic(@Query() query: DailyHadithQueryDto, @Lang() lang: string | null) {
+    return this.service.findPublic(query, lang);
+  }
+
   // ── Admin (CMS) ────────────────────────────────────────────────────────
 
-  @Get()
+  @Get('admin')
   @Auth('daily-hadiths:read')
   @ApiOperation({
     summary: 'List hadiths (admin, paginated)',
-    description: 'Returns the full hadith table for the CMS list view. Requires permission: `daily-hadiths:read`.',
+    description: 'Returns the full hadith table for the CMS list view, newest first. Requires permission: `daily-hadiths:read`.',
   })
   @ApiQuery({ name: 'page', required: false, type: Number, example: 1 })
   @ApiQuery({ name: 'limit', required: false, type: Number, example: 20 })
-  @ApiQuery({ name: 'is_active', required: false, type: Boolean })
   @ApiOkResponse({ type: DailyHadithListResponseDto, description: 'Paginated hadith list' })
   @ApiBadRequestResponse({ type: ValidationErrorDto, description: 'Invalid query parameters (page < 1, limit out of 1–100, or non-integer values)' })
-  findAll(@Query() query: DailyHadithQueryDto, @Lang() lang: string | null) {
+  findAll(@Query() query: PaginationDto, @Lang() lang: string | null) {
     return this.service.findAll(query, lang);
   }
 
-  @Get('pins')
+  @Get('admin/:id')
   @Auth('daily-hadiths:read')
   @ApiOperation({
-    summary: 'List all hadith pins (admin)',
-    description: 'Returns every (pin_date, hadith_id) pair currently set. Requires permission: `daily-hadiths:read`.',
+    summary: 'Get a single hadith (admin)',
+    description: 'Returns one hadith with all translations. Requires permission: `daily-hadiths:read`.',
   })
-  @ApiOkResponse({ type: DailyHadithPinListResponseDto, description: 'All pin entries' })
-  listPins() {
-    return this.service.listPins();
+  @ApiParam({ name: 'id', format: 'uuid' })
+  @ApiOkResponse({ type: DailyHadithDetailResponseDto, description: 'Hadith detail with translations' })
+  @ApiNotFoundResponse({ type: NotFoundErrorDto, description: 'No hadith with that ID exists, or it has been deleted' })
+  findOne(@Param('id') id: string, @Lang() lang: string | null) {
+    return this.service.findOne(id, lang);
   }
 
   @Get('trash')
@@ -109,28 +127,16 @@ export class DailyHadithsController {
     return this.service.findTrash(query, lang);
   }
 
-  @Get(':id')
-  @Auth('daily-hadiths:read')
-  @ApiOperation({
-    summary: 'Get a single hadith (admin)',
-    description: 'Returns one hadith with all translations. Requires permission: `daily-hadiths:read`.',
-  })
-  @ApiParam({ name: 'id', format: 'uuid' })
-  @ApiOkResponse({ type: DailyHadithDetailResponseDto, description: 'Hadith detail with translations' })
-  @ApiNotFoundResponse({ type: NotFoundErrorDto, description: 'No hadith with that ID exists, or it has been deleted' })
-  findOne(@Param('id') id: string, @Lang() lang: string | null) {
-    return this.service.findOne(id, lang);
-  }
-
   @Post()
   @Auth('daily-hadiths:create')
   @ApiOperation({
     summary: 'Create a hadith (admin)',
     description:
-      'Creates a new hadith with translations. Exactly one translation must have `is_default: true`. If `display_order` is omitted the server appends to the end so new hadiths land at the tail of the rotation. Requires permission: `daily-hadiths:create`.',
+      'Creates a new hadith with translations. `display_date` is optional — set it only when the hadith is deliberately tied to a calendar occasion; omit it to leave the hadith in the unscheduled pool the random daily fallback draws from. Requires permission: `daily-hadiths:create`.',
   })
   @ApiCreatedResponse({ type: DailyHadithDetailResponseDto, description: 'Hadith created' })
-  @ApiBadRequestResponse({ type: ValidationErrorDto, description: 'Validation failed, or translations did not contain exactly one is_default entry' })
+  @ApiBadRequestResponse({ type: ValidationErrorDto, description: 'Validation failed' })
+  @ApiConflictResponse({ type: ConflictErrorDto, description: 'Another hadith is already scheduled to that display_date' })
   create(@Body() dto: CreateDailyHadithDto, @CurrentUser() user: CurrentUserPayload) {
     return this.service.create(dto, user.id);
   }
@@ -140,11 +146,12 @@ export class DailyHadithsController {
   @ApiOperation({
     summary: 'Update a hadith (admin)',
     description:
-      'Update any combination of `display_order`, `is_active`, or upsert translations. If `translations` is provided the single-default invariant is re-asserted after upserts. Requires permission: `daily-hadiths:update`.',
+      'Update `display_date` (set to schedule it to a date, or `null` to unschedule it) and/or upsert translations. Requires permission: `daily-hadiths:update`.',
   })
   @ApiParam({ name: 'id', format: 'uuid' })
   @ApiOkResponse({ type: DailyHadithMessageResponseDto, description: 'Hadith updated' })
-  @ApiBadRequestResponse({ type: ValidationErrorDto, description: 'Validation failed, or the resulting translations did not contain exactly one is_default entry' })
+  @ApiBadRequestResponse({ type: ValidationErrorDto, description: 'Validation failed' })
+  @ApiConflictResponse({ type: ConflictErrorDto, description: 'Another hadith is already scheduled to that display_date' })
   @ApiNotFoundResponse({ type: NotFoundErrorDto, description: 'No hadith with that ID exists, or it has been deleted' })
   update(@Param('id') id: string, @Body() dto: UpdateDailyHadithDto, @CurrentUser() user: CurrentUserPayload) {
     return this.service.update(id, dto, user.id);
@@ -154,7 +161,8 @@ export class DailyHadithsController {
   @Auth('daily-hadiths:delete')
   @ApiOperation({
     summary: 'Soft-delete a hadith (admin)',
-    description: 'Sets `deleted_at`; the hadith is dropped from rotation immediately. Pins referencing it become inert (cascade FK does not delete pins, but the pin path checks `deleted_at`). Requires permission: `daily-hadiths:delete`.',
+    description:
+      'Sets `deleted_at`. If the hadith was scheduled to a date, that date immediately becomes available for another hadith to be scheduled to. Requires permission: `daily-hadiths:delete`.',
   })
   @ApiParam({ name: 'id', format: 'uuid' })
   @ApiOkResponse({ type: DailyHadithMessageResponseDto, description: 'Hadith soft-deleted' })
@@ -168,43 +176,13 @@ export class DailyHadithsController {
   @Auth('daily-hadiths:delete')
   @ApiOperation({
     summary: 'Restore a soft-deleted hadith (admin)',
-    description: 'Clears `deleted_at`; the hadith rejoins the rotation immediately. Requires permission: `daily-hadiths:delete`.',
+    description: 'Clears `deleted_at`. Requires permission: `daily-hadiths:delete`.',
   })
   @ApiParam({ name: 'id', format: 'uuid' })
   @ApiOkResponse({ type: DailyHadithMessageResponseDto, description: 'Hadith restored' })
   @ApiNotFoundResponse({ type: NotFoundErrorDto, description: 'No soft-deleted hadith with that ID exists' })
+  @ApiConflictResponse({ type: ConflictErrorDto, description: "Another hadith has since been scheduled to this one's display_date" })
   restore(@Param('id') id: string, @CurrentUser() user: CurrentUserPayload) {
     return this.service.restore(id, user.id);
-  }
-
-  // ── Pins (admin) ───────────────────────────────────────────────────────
-
-  @Post('pins')
-  @HttpCode(200)
-  @Auth('daily-hadiths:update')
-  @ApiOperation({
-    summary: 'Pin a hadith to a specific date (admin)',
-    description:
-      'Forces a specific hadith to be picked for a specific calendar date, overriding the natural rotation for that one day. Upsert semantics: re-pinning the same date replaces the previous mapping. Pinning an inactive hadith is allowed — the pin overrides `is_active` for that day. Requires permission: `daily-hadiths:update`.',
-  })
-  @ApiOkResponse({ type: DailyHadithPinSavedResponseDto, description: 'Pin created or updated' })
-  @ApiBadRequestResponse({ type: ValidationErrorDto, description: 'Validation failed (pin_date must be YYYY-MM-DD)' })
-  @ApiNotFoundResponse({ type: NotFoundErrorDto, description: 'No hadith with that ID exists' })
-  pin(@Body() dto: PinDailyHadithDto, @CurrentUser() user: CurrentUserPayload) {
-    return this.service.createPin(dto, user.id);
-  }
-
-  @Delete('pins/:pinDate')
-  @Auth('daily-hadiths:update')
-  @ApiOperation({
-    summary: 'Remove a hadith pin (admin)',
-    description: 'After removal the natural rotation resumes for that date. Requires permission: `daily-hadiths:update`.',
-  })
-  @ApiParam({ name: 'pinDate', example: '2026-05-15', description: 'Calendar date (YYYY-MM-DD).' })
-  @ApiOkResponse({ type: DailyHadithMessageResponseDto, description: 'Pin removed' })
-  @ApiNotFoundResponse({ type: NotFoundErrorDto, description: 'No pin exists for that date' })
-  @ApiBadRequestResponse({ type: ValidationErrorDto, description: 'pin_date is not YYYY-MM-DD' })
-  unpin(@Param('pinDate') pinDate: string, @CurrentUser() user: CurrentUserPayload) {
-    return this.service.deletePin(pinDate, user.id);
   }
 }

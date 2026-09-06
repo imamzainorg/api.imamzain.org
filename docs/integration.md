@@ -966,6 +966,8 @@ costs predictable as traffic grows.
 | `GET /forms/qutuf-sajjadiya-contest/questions` | `public, max-age=300, s-maxage=3600` | Questions change rarely. |
 | `GET /sitemap.xml`, `/rss/posts.xml` | `public, max-age=900, s-maxage=900` | Already set independently. |
 | `GET /homepage` | `public, max-age=900, s-maxage=3600` | The single most-hit public route — 15 min browser cache, 1 h CDN cache. |
+| `GET /daily-hadiths/today` | `public, max-age=900, s-maxage=3600` | Feeds the homepage. On a day with a scheduled hadith the answer is stable all day; on a day with nothing scheduled the fallback is genuinely random per origin hit, and this cache window is how long a given edge PoP keeps serving whichever pick it got first. |
+| `GET /daily-hadiths` (lookup by date/range, or plain browse) | `public, max-age=300, s-maxage=1800` | Same cadence as categories — hadiths are scheduled rarely, and this is a plain lookup with no random fallback. |
 
 All cached endpoints set `Vary: Accept-Language` so Arabic and English
 versions are cached separately at the edge.

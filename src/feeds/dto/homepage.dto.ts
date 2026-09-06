@@ -12,9 +12,6 @@ class HomepageHadithDto {
 
   @ApiProperty({ example: 'ar' })
   lang!: string;
-
-  @ApiProperty({ example: false, description: 'True when an editor pinned this hadith to today.' })
-  is_pinned!: boolean;
 }
 
 class HomepageNewsItemDto {
