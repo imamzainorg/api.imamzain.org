@@ -1,6 +1,8 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { ApiEnvelope, ApiPaginatedData } from '../../common/dto/api-envelope';
 
+// ── Admin shapes ─────────────────────────────────────────────────────────
+
 class DailyHadithTranslationItemDto {
   @ApiProperty({ example: 'ar' })
   lang!: string;
@@ -10,20 +12,18 @@ class DailyHadithTranslationItemDto {
 
   @ApiPropertyOptional({ example: 'الصحيفة السجادية، الدعاء 30' })
   source?: string | null;
-
-  @ApiProperty({ example: true })
-  is_default!: boolean;
 }
 
 class DailyHadithItemDto {
   @ApiProperty({ format: 'uuid' })
   id!: string;
 
-  @ApiProperty({ example: 0 })
-  display_order!: number;
-
-  @ApiProperty({ example: true })
-  is_active!: boolean;
+  @ApiPropertyOptional({
+    example: '2026-05-15',
+    nullable: true,
+    description: 'Calendar date this hadith is scheduled to, or null if it is unscheduled (eligible for the random daily fallback instead).',
+  })
+  display_date!: string | null;
 
   @ApiProperty({ example: '2026-05-12T10:00:00.000Z' })
   created_at!: string;
@@ -44,7 +44,10 @@ export class DailyHadithListResponseDto extends ApiEnvelope(DailyHadithListDataD
 
 export class DailyHadithDetailResponseDto extends ApiEnvelope(DailyHadithItemDto, 'Hadith fetched') {}
 
-class TodayHadithDataDto {
+// ── Public shapes ────────────────────────────────────────────────────────
+
+/** A resolved hadith pick — `/today`'s `data`, and each item in the public collection. */
+class HadithPickDto {
   @ApiProperty({ format: 'uuid' })
   id!: string;
 
@@ -56,24 +59,21 @@ class TodayHadithDataDto {
 
   @ApiProperty({ example: 'ar' })
   lang!: string;
-
-  @ApiProperty({
-    example: false,
-    description: 'True when the hadith was pinned to this date by an editor (overrides the natural rotation).',
-  })
-  is_pinned!: boolean;
 }
 
+const TODAY_SOURCE = ['scheduled', 'random', 'empty'] as const;
+
 class TodayHadithMetaDto {
-  @ApiProperty({ example: '2026-05-12', description: 'UTC calendar date the pick is stable for (YYYY-MM-DD).' })
+  @ApiProperty({ example: '2026-05-12', description: 'UTC calendar date this pick is for (YYYY-MM-DD).' })
   date!: string;
 
   @ApiProperty({
-    example: 'rotation',
-    enum: ['pin', 'rotation', 'empty'],
-    description: "How today's hadith was chosen: an editor pin, the natural rotation, or an empty/inactive table.",
+    example: 'random',
+    enum: TODAY_SOURCE,
+    description:
+      "How today's hadith was chosen: 'scheduled' when a hadith is deliberately tied to today's date, 'random' when nothing was scheduled and one was drawn uniformly at random from unscheduled hadiths, 'empty' when neither was available.",
   })
-  source!: 'pin' | 'rotation' | 'empty';
+  source!: (typeof TODAY_SOURCE)[number];
 }
 
 export class TodayHadithResponseDto {
@@ -87,11 +87,11 @@ export class TodayHadithResponseDto {
   message!: string;
 
   @ApiProperty({
-    type: TodayHadithDataDto,
+    type: HadithPickDto,
     nullable: true,
-    description: 'Null when the hadith table is empty or all entries are inactive / deleted.',
+    description: 'Null only when the hadith table is empty or every hadith is scheduled to some other date.',
   })
-  data!: TodayHadithDataDto | null;
+  data!: HadithPickDto | null;
 
   @ApiProperty({
     type: TodayHadithMetaDto,
@@ -100,16 +100,13 @@ export class TodayHadithResponseDto {
   meta!: TodayHadithMetaDto;
 }
 
-class PinItemDto {
-  @ApiProperty({ example: '2026-05-15' })
-  pin_date!: string;
-
-  @ApiProperty({ format: 'uuid' })
-  hadith_id!: string;
+class PublicHadithItemDto extends HadithPickDto {
+  @ApiPropertyOptional({ example: '2026-05-15', nullable: true, description: 'Calendar date this hadith is scheduled to, or null if unscheduled.' })
+  display_date!: string | null;
 }
 
-export class DailyHadithPinListResponseDto extends ApiEnvelope([PinItemDto], 'Pins fetched') {}
+class PublicHadithListDataDto extends ApiPaginatedData(PublicHadithItemDto) {}
 
-export class DailyHadithPinSavedResponseDto extends ApiEnvelope(PinItemDto, 'Pin saved') {}
+export class PublicHadithListResponseDto extends ApiEnvelope(PublicHadithListDataDto, 'Hadiths fetched') {}
 
 export class DailyHadithMessageResponseDto extends ApiEnvelope(null, 'Hadith deleted') {}

@@ -1,15 +1,12 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { Transform, Type } from 'class-transformer';
+import { Type } from 'class-transformer';
 import {
   ArrayMinSize,
   IsArray,
-  IsBoolean,
-  IsInt,
-  IsISO8601,
   IsOptional,
   IsString,
-  IsUUID,
   Length,
+  Matches,
   MaxLength,
   MinLength,
   ValidateNested,
@@ -18,6 +15,9 @@ import { PaginationDto } from '../../common/dto/pagination.dto';
 
 const CONTENT_MAX = 4000;
 const SOURCE_MAX = 500;
+
+/** Shape check only — the service verifies the calendar date itself. */
+const DATE_ONLY = /^\d{4}-\d{2}-\d{2}$/;
 
 export class DailyHadithTranslationDto {
   @ApiProperty({ example: 'ar', minLength: 2, maxLength: 2, description: 'ISO 639-1 language code' })
@@ -44,35 +44,22 @@ export class DailyHadithTranslationDto {
   @IsString()
   @MaxLength(SOURCE_MAX)
   source?: string;
-
-  @ApiPropertyOptional({ example: true, description: 'Exactly one translation must be the default.' })
-  @IsOptional()
-  @IsBoolean()
-  is_default?: boolean;
 }
 
 export class CreateDailyHadithDto {
   @ApiPropertyOptional({
-    example: 0,
+    example: '2026-05-15',
     description:
-      'Position in the natural rotation. Hadiths are rotated by (display_order asc, id asc). Defaults to 0 — the API auto-bumps if you omit it on create to keep additions at the end.',
+      'Calendar date (YYYY-MM-DD) this hadith is deliberately tied to (e.g. a specific occasion). Omit to leave it unscheduled — unscheduled hadiths are the pool the "today" endpoint draws a random pick from when nothing is scheduled for that day.',
   })
   @IsOptional()
-  @IsInt()
-  display_order?: number;
-
-  @ApiPropertyOptional({
-    example: true,
-    default: true,
-    description: 'Inactive hadiths are skipped by the rotation but kept in the table.',
-  })
-  @IsOptional()
-  @IsBoolean()
-  is_active?: boolean;
+  @IsString()
+  @Matches(DATE_ONLY, { message: 'display_date must be YYYY-MM-DD' })
+  display_date?: string;
 
   @ApiProperty({
     type: [DailyHadithTranslationDto],
-    description: 'At least one translation; exactly one must have is_default: true.',
+    description: 'At least one translation.',
   })
   @IsArray()
   @ArrayMinSize(1)
@@ -82,15 +69,14 @@ export class CreateDailyHadithDto {
 }
 
 export class UpdateDailyHadithDto {
-  @ApiPropertyOptional({ example: 5 })
+  @ApiPropertyOptional({
+    example: '2026-05-15',
+    nullable: true,
+    description: 'Set to schedule this hadith to a date, or set to null to unschedule it and return it to the random pool.',
+  })
   @IsOptional()
-  @IsInt()
-  display_order?: number;
-
-  @ApiPropertyOptional({ example: false })
-  @IsOptional()
-  @IsBoolean()
-  is_active?: boolean;
+  @Matches(DATE_ONLY, { message: 'display_date must be YYYY-MM-DD' })
+  display_date?: string | null;
 
   @ApiPropertyOptional({ type: [DailyHadithTranslationDto] })
   @IsOptional()
@@ -100,33 +86,31 @@ export class UpdateDailyHadithDto {
   translations?: DailyHadithTranslationDto[];
 }
 
-export class PinDailyHadithDto {
-  @ApiProperty({
-    example: '2026-05-15',
-    description: 'Calendar date (YYYY-MM-DD) to pin a specific hadith to. Overrides the natural rotation for that one day.',
-  })
-  @IsISO8601({ strict: true })
-  pin_date!: string;
-
-  @ApiProperty({ format: 'uuid', description: 'ID of the hadith to pin.' })
-  @IsUUID()
-  hadith_id!: string;
-}
-
 export class DailyHadithQueryDto extends PaginationDto {
   @ApiPropertyOptional({
-    example: false,
-    description: 'Filter by active state. Omit to include both.',
+    example: '2026-05-15',
+    description: 'Return only the hadith scheduled to this exact date, if any. Mutually exclusive with from/to.',
   })
   @IsOptional()
-  @Transform(({ value }) => {
-    // class-transformer's @Type(() => Boolean) runs Boolean('false') === true,
-    // so a query string ?is_active=false was being coerced to true. Map the
-    // string explicitly instead, matching the sibling query DTOs.
-    if (value === true || value === 'true') return true;
-    if (value === false || value === 'false') return false;
-    return value;
+  @IsString()
+  @Matches(DATE_ONLY, { message: 'date must be YYYY-MM-DD' })
+  date?: string;
+
+  @ApiPropertyOptional({
+    example: '2026-05-01',
+    description: 'Start of a scheduled-date range (inclusive). Must be given together with `to`. Mutually exclusive with `date`.',
   })
-  @IsBoolean()
-  is_active?: boolean;
+  @IsOptional()
+  @IsString()
+  @Matches(DATE_ONLY, { message: 'from must be YYYY-MM-DD' })
+  from?: string;
+
+  @ApiPropertyOptional({
+    example: '2026-05-31',
+    description: 'End of a scheduled-date range (inclusive). Must be given together with `from`.',
+  })
+  @IsOptional()
+  @IsString()
+  @Matches(DATE_ONLY, { message: 'to must be YYYY-MM-DD' })
+  to?: string;
 }

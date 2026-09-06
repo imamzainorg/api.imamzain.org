@@ -501,8 +501,6 @@ model users {
   audit_logs            audit_logs[]
   books                 books[]
   contact_submissions   contact_submissions[]
-  daily_hadith_pins     daily_hadith_pins[]
-  daily_hadiths         daily_hadiths[]
   gallery_images        gallery_images[]
   media                 media[]
   newsletter_campaigns  newsletter_campaigns[]
@@ -516,40 +514,29 @@ model users {
 
 model daily_hadiths {
   id                        String                      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  display_order             Int                         @default(0)
-  is_active                 Boolean                     @default(true)
+  // Uniqueness enforced at the DB level by a PARTIAL index (WHERE
+  // display_date IS NOT NULL AND deleted_at IS NULL) so a soft-deleted
+  // hadith frees its date for reuse -- see migration 20260906120000.
+  // Not annotated @unique here: Prisma's schema DSL can't express a
+  // partial index, and no code path needs a Prisma-level findUnique on
+  // this column (lookups use findFirst).
+  display_date              DateTime?                   @db.Date
   created_at                DateTime                    @default(now()) @db.Timestamptz(6)
   updated_at                DateTime                    @default(now()) @db.Timestamptz(6)
-  created_by                String?                     @db.Uuid
   deleted_at                DateTime?                   @db.Timestamptz(6)
-  daily_hadith_pins         daily_hadith_pins[]
   daily_hadith_translations daily_hadith_translations[]
-  users                     users?                      @relation(fields: [created_by], references: [id], onDelete: NoAction, onUpdate: NoAction)
-
-  @@index([created_by], map: "idx_daily_hadiths_created_by")
 }
 
 model daily_hadith_translations {
+  id            String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   hadith_id     String        @db.Uuid
   lang          String        @db.Char(2)
   content       String
   source        String?
-  is_default    Boolean       @default(false)
   daily_hadiths daily_hadiths @relation(fields: [hadith_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
   languages     languages     @relation(fields: [lang], references: [code], onDelete: Cascade, onUpdate: NoAction)
 
-  @@id([hadith_id, lang])
-}
-
-model daily_hadith_pins {
-  pin_date      DateTime      @id @db.Date
-  hadith_id     String        @db.Uuid
-  created_at    DateTime      @default(now()) @db.Timestamptz(6)
-  created_by    String?       @db.Uuid
-  users         users?        @relation(fields: [created_by], references: [id], onDelete: NoAction, onUpdate: NoAction)
-  daily_hadiths daily_hadiths @relation(fields: [hadith_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
-
-  @@index([hadith_id], map: "idx_daily_hadith_pins_hadith")
+  @@unique([hadith_id, lang])
 }
 
 model youtube_videos {

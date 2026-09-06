@@ -108,9 +108,9 @@ the category resources, the only admin-read surface (trash) is gated by
 
 | Permission | Action |
 | --- | --- |
-| `daily-hadiths:read` | List + read hadiths and pin entries |
-| `daily-hadiths:create` | Add a new hadith to the rotation |
-| `daily-hadiths:update` | Edit a hadith + pin / unpin to specific dates |
+| `daily-hadiths:read` | List + read hadiths |
+| `daily-hadiths:create` | Add a new hadith |
+| `daily-hadiths:update` | Edit a hadith, including scheduling/unscheduling its display date |
 | `daily-hadiths:delete` | Soft-delete a hadith |
 
 ### Dashboard, audit, contest, settings
@@ -308,8 +308,6 @@ Four category resources emit parallel sets:
 | `DAILY_HADITH_UPDATED` | `PATCH /daily-hadiths/:id` |
 | `DAILY_HADITH_DELETED` | `DELETE /daily-hadiths/:id` |
 | `DAILY_HADITH_RESTORED` | `POST /daily-hadiths/:id/restore` |
-| `DAILY_HADITH_PINNED` | `POST /daily-hadiths/pins` |
-| `DAILY_HADITH_UNPINNED` | `DELETE /daily-hadiths/pins/:pinDate` |
 
 The YouTube sync (`youtube-sync.service.ts`) does **not** emit audit
 log rows. It's a system action driven by cron, not a user action;

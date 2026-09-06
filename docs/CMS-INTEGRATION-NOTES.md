@@ -902,19 +902,27 @@ POST   /daily-hadiths/pins                            — admin pin to a date
 DELETE /daily-hadiths/pins/:pin_date                  — admin unpin
 ```
 
-**Rotation rule.** Active hadiths are ordered by `(display_order asc,
-id asc)`, then today's index = `daysSinceEpoch (UTC) % count`. Same
-day → same hadith for every visitor, which is exactly what makes
-the homepage cacheable for hours.
+> **Superseded in Round 18 (§23).** The whole mechanism below — rotation
+> by `display_order`, pins, `is_active` — was replaced with direct
+> editorial scheduling. `daily_hadith_pins` and `is_active` /
+> `display_order` no longer exist. `GET /daily-hadiths` is now the
+> *public* lookup/browse endpoint and the admin list/detail moved to
+> `GET /daily-hadiths/admin` and `GET /daily-hadiths/admin/:id`. Read
+> §23 for the current design; this section is kept for history only.
 
-**Override.** An editor can pin a specific hadith to a specific
-calendar date via `POST /daily-hadiths/pins` with body `{ pin_date:
-"2026-05-15", hadith_id: "uuid" }`. The pin overrides the rotation
-for that one day; the next day, rotation resumes. Pinning an inactive
-hadith is allowed (the pin is an explicit override).
+**Rotation rule (superseded — see §23).** Active hadiths were ordered
+by `(display_order asc, id asc)`, then today's index = `daysSinceEpoch
+(UTC) % count`. Same day → same hadith for every visitor, which is what
+made the homepage cacheable for hours.
+
+**Override (superseded — see §23).** An editor could pin a specific
+hadith to a specific calendar date via `POST /daily-hadiths/pins` with
+body `{ pin_date: "2026-05-15", hadith_id: "uuid" }`. The pin overrode
+the rotation for that one day; the next day, rotation resumed. Pinning
+an inactive hadith was allowed (the pin was an explicit override).
 
 **Empty table.** `GET /daily-hadiths/today` returns `data: null`; the
-homepage block degrades gracefully.
+homepage block degrades gracefully. Still true under the current design.
 
 **Permissions:** `daily-hadiths:read/create/update/delete`. The
 **editor** role gets all four by default — hadiths are content, not
@@ -2519,7 +2527,116 @@ Recorded so the next audit doesn't re-derive them:
 
 ---
 
-## 23. Open follow-ups (still not in this push)
+## 23. Round 18 — hadith rotation replaced with editorial scheduling
+
+The original design picked "today's hadith" with a formula
+(`daysSinceEpoch % activeCount`) recomputed from the current pool on
+every call. That formula has no memory: any edit to the pool (add,
+remove, reorder, activate/deactivate) silently changed what every
+unpinned date was reported to have shown — including dates that had
+already passed. This only went unnoticed because the API could only ever
+be asked about *today*. Mid-development of a "hadith for any date" and
+"hadith for a date range" feature, this surfaced as a real problem: an
+archive that rewrites itself isn't an archive.
+
+The fix removes the formula rather than patching around its instability.
+Each hadith now optionally carries its own `display_date`, set by an
+editor only when a hadith is deliberately tied to a specific calendar
+occasion. "Today's hadith" is a lookup (`WHERE display_date = today`),
+never a computation over mutable state, so it cannot drift. This also
+retires `daily_hadith_pins` entirely — scheduling or moving a hadith to
+a date is now just editing that hadith's own field, not a separate
+override table.
+
+```text
+GET  /daily-hadiths/today            — public, CDN-cached
+GET  /daily-hadiths                  — public, CDN-cached (lookup or browse)
+GET  /daily-hadiths/admin            — MOVED from GET /daily-hadiths
+GET  /daily-hadiths/admin/:id        — MOVED from GET /daily-hadiths/:id
+GET  /daily-hadiths/trash            — unchanged
+POST /daily-hadiths/:id/restore      — unchanged
+POST/PATCH/DELETE /daily-hadiths(/:id) — unchanged shape, new fields (below)
+```
+
+**Removed entirely:** `POST/GET/DELETE /daily-hadiths/pins*`.
+
+**Breaking for the CMS.** `GET /daily-hadiths` is now the public
+lookup/browse endpoint (no auth) and `GET /daily-hadiths/:id` no longer
+exists. In the CMS repo, `src/services/daily-hadiths.service.ts` needs
+`list` pointed at `/daily-hadiths/admin` and `get` at
+`/daily-hadiths/admin/${id}` — the same `/admin` split already used for
+posts and books. More significantly, the CMS's pin calendar UI
+(`useHadithPins`, `usePinHadith`, `useUnpinHadith`, `useTodayHadith`) and
+the `is_active` toggle / `display_order` field on the hadith form need
+replacing with a single "display date" field, and `is_default` no longer
+exists on translation tabs. This is materially more CMS work than a
+route-path fix — track it before this ships.
+
+**`GET /daily-hadiths/today`.** Looks up the hadith scheduled to today's
+UTC date. If none is scheduled, falls back to a hadith drawn uniformly
+at random from every *unscheduled* hadith (never one already scheduled
+elsewhere) — genuinely random on each call, nothing is written back. Two
+requests on the same day with nothing scheduled can return different
+hadiths; that's intentional. `meta.source` is `'scheduled'`, `'random'`,
+or `'empty'` (table empty, or everything is scheduled to some other
+date). Cache: `public, max-age=900, s-maxage=3600` — note that within an
+edge PoP's cache window, a random-fallback day will keep serving
+whichever pick that PoP happened to cache first.
+
+**`GET /daily-hadiths` (public).** A pure lookup, never a random
+fallback — that's `/today`'s job alone. Query params:
+- `date=YYYY-MM-DD` — the one hadith scheduled to that exact day, or an
+  empty page if none is. Mutually exclusive with `from`/`to`.
+- `from=&to=` (both required together) — every hadith scheduled in that
+  inclusive range, ordered by date. Most days will have nothing
+  scheduled, so this is a sparse list, not one padded entry per day.
+- Neither — a plain paginated browse of every hadith (scheduled or not),
+  newest first.
+
+Response shape is always `{ items: [{ id, display_date, content, source,
+lang }], pagination }`, resolved to `Accept-Language`. Cache:
+`public, max-age=300, s-maxage=1800`.
+
+**Admin create/update.** `display_date` (optional, `YYYY-MM-DD`) replaces
+the old `display_order` / `is_active` fields and the separate pin
+endpoints. Omit it to leave a hadith unscheduled (eligible for the random
+daily fallback); set it to schedule; on update, set it to `null` to
+unschedule. Two hadiths can't share a date — creating or updating into an
+already-claimed date returns 409. Soft-deleting a scheduled hadith frees
+its date immediately for another hadith to claim; restoring one whose
+date was claimed in the meantime also returns 409.
+
+**Translations lost `is_default`.** A hadith's translations no longer
+mark one as the default; the language fallback is a plain
+`orderBy: { lang: 'asc' }`, so `'ar'` sorts first deterministically
+(`'ar' < 'en' < 'fa'`) when the requested language isn't available. This
+reuses the same shared `resolveTranslation` helper every other module
+uses — it already degrades to `translations[0]` once `is_default` is
+absent, so nothing else needed to change.
+
+**Migration is split in two, deployed separately.** `20260906120000_
+hadith_display_date` is additive (adds `display_date` to `daily_hadiths`
+and a surrogate `id` to `daily_hadith_translations`) and safe to apply
+as soon as it's convenient. `20260906130000_drop_hadith_rotation_fields`
+is destructive (drops `display_order`/`is_active`/`created_by`, drops
+`is_default`, swaps `daily_hadith_translations`' primary key to the new
+`id`, drops `daily_hadith_pins` entirely) and needs its own explicit
+go-ahead, applied only after the new application code is deployed.
+Production had 0 pins and 0 inactive hadiths at the time this was
+written (checked directly beforehand), so the destructive migration
+needs no data-preservation step.
+
+Tests: `daily-hadiths.service.spec.ts` (31 cases) and
+`daily-hadiths.controller.spec.ts` (8 cases, over real HTTP with a mocked
+service — the pattern of booting one controller, overriding
+`JwtAuthGuard`, and hitting it with `fetch` is cheap to copy for other
+modules) were rewritten from scratch — the rotation formula, pins, and
+the intermediate history-locking design explored mid-session are all
+gone.
+
+---
+
+## 24. Open follow-ups (still not in this push)
 
 - Self-service password reset flow (would need an `email` column on
   `users` plus the `password_reset_tokens` table described in the
