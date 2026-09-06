@@ -524,7 +524,23 @@ model daily_hadiths {
   created_at                DateTime                    @default(now()) @db.Timestamptz(6)
   updated_at                DateTime                    @default(now()) @db.Timestamptz(6)
   deleted_at                DateTime?                   @db.Timestamptz(6)
+  daily_hadith_random_picks daily_hadith_random_picks[]
   daily_hadith_translations daily_hadith_translations[]
+}
+
+// One row per UTC calendar day that had nothing scheduled, recording which
+// hadith the random fallback drew that day. Written once, the first time
+// that day's /today is resolved with no scheduled hadith; every later
+// request the same day reads this instead of drawing again, so all
+// visitors see the same random pick. Deliberately separate from
+// display_date: this is a system-recorded fact about a day, never an
+// editor's scheduling decision, and being drawn here never sets a
+// hadith's own display_date.
+model daily_hadith_random_picks {
+  pick_date     DateTime       @id @db.Date
+  hadith_id     String?        @db.Uuid
+  locked_at     DateTime       @default(now()) @db.Timestamptz(6)
+  daily_hadiths daily_hadiths? @relation(fields: [hadith_id], references: [id], onDelete: SetNull, onUpdate: NoAction)
 }
 
 model daily_hadith_translations {

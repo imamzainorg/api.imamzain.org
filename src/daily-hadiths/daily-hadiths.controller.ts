@@ -54,7 +54,7 @@ export class DailyHadithsController {
   @ApiOperation({
     summary: "Today's hadith (public)",
     description:
-      "Returns the hadith deliberately scheduled to today's UTC calendar date, if an editor set one. Otherwise falls back to a hadith drawn uniformly at random from every unscheduled hadith — genuinely random on each call, nothing is written back, so a hadith is never auto-scheduled to a date just by being shown here. A hadith that's already scheduled to some other date is never eligible as a random filler. Returns `data: null` only when the table is empty or every hadith is scheduled elsewhere. Response is CDN-cacheable (`public, max-age=900, s-maxage=3600`) and varies by `Accept-Language`; note that within the cache window, a repeat visit may keep seeing whichever random pick was cached first on a day with nothing scheduled.",
+      "Returns the hadith deliberately scheduled to today's UTC calendar date, if an editor set one. Otherwise falls back to a hadith drawn uniformly at random from every unscheduled hadith. That draw is locked in the first time it happens each day, so every visitor sees the same hadith for the rest of the UTC day regardless of caching or which server instance answers — the draw itself never sets the winning hadith's own `display_date`, only an editor's deliberate action does that. A hadith that's already scheduled to some other date is never eligible as a random filler. Returns `data: null` only when the table is empty or every hadith is scheduled elsewhere. Response is CDN-cacheable (`public, max-age=900, s-maxage=3600`) and varies by `Accept-Language`.",
   })
   @ApiOkResponse({
     type: TodayHadithResponseDto,

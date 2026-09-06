@@ -20,12 +20,15 @@ import { CreateDailyHadithDto, DailyHadithQueryDto, UpdateDailyHadithDto } from 
  * never changes what any date is reported to show.
  *
  * When nothing is scheduled for today, the API falls back to a hadith
- * drawn uniformly at random from the unscheduled pool. That draw is
- * genuinely random on every call — nothing is written back, so a hadith
- * is never scheduled to a date as a side effect of being shown. Two
- * requests on the same day with nothing scheduled may return different
- * hadiths; that's intentional, not a bug (an earlier "lock the random
- * pick in permanently" design was explicitly rejected in favour of this).
+ * drawn uniformly at random from the unscheduled pool. The draw itself
+ * (which hadith wins) never sets that hadith's own `display_date` — a
+ * hadith is only ever scheduled to a date by deliberate editor action.
+ * But the draw's *outcome* for the day is locked in `daily_hadith_
+ * random_picks` the first time it's resolved, so every visitor sees the
+ * same hadith for the rest of that UTC day regardless of which server
+ * instance or CDN edge serves them. A new calendar day has no lock yet
+ * and draws fresh. A schedule added for the day later always wins over
+ * an existing lock, unconditionally, on every request.
  *
  * A hadith already scheduled to some other date is never eligible as a
  * random filler — it's reserved for the occasion it was scheduled for.
@@ -59,24 +62,30 @@ export class DailyHadithsService {
       };
     }
 
+    // Nothing scheduled: has today's fallback already been decided?
+    const locked = await this.prisma.daily_hadith_random_picks.findUnique({ where: { pick_date: today } });
+    if (locked) {
+      return this.formatTodayPick(locked.hadith_id, lang, dateOnly);
+    }
+
+    // Never resolved before today -- draw once and lock it for everyone.
     const undated = await this.prisma.daily_hadiths.findMany({
       where: { deleted_at: null, display_date: null },
       select: { id: true },
     });
-    if (undated.length === 0) {
-      return { message: "Today's hadith", data: null, meta: { date: dateOnly, source: 'empty' as const } };
-    }
+    const hadithId = undated.length > 0 ? undated[Math.floor(Math.random() * undated.length)]!.id : null;
 
-    const pick = undated[Math.floor(Math.random() * undated.length)]!;
-    const hadith = await this.prisma.daily_hadiths.findUniqueOrThrow({
-      where: { id: pick.id },
-      include: WITH_TRANSLATIONS,
-    });
-    return {
-      message: "Today's hadith",
-      data: formatPick(hadith, lang),
-      meta: { date: dateOnly, source: 'random' as const },
-    };
+    try {
+      await this.prisma.daily_hadith_random_picks.create({ data: { pick_date: today, hadith_id: hadithId } });
+    } catch (err) {
+      if (!(err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002')) throw err;
+      // Another concurrent request locked today's pick between our check
+      // and our create -- use whichever hadith actually won, not the one
+      // we drew, so every visitor still converges on the same answer.
+      const winner = await this.prisma.daily_hadith_random_picks.findUniqueOrThrow({ where: { pick_date: today } });
+      return this.formatTodayPick(winner.hadith_id, lang, dateOnly);
+    }
+    return this.formatTodayPick(hadithId, lang, dateOnly);
   }
 
   /**
@@ -305,6 +314,28 @@ export class DailyHadithsService {
   }
 
   // ── Internals ──────────────────────────────────────────────────────────
+
+  private async formatTodayPick(hadithId: string | null, lang: string | null, dateOnly: string) {
+    const hadith = hadithId ? await this.fetchHadithById(hadithId) : null;
+    const source: 'random' | 'empty' = hadith ? 'random' : 'empty';
+    return {
+      message: "Today's hadith",
+      data: hadith ? formatPick(hadith, lang) : null,
+      meta: { date: dateOnly, source },
+    };
+  }
+
+  /**
+   * Fetch a hadith by id, ignoring deleted_at -- once a day's random pick
+   * is locked in, it keeps returning that hadith's content for the rest
+   * of the day even if the hadith is later soft-deleted (same precedent
+   * display_date lookups already followed before pins were retired).
+   * Returns null only if the row is truly gone, which no API path can
+   * cause (hard delete isn't exposed).
+   */
+  private fetchHadithById(id: string) {
+    return this.prisma.daily_hadiths.findFirst({ where: { id }, include: WITH_TRANSLATIONS });
+  }
 
   private writeAudit(actorId: string, action: AuditAction, resourceId: string, changes: Prisma.InputJsonValue) {
     return this.audit.write({

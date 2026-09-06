@@ -48,6 +48,11 @@ describe('DailyHadithsService', () => {
               createMany: jest.fn().mockResolvedValue({}),
               upsert: jest.fn().mockResolvedValue({}),
             },
+            daily_hadith_random_picks: {
+              findUnique: jest.fn().mockResolvedValue(null),
+              findUniqueOrThrow: jest.fn(),
+              create: jest.fn().mockResolvedValue({}),
+            },
             $transaction: jest.fn((fn) => fn(prisma)),
           },
         },
@@ -71,13 +76,21 @@ describe('DailyHadithsService', () => {
   describe('getToday', () => {
     beforeEach(() => jest.useFakeTimers().setSystemTime(TODAY));
 
-    it('returns the hadith scheduled to today, source=scheduled, and never queries the random pool', async () => {
-      prisma.daily_hadiths.findFirst.mockResolvedValue(
-        hadith('scheduled-1', [tr('ar', 'مجدول', 'المصدر')], new Date('2026-05-12T00:00:00.000Z')),
+    /** Distinguishes the two shapes daily_hadiths.findFirst is called with:
+     *  the "is anything scheduled today?" check (where.display_date) vs
+     *  fetchHadithById resolving a drawn/locked id (where.id). */
+    function mockScheduleCheck(scheduled: ReturnType<typeof hadith> | null) {
+      prisma.daily_hadiths.findFirst.mockImplementation(({ where }: any) =>
+        Promise.resolve('display_date' in where ? scheduled : hadith(where.id, [tr('ar', `نص ${where.id}`)])),
       );
+    }
+
+    it('returns the hadith scheduled to today, source=scheduled, and never touches the lock table', async () => {
+      mockScheduleCheck(hadith('scheduled-1', [tr('ar', 'مجدول', 'المصدر')], new Date('2026-05-12T00:00:00.000Z')));
 
       const res = await service.getToday('ar');
 
+      expect(prisma.daily_hadiths.findFirst).toHaveBeenCalledTimes(1);
       expect(prisma.daily_hadiths.findFirst).toHaveBeenCalledWith(
         expect.objectContaining({ where: { deleted_at: null, display_date: new Date('2026-05-12T00:00:00.000Z') } }),
       );
@@ -86,63 +99,97 @@ describe('DailyHadithsService', () => {
         data: { id: 'scheduled-1', content: 'مجدول', source: 'المصدر', lang: 'ar' },
         meta: { date: '2026-05-12', source: 'scheduled' },
       });
+      expect(prisma.daily_hadith_random_picks.findUnique).not.toHaveBeenCalled();
       expect(prisma.daily_hadiths.findMany).not.toHaveBeenCalled();
     });
 
-    it('falls back to a random undated hadith when nothing is scheduled', async () => {
-      prisma.daily_hadiths.findFirst.mockResolvedValue(null);
+    it('nothing scheduled, no lock yet: draws randomly and locks the winner for today', async () => {
+      mockScheduleCheck(null);
       prisma.daily_hadiths.findMany.mockResolvedValue([{ id: 'a' }, { id: 'b' }, { id: 'c' }]);
-      jest.spyOn(Math, 'random').mockReturnValue(0.5); // picks index 1 of 3 -> 'b'
-      prisma.daily_hadiths.findUniqueOrThrow.mockResolvedValue(hadith('b', [tr('ar', 'عشوائي')]));
+      jest.spyOn(Math, 'random').mockReturnValue(0.5); // index 1 of 3 -> 'b'
 
       const res = await service.getToday(null);
 
+      expect(prisma.daily_hadith_random_picks.findUnique).toHaveBeenCalledWith({
+        where: { pick_date: new Date('2026-05-12T00:00:00.000Z') },
+      });
       expect(prisma.daily_hadiths.findMany).toHaveBeenCalledWith({
         where: { deleted_at: null, display_date: null },
         select: { id: true },
       });
-      expect(prisma.daily_hadiths.findUniqueOrThrow).toHaveBeenCalledWith(
-        expect.objectContaining({ where: { id: 'b' } }),
-      );
+      expect(prisma.daily_hadith_random_picks.create).toHaveBeenCalledWith({
+        data: { pick_date: new Date('2026-05-12T00:00:00.000Z'), hadith_id: 'b' },
+      });
       expect(res.meta).toEqual({ date: '2026-05-12', source: 'random' });
       expect(res.data?.id).toBe('b');
     });
 
-    it('two calls on the same day with nothing scheduled may return different hadiths (no write-back)', async () => {
-      prisma.daily_hadiths.findFirst.mockResolvedValue(null);
-      prisma.daily_hadiths.findMany.mockResolvedValue([{ id: 'a' }, { id: 'b' }]);
-      prisma.daily_hadiths.findUniqueOrThrow.mockImplementation(({ where }: any) =>
-        Promise.resolve(hadith(where.id, [tr('ar', where.id)])),
-      );
+    it('a second call the same day reads the existing lock instead of drawing again -- same hadith for both callers', async () => {
+      mockScheduleCheck(null);
+      prisma.daily_hadiths.findMany.mockResolvedValue([{ id: 'winner' }]);
+      jest.spyOn(Math, 'random').mockReturnValue(0);
+      prisma.daily_hadith_random_picks.findUnique
+        .mockResolvedValueOnce(null) // first call: nothing locked yet
+        .mockResolvedValueOnce({ pick_date: new Date('2026-05-12T00:00:00.000Z'), hadith_id: 'winner' }); // second call: reads the lock
 
-      jest.spyOn(Math, 'random').mockReturnValueOnce(0).mockReturnValueOnce(0.99);
       const first = await service.getToday(null);
       const second = await service.getToday(null);
 
-      expect(first.data?.id).toBe('a');
-      expect(second.data?.id).toBe('b');
-      // Nothing about resolving "today" ever writes to daily_hadiths.
-      expect(prisma.daily_hadiths.create).not.toHaveBeenCalled();
-      expect(prisma.daily_hadiths.update).not.toHaveBeenCalled();
+      expect(prisma.daily_hadith_random_picks.create).toHaveBeenCalledTimes(1); // never draws twice
+      expect(prisma.daily_hadiths.findMany).toHaveBeenCalledTimes(1); // second call never touches the pool
+      expect(first.data?.id).toBe('winner');
+      expect(second.data?.id).toBe('winner');
+    });
+
+    it('a concurrent create race (P2002) returns the actual winner, not the hadith this call drew', async () => {
+      mockScheduleCheck(null);
+      prisma.daily_hadiths.findMany.mockResolvedValue([{ id: 'lost-the-race' }]);
+      jest.spyOn(Math, 'random').mockReturnValue(0);
+      prisma.daily_hadith_random_picks.create.mockRejectedValue(p2002());
+      prisma.daily_hadith_random_picks.findUniqueOrThrow.mockResolvedValue({
+        pick_date: new Date('2026-05-12T00:00:00.000Z'),
+        hadith_id: 'actual-winner',
+      });
+
+      const res = await service.getToday(null);
+
+      expect(res.data?.id).toBe('actual-winner');
+      expect(res.meta.source).toBe('random');
+    });
+
+    it('an already-locked empty day (hadith_id null) stays empty without re-checking the pool', async () => {
+      mockScheduleCheck(null);
+      prisma.daily_hadith_random_picks.findUnique.mockResolvedValue({
+        pick_date: new Date('2026-05-12T00:00:00.000Z'),
+        hadith_id: null,
+      });
+
+      const res = await service.getToday(null);
+
+      expect(res).toEqual({ message: "Today's hadith", data: null, meta: { date: '2026-05-12', source: 'empty' } });
+      expect(prisma.daily_hadiths.findMany).not.toHaveBeenCalled();
+    });
+
+    it('locks the empty outcome when nothing is scheduled and nothing is undated', async () => {
+      mockScheduleCheck(null);
+      prisma.daily_hadiths.findMany.mockResolvedValue([]);
+
+      const res = await service.getToday(null);
+
+      expect(prisma.daily_hadith_random_picks.create).toHaveBeenCalledWith({
+        data: { pick_date: new Date('2026-05-12T00:00:00.000Z'), hadith_id: null },
+      });
+      expect(res).toEqual({ message: "Today's hadith", data: null, meta: { date: '2026-05-12', source: 'empty' } });
     });
 
     it('never draws a hadith that is already scheduled to some other date', async () => {
       prisma.daily_hadiths.findFirst.mockResolvedValue(null);
+      prisma.daily_hadiths.findMany.mockResolvedValue([]);
       await service.getToday(null);
 
       expect(prisma.daily_hadiths.findMany).toHaveBeenCalledWith(
         expect.objectContaining({ where: expect.objectContaining({ display_date: null }) }),
       );
-    });
-
-    it('returns empty when nothing is scheduled and nothing is undated', async () => {
-      prisma.daily_hadiths.findFirst.mockResolvedValue(null);
-      prisma.daily_hadiths.findMany.mockResolvedValue([]);
-
-      const res = await service.getToday(null);
-
-      expect(res).toEqual({ message: "Today's hadith", data: null, meta: { date: '2026-05-12', source: 'empty' } });
-      expect(prisma.daily_hadiths.findUniqueOrThrow).not.toHaveBeenCalled();
     });
 
     it('resolves the requested language and falls back to Arabic via lang-ascending order', async () => {
