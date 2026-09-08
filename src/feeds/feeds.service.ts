@@ -95,7 +95,7 @@ export class FeedsService {
         orderBy: [{ display_order: 'asc' }, { id: 'asc' }],
       }),
       this.prisma.books.findMany({
-        where: { ...publicWhere(true), slug: { not: null } },
+        where: { ...publicWhere(true), slug: { not: null }, parent_id: null },
         select: { slug: true, updated_at: true, created_at: true },
       }),
     ]);

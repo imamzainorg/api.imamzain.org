@@ -37,11 +37,16 @@ export class BooksController {
 
   @Get()
   @PublicCache(60)
-  @ApiOperation({ summary: 'List all books (public)', description: 'Supports filtering by category and full-text search. Response is CDN-cacheable (`public, max-age=60, s-maxage=300`) and varies by `Accept-Language`. **List payload is slim** — each translation drops the `description` field. Call `GET /books/:id` for the full description.' })
+  @ApiOperation({
+    summary: 'List all books (public)',
+    description:
+      'Supports filtering by category, publication flag, and full-text search. **Series parts are never returned here** — a multi-part series appears as one row (its parent/cover entry) with `parts_count` set; call `GET /books/:id` on that row to fetch the parts themselves. Response is CDN-cacheable (`public, max-age=60, s-maxage=300`) and varies by `Accept-Language`. **List payload is slim** — each translation drops the `description` field. Call `GET /books/:id` for the full description.',
+  })
   @ApiQuery({ name: 'page', required: false, type: Number, example: 1, description: 'Page number (default: 1)' })
   @ApiQuery({ name: 'limit', required: false, type: Number, example: 20, description: 'Items per page (default: 20, max: 100)' })
   @ApiQuery({ name: 'category_id', required: false, type: String, description: 'Filter by book category UUID' })
   @ApiQuery({ name: 'search', required: false, type: String, example: 'الصحيفة', description: 'Search across book titles' })
+  @ApiQuery({ name: 'is_publication', required: false, type: Boolean, description: 'Filter to the institution\'s "الإصدارات" (Publications) release list' })
   @ApiOkResponse({ type: BookListResponseDto, description: 'Paginated list of books' })
   @ApiBadRequestResponse({ type: ValidationErrorDto, description: 'Invalid query parameters (page < 1, limit out of 1–100, or non-integer values)' })
   findAll(@Query() query: BookQueryDto, @Lang() lang: string | null) {
@@ -52,12 +57,14 @@ export class BooksController {
   @Auth('books:read')
   @ApiOperation({
     summary: 'List all books including unpublished (admin)',
-    description: 'Returns drafts and published books. Requires permission: `books:read`.',
+    description:
+      'Returns drafts and published books. Series parts are hidden here too — same `parts_count` convention as the public list. Requires permission: `books:read`.',
   })
   @ApiQuery({ name: 'page', required: false, type: Number, example: 1 })
   @ApiQuery({ name: 'limit', required: false, type: Number, example: 20 })
   @ApiQuery({ name: 'category_id', required: false, type: String, description: 'Filter by book category UUID' })
   @ApiQuery({ name: 'search', required: false, type: String, example: 'الصحيفة', description: 'Search across book titles' })
+  @ApiQuery({ name: 'is_publication', required: false, type: Boolean, description: 'Filter to the institution\'s "الإصدارات" (Publications) release list' })
   @ApiOkResponse({ type: BookListResponseDto, description: 'Paginated list of all books' })
   @ApiBadRequestResponse({ type: ValidationErrorDto, description: 'Invalid query parameters (page < 1, limit out of 1–100, or non-integer values)' })
   findAdmin(@Query() query: BookQueryDto, @Lang() lang: string | null) {
@@ -121,7 +128,7 @@ export class BooksController {
 
   @Get(':id')
   @PublicCache(60)
-  @ApiOperation({ summary: 'Get a single book by ID (public)', description: 'Returns the book with its translations. Falls back to the default translation if no translation exists for the requested language. Response is CDN-cacheable (`public, max-age=60, s-maxage=300`) and varies by `Accept-Language`.' })
+  @ApiOperation({ summary: 'Get a single book by ID (public)', description: 'Returns the book with its translations. Falls back to the default translation if no translation exists for the requested language. If this book is a series parent, `parts` lists every part ordered by `part_number`; if it is itself a part, `parent` links back to the series. Response is CDN-cacheable (`public, max-age=60, s-maxage=300`) and varies by `Accept-Language`.' })
   @ApiParam({ name: 'id', format: 'uuid' })
   @ApiOkResponse({ type: BookDetailResponseDto, description: 'Book detail with all translations' })
   @ApiNotFoundResponse({ type: NotFoundErrorDto, description: 'No book with that ID exists, or it has been deleted' })

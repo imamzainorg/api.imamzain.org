@@ -134,6 +134,11 @@ function requireSlug(map: Record<string, string>, arName: string, kind: string):
 
 // ── Books ─────────────────────────────────────────────────────────────────────
 
+/** "الإصدارات" (Publications) can appear anywhere in a book's category array, not just first — see is_publication on the schema. */
+function isPublicationCategory(rawCats: string[]): boolean {
+  return rawCats.some((c) => c.trim() === 'الإصدارات');
+}
+
 async function seedBooks(): Promise<void> {
   const books = loadJson<BookJson[]>('books.json');
 
@@ -145,6 +150,77 @@ async function seedBooks(): Promise<void> {
     return id;
   }
 
+  // A "series" is a group of >= 2 JSON rows sharing the same `series` string —
+  // each becomes a part linked under one parent/cover book. A group of exactly
+  // 1 (e.g. a book whose only surviving volume is "part 2") is NOT a series —
+  // there's nothing to link it to, so it seeds as an ordinary standalone book
+  // below, with part_number/parts left null.
+  const seriesGroups = new Map<string, BookJson[]>();
+  for (const b of books) {
+    const key = b.series?.trim();
+    if (!key) continue;
+    if (!seriesGroups.has(key)) seriesGroups.set(key, []);
+    seriesGroups.get(key)!.push(b);
+  }
+
+  const parentIdBySeries = new Map<string, string>();
+  let parentsCreated = 0;
+  let parentsSkipped = 0;
+
+  for (const [seriesName, group] of seriesGroups) {
+    if (group.length < 2) continue;
+
+    const first = [...group].sort((a, b) => (a.partNumber ?? 0) - (b.partNumber ?? 0))[0]!;
+    const rawCats = Array.isArray(first.category) ? first.category : first.category ? [first.category] : [];
+    const primaryCat = rawCats[0]?.trim();
+    const coverUrl = normalizeUrl(first.image ?? '');
+    if (!primaryCat || !coverUrl) continue;
+
+    const categoryId = await getBookCatId(primaryCat);
+    const mediaId = await upsertMedia(coverUrl, seriesName);
+
+    // Idempotency: a parent for this series already exists if a top-level
+    // book with this exact default Arabic title + category is on record.
+    // Matched on category, NOT cover_image_id — an editor legitimately
+    // changing a series' cover art via the CMS after this script has run
+    // must not make it look like the parent doesn't exist yet.
+    const existingParent = await prisma.books.findFirst({
+      where: {
+        parent_id: null,
+        category_id: categoryId,
+        book_translations: { some: { lang: 'ar', title: seriesName, is_default: true } },
+      },
+      select: { id: true },
+    });
+    if (existingParent) {
+      parentIdBySeries.set(seriesName, existingParent.id);
+      parentsSkipped++;
+      continue;
+    }
+
+    const parent = await prisma.books.create({
+      data: {
+        category_id: categoryId,
+        cover_image_id: mediaId,
+        // No pdf_url/pages of its own — it's the series' cover entry, the
+        // actual documents live on its parts.
+        is_publication: isPublicationCategory(rawCats),
+        document_languages: normalizeDocumentLanguages(Array.isArray(first.language) ? first.language : [first.language]),
+        book_translations: {
+          create: {
+            lang: 'ar',
+            title: seriesName,
+            author: first.author ?? null,
+            publisher: first.printHouse ?? null,
+            is_default: true,
+          },
+        },
+      },
+    });
+    parentIdBySeries.set(seriesName, parent.id);
+    parentsCreated++;
+  }
+
   let created = 0;
   let skipped = 0;
 
@@ -152,12 +228,25 @@ async function seedBooks(): Promise<void> {
     const imageUrl = normalizeUrl(b.image ?? '');
     if (!imageUrl) { skipped++; continue; }
 
-    // Idempotency: if a media record for this URL already has a linked book, skip
-    const existingMedia = await prisma.media.findUnique({ where: { url: imageUrl } });
-    if (existingMedia) {
-      const existingBook = await prisma.books.findFirst({ where: { cover_image_id: existingMedia.id } });
-      if (existingBook) { skipped++; continue; }
-    }
+    const pdfUrl = b.pdf?.trim() ? normalizeUrl(b.pdf) : null;
+
+    // Idempotency: was THIS JSON row already seeded? pdf_url is unique
+    // across the whole legacy corpus and — critically — is never set on a
+    // series parent (parents are synthesized above, with no PDF of their
+    // own), so matching on it can never be confused with a parent that
+    // deliberately reuses this row's cover image (a series' parent and its
+    // first part legitimately share one cover_image_id — see above — so
+    // that column alone can no longer answer "does a book already exist for
+    // this JSON row"). Only the rows with no PDF at all (none of which
+    // belong to a real series) fall back to the old cover-image check.
+    const existingBook = pdfUrl
+      ? await prisma.books.findFirst({ where: { pdf_url: pdfUrl }, select: { id: true } })
+      : await (async () => {
+          const existingMedia = await prisma.media.findUnique({ where: { url: imageUrl } });
+          if (!existingMedia) return null;
+          return prisma.books.findFirst({ where: { cover_image_id: existingMedia.id }, select: { id: true } });
+        })();
+    if (existingBook) { skipped++; continue; }
 
     const rawCats = Array.isArray(b.category) ? b.category : b.category ? [b.category] : [];
     const primaryCat = rawCats[0]?.trim();
@@ -165,6 +254,10 @@ async function seedBooks(): Promise<void> {
 
     const categoryId = await getBookCatId(primaryCat);
     const mediaId = await upsertMedia(imageUrl, b.title);
+
+    const seriesKey = b.series?.trim();
+    const isRealSeriesPart = Boolean(seriesKey && (seriesGroups.get(seriesKey)?.length ?? 0) > 1);
+    const parentId = isRealSeriesPart ? (parentIdBySeries.get(seriesKey!) ?? null) : null;
 
     // Book + Arabic translation in ONE nested create so a crash between the two
     // writes can't leave a translation-less book a re-run would then skip.
@@ -174,16 +267,31 @@ async function seedBooks(): Promise<void> {
         cover_image_id: mediaId,
         pages: b.pages != null ? (parseInt(String(b.pages), 10) || null) : null,
         publish_year: b.printDate != null ? String(b.printDate) : null,
-        pdf_url: b.pdf?.trim() ? normalizeUrl(b.pdf) : null,
-        part_number: b.partNumber != null ? (parseInt(String(b.partNumber), 10) || null) : null,
-        parts: b.totalParts != null ? (parseInt(String(b.totalParts), 10) || null) : null,
+        pdf_url: pdfUrl,
+        // A real part's own title is normalized to the series name — the
+        // numeric part_number (not embedded "ج1"/"ج2" text) is now the
+        // canonical way an API consumer tells parts apart; see parts[] on
+        // the parent's detail response. A non-series book keeps its own
+        // title as-is.
+        part_number: isRealSeriesPart ? (b.partNumber != null ? parseInt(String(b.partNumber), 10) || null : null) : null,
+        // A live DB CHECK constraint (chk_books_parts — not tracked in any
+        // migration in this repo, added directly in production at some
+        // point) requires part_number and parts to be both-null or
+        // both-set. parts_count (computed from real parent/part links) is
+        // the source of truth for API consumers, but this legacy column is
+        // kept in sync with the real group size rather than nulled out, to
+        // satisfy that constraint and stay internally consistent for any
+        // consumer querying the DB directly.
+        parts: isRealSeriesPart ? seriesGroups.get(seriesKey!)!.length : null,
+        parent_id: parentId,
+        is_publication: isPublicationCategory(rawCats),
         // views intentionally NOT seeded from JSON — starts at the column
         // default (0). The legacy counts aren't real usage data for this API.
         document_languages: normalizeDocumentLanguages(Array.isArray(b.language) ? b.language : [b.language]),
         book_translations: {
           create: {
             lang: 'ar',
-            title: b.title ?? '',
+            title: isRealSeriesPart ? seriesKey! : (b.title ?? ''),
             author: b.author ?? null,
             publisher: b.printHouse ?? null,
             series: b.series ?? null,
@@ -196,7 +304,7 @@ async function seedBooks(): Promise<void> {
     created++;
   }
 
-  console.log(`  ✓ ${created} books seeded, ${skipped} skipped`);
+  console.log(`  ✓ ${parentsCreated} series parent(s) created (${parentsSkipped} already existed), ${created} books seeded, ${skipped} skipped`);
 }
 
 // ── Posts ─────────────────────────────────────────────────────────────────────

@@ -883,9 +883,11 @@ and `/publications/{slug}`; the sitemap advertises the former.
 
 > ⚠️ **In practice the sitemap currently contains posts and static pages
 > only — 89 URLs.** Because no book or audio has ever been given a slug and
-> academic papers have no slug column, 138 books, 310 audios and 1,260
-> papers are all absent from it. That is the direct SEO cost of the empty
-> slug columns described in
+> academic papers have no slug column, all books (95 top-level entries —
+> series parts are excluded from the sitemap query the same way they're
+> excluded from every list endpoint, see [CMS-INTEGRATION-NOTES.md](CMS-INTEGRATION-NOTES.md)
+> round 20), 310 audios and 1,260 papers are all absent from it. That is the
+> direct SEO cost of the empty slug columns described in
 > [Human-readable URLs](#human-readable-urls-by-slug); backfilling book and
 > audio slugs is what would put them in.
 

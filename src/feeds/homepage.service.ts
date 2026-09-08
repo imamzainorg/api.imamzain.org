@@ -100,7 +100,9 @@ export class HomepageService {
 
   private async publications(lang: string | null) {
     const books = await this.prisma.books.findMany({
-      where: publicWhere(true),
+      // Parts are hidden — a 12-part series must not fill the "latest 10"
+      // feed with the same title ten times over.
+      where: { ...publicWhere(true), parent_id: null },
       select: {
         id: true,
         slug: true,
