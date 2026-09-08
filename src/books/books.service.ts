@@ -14,7 +14,13 @@ import { RequestPdfUploadUrlDto } from '../common/dto/request-pdf-upload-url.dto
 import { BookQueryDto, CreateBookDto, UpdateBookDto } from './dto/book.dto';
 
 // List queries drop the full description from translations (typically the
-// heaviest field) and slim the cover-image record.
+// heaviest field) and slim the cover-image record. Parts are hidden from
+// every PUBLIC/admin list view (see the `parent_id: null` filter in
+// findAll) — `_count.parts_rel` becomes `parts_count`, a cheap badge for
+// "this is a series with N parts"; the parts themselves are only on the
+// detail response. findTrash deliberately does NOT apply this filter — an
+// admin restoring a soft-deleted part needs to see and restore it as its
+// own row, not have it hidden behind a parent that may not even be deleted.
 const BOOK_LIST_SELECT = {
   id: true,
   category_id: true,
@@ -26,9 +32,9 @@ const BOOK_LIST_SELECT = {
   pdf_url: true,
   document_languages: true,
   part_number: true,
-  parts: true,
   views: true,
   is_published: true,
+  is_publication: true,
   created_at: true,
   updated_at: true,
   deleted_at: true,
@@ -56,6 +62,39 @@ const BOOK_LIST_SELECT = {
       },
     },
   },
+  _count: { select: { parts_rel: true } },
+} satisfies Prisma.booksSelect;
+
+/** Shape of one row selected with BOOK_LIST_SELECT — used to type the list-mapping helper below. */
+type BookListRow = Prisma.booksGetPayload<{ select: typeof BOOK_LIST_SELECT }>;
+
+/** Drop the internal `_count` wrapper in favour of a flat `parts_count`. */
+function withPartsCount(book: BookListRow) {
+  const { _count, ...rest } = book;
+  return { ...rest, parts_count: _count.parts_rel };
+}
+
+// A part's shape on its parent's detail response — enough for a "parts" list
+// screen (title via translations, cover, page count, the PDF itself).
+const BOOK_PART_SELECT = {
+  id: true,
+  slug: true,
+  part_number: true,
+  pages: true,
+  pdf_url: true,
+  media: { select: PUBLIC_MEDIA_SELECT },
+  book_translations: {
+    select: { book_id: true, lang: true, title: true, author: true, publisher: true, series: true, is_default: true },
+  },
+} satisfies Prisma.booksSelect;
+
+// A series parent's shape on a part's detail response — just enough to link back.
+const BOOK_PARENT_SELECT = {
+  id: true,
+  slug: true,
+  book_translations: {
+    select: { book_id: true, lang: true, title: true, author: true, publisher: true, series: true, is_default: true },
+  },
 } satisfies Prisma.booksSelect;
 
 @Injectable()
@@ -75,9 +114,14 @@ export class BooksService {
   async findAll(query: BookQueryDto, lang: string | null, isAdmin = false) {
     const { page, limit, skip } = resolvePagination(query);
 
-    const where: Prisma.booksWhereInput = { deleted_at: null };
+    // Parts are hidden from every list — they only surface on their series
+    // parent's detail response (see findOne). This also fixes duplicate-
+    // looking rows on paginated pages (a 12-part series used to be 12 near-
+    // identical entries).
+    const where: Prisma.booksWhereInput = { deleted_at: null, parent_id: null };
     if (!isAdmin) where.is_published = true;
     if (query.category_id) where.category_id = query.category_id;
+    if (query.is_publication !== undefined) where.is_publication = query.is_publication;
 
     if (query.search) {
       where.book_translations = {
@@ -96,7 +140,10 @@ export class BooksService {
       this.prisma.books.count({ where }),
     ]);
 
-    const mapped = items.map((b) => ({ ...b, translation: resolveTranslation(b.book_translations, lang) }));
+    const mapped = items.map((b) => {
+      const flat = withPartsCount(b);
+      return { ...flat, translation: resolveTranslation(flat.book_translations, lang) };
+    });
     return { message: 'Books fetched', data: { items: mapped, pagination: buildPaginationMeta(page, limit, total) } };
   }
 
@@ -110,11 +157,41 @@ export class BooksService {
         book_translations: { include: { og_image: { select: OG_IMAGE_SELECT } } },
         media: { include: { media_variants: { select: MEDIA_VARIANT_SELECT, orderBy: { width: 'asc' } } } },
         book_categories: { include: { book_category_translations: true } },
+        // Only populated when this book IS a series parent — ordered so the
+        // caller can render a "parts" list directly, no client-side sort.
+        parts_rel: {
+          where: { deleted_at: null, ...(isAdmin ? {} : { is_published: true }) },
+          orderBy: { part_number: 'asc' },
+          select: BOOK_PART_SELECT,
+        },
+        // Only populated when this book IS a part — links back to its series.
+        // Filtered the same way as parts_rel: a live part must not leak a
+        // soft-deleted or unpublished parent's data through this back-ref.
+        parent: {
+          where: { deleted_at: null, ...(isAdmin ? {} : { is_published: true }) },
+          select: BOOK_PARENT_SELECT,
+        },
       },
     });
     if (!book) throw new NotFoundException('Book not found');
 
-    return { message: 'Book fetched', data: { ...book, translation: resolveTranslation(book.book_translations, lang) } };
+    // `include` (unlike the explicit BOOK_LIST_SELECT used elsewhere) pulls
+    // every raw scalar, including the internal `parent_id` FK — strip it so
+    // the response matches what BookDto actually promises (the resolved
+    // `parent` object below is the public-facing equivalent).
+    const { parts_rel, parent, parent_id: _parentId, ...rest } = book;
+    const mappedParts = parts_rel.map((p) => ({ ...p, translation: resolveTranslation(p.book_translations, lang) }));
+
+    return {
+      message: 'Book fetched',
+      data: {
+        ...rest,
+        translation: resolveTranslation(book.book_translations, lang),
+        parts_count: parts_rel.length,
+        parts: mappedParts.length > 0 ? mappedParts : undefined,
+        parent: parent ? { ...parent, translation: resolveTranslation(parent.book_translations, lang) } : undefined,
+      },
+    };
   }
 
   /** Public detail by canonical slug — one language-agnostic slug per book. Published only. */
@@ -179,12 +256,37 @@ export class BooksService {
     return { message: 'View tracked', data: null };
   }
 
+  /**
+   * A series is exactly one level deep: reject a parent_id that either
+   * doesn't exist, or itself already has a parent (would create a
+   * grandparent/grandchild chain the app's "parent -> parts" UI can't render).
+   *
+   * This is a plain check-then-act read with no lock, so two concurrent
+   * admin edits could in theory both pass and jointly build a two-level
+   * chain — the same unhardened race every other pre-transaction check in
+   * update()/create() already accepts (ISBN, category, slug) for this
+   * small, trusted-staff CMS. Only the DB CHECK constraint on literal
+   * self-reference is enforced at write time; depth is not.
+   */
+  private async assertUsableParent(parentId: string): Promise<void> {
+    const parent = await this.prisma.books.findFirst({
+      where: { id: parentId, deleted_at: null },
+      select: { id: true, parent_id: true },
+    });
+    if (!parent) throw new NotFoundException('Parent book not found');
+    if (parent.parent_id) {
+      throw new BadRequestException('parent_id must point at a top-level book — that book is itself a part of a series');
+    }
+  }
+
   async create(dto: CreateBookDto, userId: string, lang: string | null) {
     const category = await this.prisma.book_categories.findFirst({ where: { id: dto.category_id, deleted_at: null } });
     if (!category) throw new NotFoundException('Category not found');
 
     const media = await this.prisma.media.findUnique({ where: { id: dto.cover_image_id } });
     if (!media) throw new NotFoundException('Cover image not found');
+
+    if (dto.parent_id) await this.assertUsableParent(dto.parent_id);
 
     if (dto.isbn) {
       // Check the unique constraint as the DB sees it (no soft-delete filter):
@@ -216,6 +318,8 @@ export class BooksService {
             // which benefit from a draft-first workflow) — default to published,
             // matching audios' precedent.
             is_published: dto.is_published ?? true,
+            is_publication: dto.is_publication ?? false,
+            parent_id: dto.parent_id ?? null,
             added_by: userId,
           },
         });
@@ -279,6 +383,19 @@ export class BooksService {
       if (conflict) throw new ConflictException('A book with that ISBN already exists');
     }
 
+    if (dto.parent_id !== undefined && dto.parent_id !== null) {
+      // Postgres uuid comparison is case-insensitive; match that here so a
+      // differently-cased self-reference gets this friendly 400 instead of
+      // slipping past assertUsableParent and only failing as an unhandled
+      // 500 when the DB's books_parent_id_not_self_check CHECK constraint
+      // rejects the write inside the transaction.
+      if (dto.parent_id.toLowerCase() === id.toLowerCase()) throw new BadRequestException('A book cannot be its own parent');
+      // A part can't itself become a parent — keep the series tree exactly one level deep.
+      const childCount = await this.prisma.books.count({ where: { parent_id: id, deleted_at: null } });
+      if (childCount > 0) throw new BadRequestException('Cannot set a parent — this book already has its own parts');
+      await this.assertUsableParent(dto.parent_id);
+    }
+
     if (dto.slug) await this.assertSlugAvailable(dto.slug, id);
 
     try {
@@ -298,6 +415,10 @@ export class BooksService {
         if (dto.part_number !== undefined) updateData.part_number = dto.part_number;
         if (dto.parts !== undefined) updateData.parts = dto.parts;
         if (dto.is_published !== undefined) updateData.is_published = dto.is_published;
+        if (dto.is_publication !== undefined) updateData.is_publication = dto.is_publication;
+        if (dto.parent_id !== undefined) {
+          updateData.parent = dto.parent_id === null ? { disconnect: true } : { connect: { id: dto.parent_id } };
+        }
 
         await tx.books.update({ where: { id }, data: updateData });
 
@@ -363,12 +484,15 @@ export class BooksService {
     ]);
 
     // Strip the ISBN/slug suffixes in the response so the CMS shows the originals.
-    const mapped = items.map((b) => ({
-      ...b,
-      slug: b.slug ? stripSoftDeleteSuffix(b.slug) : b.slug,
-      isbn: b.isbn ? stripSoftDeleteSuffix(b.isbn) : b.isbn,
-      translation: resolveTranslation(b.book_translations, null),
-    }));
+    const mapped = items.map((b) => {
+      const flat = withPartsCount(b);
+      return {
+        ...flat,
+        slug: flat.slug ? stripSoftDeleteSuffix(flat.slug) : flat.slug,
+        isbn: flat.isbn ? stripSoftDeleteSuffix(flat.isbn) : flat.isbn,
+        translation: resolveTranslation(flat.book_translations, null),
+      };
+    });
 
     return {
       message: 'Trash fetched',

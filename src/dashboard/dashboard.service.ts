@@ -78,7 +78,9 @@ export class DashboardService {
           COUNT(*) FILTER (WHERE deleted_at IS NULL AND is_published = FALSE) AS audios_draft
         FROM audios
       `,
-      this.prisma.books.count({ where: { deleted_at: null } }),
+      // parent_id: null — count distinct catalogue titles, not raw rows;
+      // a 12-part series is 12 rows but one book on every other surface.
+      this.prisma.books.count({ where: { deleted_at: null, parent_id: null } }),
       this.prisma.academic_papers.count({ where: { deleted_at: null } }),
       this.prisma.gallery_images.count({ where: { deleted_at: null } }),
       this.prisma.media.count(),

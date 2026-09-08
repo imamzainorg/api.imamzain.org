@@ -152,6 +152,7 @@ export class SearchService {
         JOIN books b ON b.id = bt.book_id
         WHERE b.deleted_at IS NULL
           AND b.is_published = true
+          AND b.parent_id IS NULL
           AND (bt.title % ${q} OR bt.author % ${q} OR bt.description % ${q})
         ORDER BY bt.book_id, score DESC
       ) sub

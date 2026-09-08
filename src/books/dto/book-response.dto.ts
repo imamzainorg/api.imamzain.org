@@ -99,6 +99,42 @@ class BookMediaRefDto {
   height: number | null;
 }
 
+/** One part of a multi-part series, as returned on the parent's detail response. */
+class BookPartRefDto {
+  @ApiProperty({ example: 'uuid-...' })
+  id: string;
+
+  @ApiPropertyOptional({ example: 'al-sahifa-al-sajjadiyya-part-2', nullable: true })
+  slug: string | null;
+
+  @ApiProperty({ example: 2, description: 'Position of this part within the series' })
+  part_number: number;
+
+  @ApiPropertyOptional({ example: 320 })
+  pages?: number;
+
+  @ApiPropertyOptional({ example: 'https://cdn.imamzain.org/books/part-2.pdf' })
+  pdf_url?: string;
+
+  @ApiProperty({ type: BookMediaRefDto })
+  media: BookMediaRefDto;
+
+  @ApiProperty({ type: BookTranslationItemDto, nullable: true, description: 'Resolved translation for the requested language' })
+  translation: BookTranslationItemDto | null;
+}
+
+/** Back-reference from a part to its series' parent/cover entry. */
+class BookParentRefDto {
+  @ApiProperty({ example: 'uuid-...' })
+  id: string;
+
+  @ApiPropertyOptional({ example: 'al-sahifa-al-sajjadiyya', nullable: true })
+  slug: string | null;
+
+  @ApiProperty({ type: BookTranslationItemDto, nullable: true, description: 'Resolved translation for the requested language' })
+  translation: BookTranslationItemDto | null;
+}
+
 /**
  * Detail-shape book — full translations including `description`.
  * Returned by `GET /books/:id`, create, update, and view-track responses.
@@ -131,17 +167,20 @@ class BookDto {
   @ApiProperty({ example: ['ar'], description: 'ISO 639-1 codes for the language(s) the PDF itself is written in — distinct from the catalogue translations. Empty array when unknown.' })
   document_languages: string[];
 
-  @ApiPropertyOptional({ example: 1 })
+  @ApiPropertyOptional({ example: 1, description: 'Position of this book within its series. Only set when the book has a parent (is one part of a series).' })
   part_number?: number;
 
-  @ApiPropertyOptional({ example: 3 })
-  parts?: number;
+  @ApiProperty({ example: 0, description: 'Number of parts in this series. 0 for a standalone book or for a part itself — only a series parent has parts.' })
+  parts_count: number;
 
   @ApiProperty({ example: 0 })
   views: number;
 
   @ApiProperty({ example: true })
   is_published: boolean;
+
+  @ApiProperty({ example: false, description: 'Whether this book is on the institution\'s "الإصدارات" (Publications) release list.' })
+  is_publication: boolean;
 
   @ApiProperty({ example: '2024-01-01T00:00:00.000Z' })
   created_at: string;
@@ -160,6 +199,19 @@ class BookDto {
 
   @ApiProperty({ type: BookMediaRefDto, description: 'Cover image media record (every book has a cover).' })
   media: BookMediaRefDto;
+
+  @ApiPropertyOptional({
+    type: [BookPartRefDto],
+    description: 'Present only when this book is a series parent (parts_count > 0) — every part, ordered by part_number. Absent on a standalone book or on a part itself.',
+  })
+  parts?: BookPartRefDto[];
+
+  @ApiPropertyOptional({
+    type: BookParentRefDto,
+    nullable: true,
+    description: 'Present only when this book is one part of a series — the series\' parent/cover entry.',
+  })
+  parent?: BookParentRefDto | null;
 }
 
 /**
@@ -194,17 +246,20 @@ class BookListItemDto {
   @ApiProperty({ example: ['ar'], description: 'ISO 639-1 codes for the language(s) the PDF itself is written in — distinct from the catalogue translations. Empty array when unknown.' })
   document_languages: string[];
 
-  @ApiPropertyOptional({ example: 1 })
+  @ApiPropertyOptional({ example: 1, description: 'Position of this book within its series. Never set on a list item — parts are hidden from list responses (see parts_count on the series parent).' })
   part_number?: number;
 
-  @ApiPropertyOptional({ example: 3 })
-  parts?: number;
+  @ApiProperty({ example: 0, description: 'Number of parts in this series. 0 for a normal book. Call the detail endpoint to fetch the parts themselves.' })
+  parts_count: number;
 
   @ApiProperty({ example: 0 })
   views: number;
 
   @ApiProperty({ example: true })
   is_published: boolean;
+
+  @ApiProperty({ example: false, description: 'Whether this book is on the institution\'s "الإصدارات" (Publications) release list.' })
+  is_publication: boolean;
 
   @ApiProperty({ example: '2024-01-01T00:00:00.000Z' })
   created_at: string;

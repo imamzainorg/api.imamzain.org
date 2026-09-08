@@ -155,6 +155,19 @@ model books {
   // — distinct from book_translations.lang, which is the title/author text's
   // language. Array: bilingual editions are real in this library.
   document_languages String[]           @default([])
+  // Multi-part series support (migration 20260908120000). NULL for a normal
+  // standalone book. When set, this row is one part of the series whose
+  // "cover" record (title/author/category/cover image, no PDF of its own) is
+  // the parent — see the self-relation below. Exactly one level deep: a part
+  // can never itself be a parent (enforced in books.service.ts, not the DB).
+  parent_id          String?             @db.Uuid
+  // True when this book belongs to the institution's "الإصدارات" (flagship
+  // Publications) release list — a cross-cutting flag, independent of
+  // category_id's topical classification. Added because the legacy source
+  // data lets a book carry BOTH a topic and "الإصدارات" (e.g. a Sahifa
+  // Sajjadiya commentary that is also one of the institution's Publications),
+  // which category_id alone can't represent.
+  is_publication     Boolean             @default(false)
   created_at        DateTime            @default(now()) @db.Timestamptz(6)
   updated_at        DateTime            @default(now()) @db.Timestamptz(6)
   added_by          String?             @db.Uuid
@@ -163,9 +176,13 @@ model books {
   users             users?              @relation(fields: [added_by], references: [id], onUpdate: NoAction)
   book_categories   book_categories     @relation(fields: [category_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
   media             media               @relation(fields: [cover_image_id], references: [id], onUpdate: NoAction)
+  parent            books?              @relation("BookParts", fields: [parent_id], references: [id], onDelete: SetNull, onUpdate: NoAction)
+  parts_rel         books[]             @relation("BookParts")
 
   @@index([added_by], map: "idx_books_added_by")
   @@index([category_id], map: "idx_books_category")
+  @@index([parent_id], map: "idx_books_parent_id")
+  @@index([is_publication], map: "idx_books_is_publication")
 }
 
 /// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.

@@ -2685,7 +2685,115 @@ hadiths on repeated calls is fine" were replaced.
 
 ---
 
-## 25. Open follow-ups (still not in this push)
+## 25. Round 20 — book series (parent/parts) + the `is_publication` flag
+
+Two independent fixes to `books`, both additive (migration
+`20260908120000_book_parts_and_publication_flag`), landed together because
+they touch the same list/detail code paths.
+
+**Multi-part series get real structure.** Previously a 12-part book was 12
+separate rows, distinguishable only by `part_number` — nothing told a client
+they belonged together, so `GET /books` showed the same title 12 times (the
+homepage "latest publications" feed hit this hardest: it could show one
+series 10 times over). Now one row is the series' parent/cover entry
+(title/author/category/cover image, no `pdf_url` of its own) and every part
+carries `parent_id` pointing at it — exactly one level deep, enforced in
+`books.service.ts` (a part can never itself be a parent).
+
+- **Parts are hidden from every list** (`GET /books`, `/books/admin`,
+  the homepage `publications` feed, search, sitemap) — `parent_id: null` is
+  now part of the base filter everywhere. A series parent's list row carries
+  `parts_count` (0 for a normal book).
+- **`GET /books/:id` on a parent** returns `parts[]`, every part ordered by
+  `part_number`, each with its own `pdf_url`/`pages`/cover/translation.
+  **On a part**, it returns `parent` (id/slug/translation) to link back.
+  Direct lookup by id/slug still works on a part — only *list* views hide
+  them.
+- **Part titles are normalized** to the series' clean name (no more "ج1"/
+  "الجزء الأول" embedded in the title) — `part_number` is now the only
+  contract for "which part is this," not the title string.
+- `POST/PATCH /books` accept `parent_id` (create or move a part; `null` on
+  PATCH detaches it). Validation: the target must exist, must not itself
+  have a parent, and a book with its own parts can't be given one.
+- One JSON `series` group of size 1 ("ديمومة سجادية" — only part 2 ever
+  got catalogued) is deliberately **not** treated as a series: nothing to
+  link it to, so it seeds as an ordinary standalone book with no
+  `parent_id`/`part_number`.
+
+**`is_publication` decouples "is this a flagship Publication" from
+"what topic is it filed under."** The legacy source data lets a book carry
+a topical category (`الصحيفة السجادية`, `رسالة الحقوق`, …) **and**
+"الإصدارات" at once — the original seed kept whichever category came first
+and silently dropped "الإصدارات" the rest of the time. An audit found 17 of
+39 rightfully-"الإصدارات" books were invisible under that category because
+of it. `books.is_publication` (boolean, independent of `category_id`) fixes
+this — `GET /books?is_publication=true` now returns all of them regardless
+of topic. `category_id` itself is untouched for every existing row.
+
+**Design note: why a boolean, not a many-to-many category model.** The
+obvious "more correct" fix for "a book can be about a topic AND be a
+Publication" is a `book_category_assignments` join table, letting any book
+carry any number of categories. Deliberately not done. The full legacy
+corpus (138 books, JSON arrays that technically support any number of
+categories) was audited: **zero** books ever carry 3+ categories, and
+**every single** 2-category book pairs a topic with exactly
+`"الإصدارات"` — never two topics together. Even when the source format
+allowed free-form multi-tagging, the institution never once used it for
+anything but this one specific "is it a flagship release" distinction. A
+join table would model a generality this library has never exercised, at
+the cost of real complexity across the schema, API, CMS multi-select UI,
+category-delete guard, and both seed paths — for a pattern one boolean
+already covers exactly. If genuine multi-topic tagging becomes a real
+editorial need later, revisit then with real cases in hand, not
+speculatively now.
+
+One loose end this did surface, left as a content decision rather than an
+engineering one: 18 books have **no** topic at all — `"الإصدارات"` is
+their *only* category, which now reads oddly now that "is this a
+Publication" is its own flag. Whether any of them warrant a real topical
+category is an editorial call (what a book is *about*), not something to
+guess at in a migration script. `category_id = "الإصدارات"` remains a
+legitimate value for a book with no more specific topic — it isn't being
+deprecated, just no longer double-duty as the Publications flag.
+
+**Migration is additive only** — new nullable `parent_id`, new
+`is_publication BOOLEAN NOT NULL DEFAULT false`, a self-referencing FK
+(`ON DELETE SET NULL`), and a `parent_id != id` check constraint. It does
+**not** backfill data. A one-off script, `npm run prisma:link-book-parts`
+(`--dry` to preview), does that against an already-seeded database: joins
+each row back to the legacy JSON via `pdf_url`, creates the series parents,
+links parts, and sets `is_publication`. It's idempotent — safe to re-run,
+and any row it can't join to a source record is reported and left alone
+rather than guessed at. `seedBooks()` in `seed-content.ts` does the
+equivalent natively for a fresh database.
+
+**Already applied to production** (2026-09-08), verified: 147 total rows
+(138 original + 9 new series parents), 95 top-level, 52 parts linked,
+`is_publication = true` on 43 rows, zero orphaned/unlinked rows. A third
+`--dry` run afterward confirmed the script is now a complete no-op —
+proof it's genuinely idempotent, which mattered here: the first real run
+crashed partway through on a database CHECK constraint
+(`chk_books_parts`, requiring `part_number`/`parts` to be both-null or
+both-set) that exists in production but isn't tracked in any migration in
+this repo — schema drift from outside the normal process, discovered only
+by hitting it. It failed loudly rather than corrupting anything; the
+script was fixed to keep `parts` populated with the real part count
+instead of nulling it, and a second, subtler gap the partial failure
+exposed (a parent created but not yet linked to any children wasn't
+recognized as "already a parent," which would have reproduced the
+original join-collision bug) was caught on a dry-run before the second
+real attempt and fixed by recognizing a parent by title-matching a known
+series name, not only by already having children. New application code is
+not yet deployed — until it is, the live API still returns raw rows (the
+old code has no `parent_id`/`is_publication` awareness); the data itself
+is correct and waiting.
+
+Tests: `books.service.spec.ts` gained cases for the `parent_id` list
+filter, `parts_count`/`parts[]`/`parent` on the detail response, the
+`is_publication` query filter, and the create/update validation (self-parent,
+nested-parent, already-has-parts) paths.
+
+## 26. Open follow-ups (still not in this push)
 
 - Self-service password reset flow (would need an `email` column on
   `users` plus the `password_reset_tokens` table described in the

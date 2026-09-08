@@ -1,5 +1,5 @@
 import { ApiProperty, ApiPropertyOptional } from "@nestjs/swagger";
-import { Type } from "class-transformer";
+import { Transform, Type } from "class-transformer";
 import {
   ArrayMinSize,
   IsArray,
@@ -13,9 +13,13 @@ import {
   MaxLength,
   Min,
   MinLength,
+  ValidateIf,
   ValidateNested,
 } from "class-validator";
 import { PaginationDto } from "../../common/dto/pagination.dto";
+
+/** class-transformer's @Type(() => Boolean) does JS `Boolean(value)`, which makes the STRING "false" truthy — parse query strings explicitly instead. */
+const toQueryBoolean = ({ value }: { value: unknown }) => (value === true || value === "true" ? true : value === false || value === "false" ? false : value);
 
 const HTTP_URL = /^https?:\/\/.+/i;
 
@@ -170,6 +174,23 @@ export class CreateBookDto {
   @IsBoolean()
   is_published?: boolean;
 
+  @ApiPropertyOptional({
+    format: "uuid",
+    description:
+      "ID of the series this book is a part of. The referenced book becomes the series' parent/cover entry and must not itself have a parent (one level deep only).",
+  })
+  @IsOptional()
+  @IsUUID()
+  parent_id?: string;
+
+  @ApiPropertyOptional({
+    example: false,
+    description: 'Whether this book belongs to the institution\'s "الإصدارات" (Publications) release list — independent of its topical category_id.',
+  })
+  @IsOptional()
+  @IsBoolean()
+  is_publication?: boolean;
+
   @ApiProperty({
     type: [BookTranslationDto],
     description: "Must include exactly one translation with is_default: true",
@@ -253,6 +274,25 @@ export class UpdateBookDto {
   @IsBoolean()
   is_published?: boolean;
 
+  @ApiPropertyOptional({
+    format: "uuid",
+    nullable: true,
+    description:
+      "ID of the series this book is a part of. The referenced book becomes the series' parent/cover entry and must not itself have a parent (one level deep only). Pass null to detach this book from its series.",
+  })
+  @IsOptional()
+  @ValidateIf((_, value) => value !== null)
+  @IsUUID()
+  parent_id?: string | null;
+
+  @ApiPropertyOptional({
+    example: false,
+    description: 'Whether this book belongs to the institution\'s "الإصدارات" (Publications) release list — independent of its topical category_id.',
+  })
+  @IsOptional()
+  @IsBoolean()
+  is_publication?: boolean;
+
   @ApiPropertyOptional({ type: [BookTranslationDto] })
   @IsOptional()
   @IsArray()
@@ -280,4 +320,14 @@ export class BookQueryDto extends PaginationDto {
   @IsOptional()
   @IsString()
   search?: string;
+
+  @ApiPropertyOptional({
+    example: true,
+    description:
+      'Filter to books on the institution\'s "الإصدارات" (Publications) release list. Independent of category_id — a book can carry a topical category AND be flagged as a Publication.',
+  })
+  @IsOptional()
+  @Transform(toQueryBoolean)
+  @IsBoolean()
+  is_publication?: boolean;
 }
