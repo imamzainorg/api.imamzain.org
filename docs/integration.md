@@ -8,6 +8,7 @@ reuses everywhere.
 - [Response envelope](#response-envelope)
 - [Error envelope + error codes](#error-envelope--error-codes)
 - [Pagination](#pagination)
+- [Books — multi-part series and the Publications flag](#books--multi-part-series-and-the-publications-flag)
 - [Authentication flow](#authentication-flow)
 - [Authorisation (permissions)](#authorisation-permissions)
 - [Language resolution](#language-resolution)
@@ -265,6 +266,100 @@ cap, no `content_type` to declare since it's always `application/pdf`),
 PUT the file, save the returned `publicUrl` onto `pdf_url`. Same
 no-confirm trade-off as the audios upload above — see
 `docs/CMS-INTEGRATION-NOTES.md` §21.
+
+---
+
+## Books — multi-part series and the Publications flag
+
+Two things specific to `books` that don't fit the general list/detail
+pattern above.
+
+### Multi-part series
+
+Some books are published as a numbered set (e.g. a 12-volume biography).
+Each volume is its own PDF, but **a multi-part series is always one row
+on every list endpoint** (`GET /books`, `GET /books/admin`), never one
+row per volume. Every book object — list or detail — carries:
+
+```jsonc
+"parts_count": 0   // 0 on an ordinary book. > 0 means this row is a series.
+```
+
+To get the individual volumes, call the detail endpoint on that row —
+`GET /books/{id}` or `GET /books/by-slug/{slug}` — which adds a `parts`
+array when `parts_count > 0`:
+
+```jsonc
+// GET /books/{id} — a series' parent/cover entry
+{
+  "id": "…",
+  "parts_count": 12,
+  "translation": { "title": "سيرة المعصومين (عليهم السلام)", "…": "…" },
+  "parts": [
+    {
+      "id": "…",
+      "slug": null,
+      "part_number": 1,
+      "pages": 306,
+      "pdf_url": "https://cdn.imamzain.org/books/….pdf",
+      "media": { "…": "cover image for this volume" },
+      "translation": { "title": "سيرة المعصومين (عليهم السلام)", "…": "…" }
+    },
+    { "id": "…", "part_number": 2, "…": "…" }
+    // … one entry per volume, already sorted by part_number
+  ]
+}
+```
+
+Every part shares the series' title — `part_number` (not the title
+string) is the only reliable way to tell volumes apart and order them; do
+not try to parse a part number out of the title. A part's own `pdf_url`
+is what you link to for that specific volume; the parent row itself has
+no `pdf_url`.
+
+If you fetch a *part* directly by its own id/slug, the response carries
+`parent` instead (`{ id, slug, translation }`) so you can link back to
+the series it belongs to:
+
+```jsonc
+// GET /books/{part-id} — one volume, fetched directly
+{
+  "id": "…",
+  "part_number": 3,
+  "parts_count": 0,
+  "pdf_url": "https://cdn.imamzain.org/books/….pdf",
+  "parent": { "id": "…", "slug": null, "translation": { "title": "سيرة المعصومين (عليهم السلام)" } }
+}
+```
+
+`parts_count` is always `0` on a part fetched this way — only the
+parent carries a nonzero count. A part never itself has `parts`.
+
+### `is_publication` — the institution's flagship-release flag
+
+`is_publication` (boolean, on every book) marks whether a title belongs
+to the institution's own "الإصدارات" (Publications) release list. It is
+**independent of `category_id`** — a book can be filed under a topic
+(e.g. a Sahifa Sajjadiya commentary) and *also* be one of the
+institution's Publications; the two aren't mutually exclusive, and one
+does not imply the other.
+
+Filter to just the Publications list with:
+
+```
+GET /books?is_publication=true
+```
+
+Combine it with `category_id` if you need both dimensions at once
+(e.g. "our Publications that are about the Sahifa Sajjadiya"):
+
+```
+GET /books?category_id={sahifa-category-uuid}&is_publication=true
+```
+
+Don't infer "is this a Publication" from `category_id` alone — a book
+whose primary topic is something else entirely can still be
+`is_publication: true`.
 
 ---
 
