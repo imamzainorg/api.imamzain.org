@@ -1,6 +1,7 @@
 import { Body, Controller, Delete, Get, HttpCode, Param, Patch, Post, Query } from '@nestjs/common';
 import {
   ApiBadRequestResponse,
+  ApiConflictResponse,
   ApiCreatedResponse,
   ApiNotFoundResponse,
   ApiOkResponse,
@@ -13,7 +14,7 @@ import {
 import { Throttle } from '@nestjs/throttler';
 import { Auth } from '../common/decorators/auth.decorator';
 import { CurrentUser, CurrentUserPayload } from '../common/decorators/current-user.decorator';
-import { NotFoundErrorDto, TooManyRequestsErrorDto, ValidationErrorDto } from '../common/dto/api-response.dto';
+import { ConflictErrorDto, NotFoundErrorDto, TooManyRequestsErrorDto, ValidationErrorDto } from '../common/dto/api-response.dto';
 import { ContactQueryDto, CreateContactDto, UpdateContactDto } from './dto/contact.dto';
 import { CreateProxyVisitDto, ProxyVisitQueryDto, UpdateProxyVisitDto } from './dto/proxy-visit.dto';
 import {
@@ -37,9 +38,10 @@ export class FormsController {
   @Throttle({ default: { limit: 300, ttl: 3_600_000 } })
   @ApiOperation({
     summary: 'Submit a proxy visit request (public)',
-    description: 'Sends an email notification to the admin team. Rate-limited to 300 per hour.',
+    description:
+      'Records the request. The admin team is told by e-mail within about a minute — as a digest, never more than one message per 5 minutes however many requests arrive — so nothing is mailed inline. Rate-limited to 300 per hour per IP.',
   })
-  @ApiCreatedResponse({ type: ProxyVisitResponseDto, description: 'Proxy visit request recorded and an email notification sent to the admin team; returns the created request with its initial PENDING status' })
+  @ApiCreatedResponse({ type: ProxyVisitResponseDto, description: 'Proxy visit request recorded (the admin notification follows in the next digest); returns the created request with its initial PENDING status' })
   @ApiBadRequestResponse({ type: ValidationErrorDto, description: 'Validation failed' })
   @ApiTooManyRequestsResponse({ type: TooManyRequestsErrorDto, description: 'Rate limit exceeded — maximum 300 requests per hour per IP' })
   submitProxyVisit(@Body() dto: CreateProxyVisitDto) {
@@ -62,12 +64,14 @@ export class FormsController {
   @Auth('forms:update')
   @ApiOperation({
     summary: 'Update a proxy visit request status',
-    description: 'Transitioning to COMPLETED automatically sends a WhatsApp notification to the visitor. Requires permission: `forms:update`.',
+    description:
+      'Status follows a fixed table: PENDING → APPROVED | REJECTED | COMPLETED; APPROVED → COMPLETED | REJECTED | PENDING; REJECTED → PENDING | APPROVED; COMPLETED is final. Moving to COMPLETED sends the visitor a WhatsApp message — exactly once: the write is a compare-and-set on the status that was read, so a concurrent update gets 409 instead of a second message. Going back to PENDING clears `processed_by` / `processed_at`. `notes` can be edited in any status. Requires permission: `forms:update`.',
   })
   @ApiParam({ name: 'id', format: 'uuid' })
   @ApiOkResponse({ type: ProxyVisitResponseDto, description: 'Proxy visit request updated; if status changed to COMPLETED a WhatsApp notification is automatically sent to the visitor' })
-  @ApiBadRequestResponse({ type: ValidationErrorDto, description: 'Validation failed — e.g. invalid status transition' })
+  @ApiBadRequestResponse({ type: ValidationErrorDto, description: 'Validation failed, or the status transition is not in the table above (e.g. anything out of COMPLETED)' })
   @ApiNotFoundResponse({ type: NotFoundErrorDto, description: 'No proxy visit request with that ID exists, or it has been deleted' })
+  @ApiConflictResponse({ type: ConflictErrorDto, description: 'Someone else changed this request between your read and this write — reload and retry' })
   updateProxyVisit(@Param('id') id: string, @Body() dto: UpdateProxyVisitDto, @CurrentUser() user: CurrentUserPayload) {
     return this.formsService.updateProxyVisit(id, dto, user.id);
   }
@@ -110,9 +114,10 @@ export class FormsController {
   @Throttle({ default: { limit: 300, ttl: 3_600_000 } })
   @ApiOperation({
     summary: 'Submit a contact form (public)',
-    description: 'Sends an email notification to the admin team. Rate-limited to 300 per hour.',
+    description:
+      'Records the message. The admin team is told by e-mail within about a minute — as a digest, never more than one message per 5 minutes however many submissions arrive — so nothing is mailed inline. Rate-limited to 300 per hour per IP.',
   })
-  @ApiCreatedResponse({ type: ContactResponseDto, description: 'Contact message recorded and an email notification sent to the admin team; returns the created submission with its initial NEW status' })
+  @ApiCreatedResponse({ type: ContactResponseDto, description: 'Contact message recorded (the admin notification follows in the next digest); returns the created submission with its initial NEW status' })
   @ApiBadRequestResponse({ type: ValidationErrorDto, description: 'Validation failed' })
   @ApiTooManyRequestsResponse({ type: TooManyRequestsErrorDto, description: 'Rate limit exceeded — maximum 300 requests per hour per IP' })
   submitContact(@Body() dto: CreateContactDto) {
@@ -133,11 +138,12 @@ export class FormsController {
 
   @Patch('contacts/:id')
   @Auth('forms:update')
-  @ApiOperation({ summary: 'Update a contact submission status', description: 'Requires permission: `forms:update`.' })
+  @ApiOperation({ summary: 'Update a contact submission status', description: 'NEW / RESPONDED / SPAM may move freely. Entering RESPONDED stamps `responded_by` / `responded_at`; leaving it clears them. The write is a compare-and-set on the status that was read. Requires permission: `forms:update`.' })
   @ApiParam({ name: 'id', format: 'uuid' })
   @ApiOkResponse({ type: ContactResponseDto, description: 'Contact submission updated with the new status' })
   @ApiBadRequestResponse({ type: ValidationErrorDto, description: 'Validation failed' })
   @ApiNotFoundResponse({ type: NotFoundErrorDto, description: 'No contact submission with that ID exists, or it has been deleted' })
+  @ApiConflictResponse({ type: ConflictErrorDto, description: 'Someone else changed this submission between your read and this write — reload and retry' })
   updateContact(@Param('id') id: string, @Body() dto: UpdateContactDto, @CurrentUser() user: CurrentUserPayload) {
     return this.formsService.updateContact(id, dto, user.id);
   }

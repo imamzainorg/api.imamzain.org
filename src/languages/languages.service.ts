@@ -1,9 +1,17 @@
-import { ConflictException, Injectable, Logger, NotFoundException, OnApplicationBootstrap } from "@nestjs/common";
+import {
+  ConflictException,
+  Injectable,
+  Logger,
+  NotFoundException,
+  OnApplicationBootstrap,
+  OnModuleDestroy,
+} from "@nestjs/common";
 import { languages, Prisma } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
 import { AuditService } from "../common/audit/audit.service";
 import { AUDIT_ACTIONS } from "../common/audit/audit.actions";
 import { TtlCache } from "../common/utils/ttl-cache.util";
+import { setActiveLanguages } from "../common/utils/translation.util";
 import { CreateLanguageDto, UpdateLanguageDto } from "./dto/language.dto";
 
 // Languages change on the order of "once per release" — basically static at
@@ -12,10 +20,16 @@ import { CreateLanguageDto, UpdateLanguageDto } from "./dto/language.dto";
 // add/remove eventually propagates without a redeploy.
 const LANGUAGES_CACHE_TTL_MS = 300_000;
 
+// How often each replica re-reads the live-language set that gates public
+// translation selection (see translation.util). A mutation refreshes the
+// replica that served it at once; this bounds how long the others lag.
+const ACTIVE_LANGUAGES_REFRESH_MS = 60_000;
+
 @Injectable()
-export class LanguagesService implements OnApplicationBootstrap {
+export class LanguagesService implements OnApplicationBootstrap, OnModuleDestroy {
   private readonly logger = new Logger(LanguagesService.name);
   private readonly cache = new TtlCache<languages[]>(LANGUAGES_CACHE_TTL_MS);
+  private refreshTimer: NodeJS.Timeout | undefined;
 
   constructor(
     private readonly prisma: PrismaService,
@@ -29,6 +43,33 @@ export class LanguagesService implements OnApplicationBootstrap {
       await this.findAll(true);
     } catch (err) {
       this.logger.warn(`Languages cache pre-warm failed: ${err}`);
+    }
+
+    await this.refreshActiveLanguages();
+    this.refreshTimer = setInterval(() => void this.refreshActiveLanguages(), ACTIVE_LANGUAGES_REFRESH_MS);
+    // Never keep the process (or a spec run) alive just for this timer.
+    this.refreshTimer.unref();
+  }
+
+  onModuleDestroy(): void {
+    if (this.refreshTimer) clearInterval(this.refreshTimer);
+  }
+
+  /**
+   * Publish the live (active, not soft-deleted) language codes to the
+   * translation resolver. A failed read keeps the previous snapshot: serving
+   * one stale minute beats either hiding every translation or dropping the
+   * filter.
+   */
+  async refreshActiveLanguages(): Promise<void> {
+    try {
+      const rows = await this.prisma.languages.findMany({
+        where: { deleted_at: null, is_active: true },
+        select: { code: true },
+      });
+      setActiveLanguages(rows.map((r) => r.code));
+    } catch (err) {
+      this.logger.warn(`Active-language snapshot refresh failed: ${err}`);
     }
   }
 
@@ -75,6 +116,7 @@ export class LanguagesService implements OnApplicationBootstrap {
           },
         });
     this.cache.clear();
+    await this.refreshActiveLanguages();
 
     this.audit.write({
       actorId,
@@ -105,6 +147,7 @@ export class LanguagesService implements OnApplicationBootstrap {
       data: updateData,
     });
     this.cache.clear();
+    await this.refreshActiveLanguages();
 
     this.audit.write({
       actorId,
@@ -128,6 +171,7 @@ export class LanguagesService implements OnApplicationBootstrap {
       data: { deleted_at: new Date() },
     });
     this.cache.clear();
+    await this.refreshActiveLanguages();
 
     this.audit.write({
       actorId,

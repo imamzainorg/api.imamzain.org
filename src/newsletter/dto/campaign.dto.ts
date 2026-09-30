@@ -3,7 +3,6 @@ import { newsletter_campaign_status } from '@prisma/client';
 import {
   IsEnum,
   IsIn,
-  IsISO8601,
   IsOptional,
   IsString,
   IsUUID,
@@ -11,7 +10,9 @@ import {
   MinLength,
 } from 'class-validator';
 import { PaginationDto } from '../../common/dto/pagination.dto';
+import { IsIsoInstantWithOffset } from '../../common/validators/iso-instant-offset.validator';
 import { MaxBytes } from '../../common/validators/max-bytes.validator';
+import { SCHEDULE_OFFSET_MESSAGE } from '../delivery.util';
 
 const SUBJECT_MAX = 200;
 
@@ -45,10 +46,10 @@ export class CreateCampaignDto {
   @ApiPropertyOptional({
     example: '2026-06-01T09:00:00Z',
     description:
-      'When to send. Omit (or null) to send immediately when POST /:id/send is called. With a value, the campaign sits in status=scheduled until the cron picks it up at or after this timestamp.',
+      'When to send. Omit (or null) to send immediately when POST /:id/send is called. With a value, the campaign sits in status=scheduled until the cron picks it up at or after this timestamp. Must be an ISO-8601 instant WITH an explicit UTC offset (`Z` or `+03:00`) and must be in the future — a value without an offset would be read in the server\'s time zone.',
   })
   @IsOptional()
-  @IsISO8601()
+  @IsIsoInstantWithOffset({ message: SCHEDULE_OFFSET_MESSAGE })
   scheduled_at?: string;
 
   @ApiPropertyOptional({
@@ -81,9 +82,13 @@ export class UpdateCampaignDto {
   @MaxBytes()
   body_html?: string;
 
-  @ApiPropertyOptional({ example: '2026-06-01T09:00:00Z' })
+  @ApiPropertyOptional({
+    example: '2026-06-01T09:00:00Z',
+    description:
+      'Same rules as on create: explicit UTC offset, in the future. `null` clears the schedule (back to draft). Re-sending the value already stored is accepted even if it has since passed.',
+  })
   @IsOptional()
-  @IsISO8601()
+  @IsIsoInstantWithOffset({ message: SCHEDULE_OFFSET_MESSAGE })
   scheduled_at?: string | null;
 
   @ApiPropertyOptional({ enum: SOURCE_RESOURCE_TYPES })

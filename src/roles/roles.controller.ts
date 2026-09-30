@@ -113,7 +113,11 @@ export class RolesController {
 
   @Post(':id/permissions')
   @Auth('roles:update')
-  @ApiOperation({ summary: 'Assign a permission to a role', description: 'Requires permission: `roles:update`' })
+  @ApiOperation({
+    summary: 'Assign a permission to a role',
+    description:
+      'Requires permission: `roles:update`. Subject to the privilege envelope: returns 403 when the caller does not hold the permission being granted.',
+  })
   @ApiParam({ name: 'id', format: 'uuid', description: 'Role ID' })
   @ApiCreatedResponse({ type: RoleDetailResponseDto, description: 'Permission added to the role; returns the role with its updated permission list. Users holding this role gain the new access on their next request.' })
   @ApiBadRequestResponse({ type: ValidationErrorDto, description: 'Validation failed (missing or non-UUID permission_id)' })
@@ -124,22 +128,27 @@ export class RolesController {
     @CurrentUser() user: CurrentUserPayload,
     @Lang() lang: string | null,
   ) {
-    return this.rolesService.assignPermission(id, dto, user.id, lang);
+    return this.rolesService.assignPermission(id, dto, user, lang);
   }
 
   @Delete(':id/permissions/:permissionId')
   @Auth('roles:update')
-  @ApiOperation({ summary: 'Remove a permission from a role', description: 'Requires permission: `roles:update`' })
+  @ApiOperation({
+    summary: 'Remove a permission from a role',
+    description:
+      'Requires permission: `roles:update`. Returns 403 when the caller does not hold the permission being revoked, and 409 when the removal would leave no active user holding every permission.',
+  })
   @ApiParam({ name: 'id', format: 'uuid', description: 'Role ID' })
   @ApiParam({ name: 'permissionId', format: 'uuid', description: 'Permission ID' })
   @ApiOkResponse({ type: RoleDetailResponseDto, description: 'Permission removed from the role; returns the role with its updated permission list. Affected users lose this access on their next request.' })
   @ApiNotFoundResponse({ type: NotFoundErrorDto, description: 'No role or permission with that ID exists' })
+  @ApiConflictResponse({ type: ConflictErrorDto, description: 'Removing this permission would leave no administrator holding every permission' })
   removePermission(
     @Param('id') id: string,
     @Param('permissionId') permissionId: string,
     @CurrentUser() user: CurrentUserPayload,
     @Lang() lang: string | null,
   ) {
-    return this.rolesService.removePermission(id, permissionId, user.id, lang);
+    return this.rolesService.removePermission(id, permissionId, user, lang);
   }
 }

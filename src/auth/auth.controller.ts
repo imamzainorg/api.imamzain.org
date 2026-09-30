@@ -32,11 +32,15 @@ export class AuthController {
   @Post('login')
   @HttpCode(200)
   @Throttle({ default: { limit: 10, ttl: 900_000 } })
-  @ApiOperation({ summary: 'Log in and receive access + refresh tokens', description: 'Rate-limited to 10 attempts per 15 minutes.' })
+  @ApiOperation({
+    summary: 'Log in and receive access + refresh tokens',
+    description:
+      'The username is trimmed and then matched exactly (case-sensitive). The response user carries `must_change_password`: true after an admin reset the password (the CMS should send the user to the change-password screen). Rate-limited to 10 attempts per 15 minutes per IP. Independently of the IP, 5 consecutive failures for one username lock that username for 1 minute, doubling on each further failure up to 15 minutes (429 `AUTH_LOGIN_LOCKED` with a `Retry-After` header; the correct password is rejected too while the lock lasts). A successful login clears the count. Every failure writes a `USER_LOGIN_FAILED` audit row.',
+  })
   @ApiOkResponse({ type: LoginResponseDto, description: 'Returns a short-lived access token (JWT), a long-lived refresh token, and the full user profile with roles and permissions' })
   @ApiUnauthorizedResponse({ type: UnauthorizedErrorDto, description: 'No user with that username exists, or the password is incorrect' })
   @ApiBadRequestResponse({ type: ValidationErrorDto, description: 'Validation failed' })
-  @ApiTooManyRequestsResponse({ type: TooManyRequestsErrorDto, description: 'Rate limit exceeded — maximum 10 login attempts per 15 minutes per IP' })
+  @ApiTooManyRequestsResponse({ type: TooManyRequestsErrorDto, description: 'Either the per-IP limit (10 attempts per 15 minutes, code `RATE_LIMITED`) or the per-username lockout (code `AUTH_LOGIN_LOCKED`, `Retry-After` header carries the seconds left)' })
   login(@Body() dto: LoginDto, @Req() req: Request) {
     const ip = req.ip ?? '';
     const userAgent = req.headers['user-agent'] ?? '';
@@ -50,7 +54,10 @@ export class AuthController {
     summary: 'Exchange a refresh token for new access + refresh tokens',
     description:
       'The supplied refresh token is atomically revoked and replaced (rotation). ' +
-      'Presenting an already-revoked token revokes the entire token chain for the user. ' +
+      'Each login starts a session family; rotation keeps the new token in the same family. ' +
+      'Presenting an already-rotated token within a short grace window (`REFRESH_REUSE_GRACE_SECONDS`, default 10) is treated as a benign concurrent refresh and answered with a fresh token in the same family. ' +
+      'Presenting it later revokes THAT session family only (401 `AUTH_TOKEN_REUSED`) and never signs the user out of other devices. ' +
+      'A token revoked by logout, logout-all or a password change is dead (401 `AUTH_REFRESH_INVALID`). ' +
       'Refresh tokens expire after 7 days. Rate-limited to 30 attempts per 15 minutes per IP.',
   })
   @ApiOkResponse({ type: RefreshResponseDto, description: 'New access token and rotated refresh token' })
@@ -58,11 +65,11 @@ export class AuthController {
   @ApiUnauthorizedResponse({
     type: UnauthorizedErrorDto,
     description:
-      'One of: the refresh token is unknown, expired, already-rotated, or being replayed (reuse). Reuse cases revoke the full token chain for that user as a side effect — the next login starts a fresh chain. The account-disabled case is also reported here.',
+      'One of: the refresh token is unknown, expired, revoked by logout / password change (`AUTH_REFRESH_INVALID`), or being replayed after the grace window (`AUTH_TOKEN_REUSED` — its session family is revoked as a side effect, other devices are unaffected). The account-disabled case is also reported here.',
   })
   @ApiTooManyRequestsResponse({ type: TooManyRequestsErrorDto, description: 'Rate limit exceeded — maximum 30 attempts per 15 minutes per IP' })
-  refresh(@Body() dto: RefreshTokenDto) {
-    return this.authService.refresh(dto);
+  refresh(@Body() dto: RefreshTokenDto, @Req() req: Request) {
+    return this.authService.refresh(dto, req.ip ?? '', req.headers['user-agent'] ?? '');
   }
 
   @Post('logout')
@@ -70,17 +77,20 @@ export class AuthController {
   @AuthOnly()
   @ApiOperation({
     summary: 'Revoke the current refresh token (or all tokens if none supplied)',
-    description: 'Pass `refresh_token` in the body to revoke only that token; omit to revoke all active sessions.',
+    description: 'Pass `refresh_token` in the body to end that session (its whole token family); omit to revoke all active sessions and invalidate every outstanding access token. Both are audited.',
   })
   @ApiOkResponse({ type: LogoutResponseDto, description: 'Logged out successfully — idempotent regardless of whether the supplied refresh_token was active' })
   @ApiBadRequestResponse({ type: ValidationErrorDto, description: 'Validation failed — refresh_token was supplied but is not a string or exceeds 512 chars' })
-  logout(@Body() dto: LogoutDto, @CurrentUser() user: CurrentUserPayload) {
-    return this.authService.logout(user.id, dto.refresh_token);
+  logout(@Body() dto: LogoutDto, @CurrentUser() user: CurrentUserPayload, @Req() req: Request) {
+    return this.authService.logout(user.id, dto.refresh_token, req.ip ?? '', req.headers['user-agent'] ?? '');
   }
 
   @Get('me')
   @AuthOnly()
-  @ApiOperation({ summary: 'Get the current user profile with roles and permissions' })
+  @ApiOperation({
+    summary: 'Get the current user profile with roles and permissions',
+    description: '`must_change_password` is true after an admin reset the password and stays true until the user changes it themselves.',
+  })
   @ApiOkResponse({ type: MeResponseDto, description: 'Current user profile including all assigned roles and the full flattened permission list' })
   getMe(@CurrentUser() user: CurrentUserPayload) {
     return this.authService.getMe(user.id);
@@ -91,7 +101,7 @@ export class AuthController {
   @HttpCode(200)
   @Throttle({ default: { limit: 5, ttl: 900_000 } })
   @ApiBearerAuth('jwt')
-  @ApiOperation({ summary: "Change the authenticated user's own password — invalidates all sessions", description: 'Rate-limited to 5 attempts per 15 minutes per IP.' })
+  @ApiOperation({ summary: "Change the authenticated user's own password — invalidates all sessions", description: 'Clears `must_change_password`. While the flag is set the new password must differ from the current one (400 `PASSWORD_MUST_DIFFER`). Rate-limited to 5 attempts per 15 minutes per IP.' })
   @ApiOkResponse({ type: ChangePasswordResponseDto, description: 'Password updated; all existing sessions (refresh tokens) are immediately revoked — the user must log in again on all devices' })
   @ApiUnauthorizedResponse({ type: UnauthorizedErrorDto, description: 'The supplied current_password does not match the stored password, or the JWT is missing/expired' })
   @ApiBadRequestResponse({ type: ValidationErrorDto, description: 'Validation failed' })

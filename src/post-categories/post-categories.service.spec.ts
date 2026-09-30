@@ -1,8 +1,10 @@
 import { Test, TestingModule } from "@nestjs/testing";
 import { ConflictException, NotFoundException } from "@nestjs/common";
+import { Prisma } from "@prisma/client";
 import { PostCategoriesService } from "./post-categories.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { AuditService } from "../common/audit/audit.service";
+import { setActiveLanguages } from "../common/utils/translation.util";
 
 const baseCategory = { id: "cat-1", deleted_at: null };
 
@@ -35,6 +37,7 @@ describe("PostCategoriesService", () => {
             },
             post_category_translations: {
               upsert: jest.fn().mockResolvedValue({}),
+              findFirst: jest.fn().mockResolvedValue(null),
             },
             posts: { count: jest.fn() },
             audit_logs: { create: jest.fn().mockResolvedValue({}) },
@@ -171,8 +174,11 @@ describe("PostCategoriesService", () => {
         "actor-1",
       );
 
-      expect(mockTx.post_categories.create).toHaveBeenCalled();
-      expect(mockTx.post_category_translations.createMany).toHaveBeenCalled();
+      // The translation write is where a bug would actually corrupt data —
+      // check the exact row, not just "createMany was called somehow".
+      expect(mockTx.post_category_translations.createMany).toHaveBeenCalledWith({
+        data: [{ category_id: "cat-1", lang: "ar", title: "فئة", slug: "fia", description: null }],
+      });
       expect(result.data.id).toBe("cat-1");
       expect(result.data.post_category_translations).toHaveLength(1);
       expect(result.data.translation).toBeDefined();
@@ -189,7 +195,13 @@ describe("PostCategoriesService", () => {
         "actor-1",
       );
 
-      expect(prisma.post_category_translations.upsert).toHaveBeenCalled();
+      // The upsert's where/create/update payload is what actually decides
+      // which row gets touched and what it ends up containing.
+      expect(prisma.post_category_translations.upsert).toHaveBeenCalledWith({
+        where: { category_id_lang: { category_id: "cat-1", lang: "ar" } },
+        create: { category_id: "cat-1", lang: "ar", title: "فئة", slug: "fia", description: null },
+        update: { title: "فئة", slug: "fia", description: null },
+      });
       expect(result.message).toBe("Category updated");
     });
 
@@ -231,6 +243,163 @@ describe("PostCategoriesService", () => {
 
       await expect(service.softDelete("ghost", "actor-1")).rejects.toThrow(
         NotFoundException,
+      );
+    });
+  });
+
+  describe("deterministic translation fallback (Q7)", () => {
+    it("falls back to the site language whatever order the rows come back in", async () => {
+      const make = (langs: string[]) => ({
+        ...baseCategory,
+        post_category_translations: langs.map((lang) => ({ lang, title: lang, slug: lang })),
+      });
+      prisma.post_categories.findMany.mockResolvedValue([make(["fa", "en", "ar"]), make(["ar", "fa", "en"])]);
+
+      const result = await service.findAll("fr", 1, 10);
+
+      expect(result.data.items.map((i: any) => i.translation.lang)).toEqual(["ar", "ar"]);
+    });
+
+    it("falls back to the lowest language code when the site language is absent", async () => {
+      prisma.post_categories.findFirst.mockResolvedValue({
+        ...baseCategory,
+        post_category_translations: [
+          { lang: "fa", title: "fa", slug: "fa" },
+          { lang: "en", title: "en", slug: "en" },
+        ],
+      });
+
+      const result = await service.findOne("cat-1", "fr");
+
+      expect(result.data.translation!.lang).toBe("en");
+    });
+  });
+
+  describe("retired languages (S24)", () => {
+    const category = {
+      ...baseCategory,
+      post_category_translations: [
+        { lang: "ar", title: "فئة", slug: "fia" },
+        { lang: "fa", title: "دسته", slug: "daste" },
+      ],
+    };
+
+    afterEach(() => setActiveLanguages(null));
+
+    it("public reads never resolve a retired language", async () => {
+      setActiveLanguages(["ar"]);
+      prisma.post_categories.findMany.mockResolvedValue([category]);
+      prisma.post_categories.findFirst.mockResolvedValue(category);
+
+      const list = await service.findAll("fa", 1, 10);
+      const one = await service.findOne("cat-1", "fa");
+
+      expect(list.data.items[0]!.translation!.lang).toBe("ar");
+      expect(one.data.translation!.lang).toBe("ar");
+      // The raw rows stay listed so the CMS edit form can show every language.
+      expect(one.data.post_category_translations).toHaveLength(2);
+    });
+
+    it("admin views (trash, and the hydrate after create / update) still resolve it", async () => {
+      setActiveLanguages(["ar"]);
+      prisma.post_categories.findMany.mockResolvedValue([
+        { ...category, deleted_at: new Date(), post_category_translations: [{ lang: "fa", title: "دسته", slug: "daste" }] },
+      ]);
+      prisma.post_categories.count.mockResolvedValue(1);
+      prisma.post_categories.findFirst.mockResolvedValue({ ...category, post_category_translations: [{ lang: "fa", title: "دسته", slug: "daste" }] });
+      prisma.$transaction.mockImplementation((arg: any) => (typeof arg === "function" ? arg(mockTx) : Promise.resolve(arg)));
+      mockTx.post_categories.create.mockResolvedValue(baseCategory);
+
+      const trash = await service.findTrash(1, 10);
+      const created = await service.create({ translations: [{ lang: "fa", title: "دسته", slug: "daste" }] }, "actor-1");
+      const updated = await service.update("cat-1", { translations: [{ lang: "fa", title: "دسته", slug: "daste" }] }, "actor-1");
+
+      expect(trash.data.items[0]!.translation!.lang).toBe("fa");
+      expect(created.data.translation!.lang).toBe("fa");
+      expect(updated.data.translation!.lang).toBe("fa");
+    });
+  });
+
+  describe("unique-index conflicts (Q8)", () => {
+    const p2002 = (target: unknown) =>
+      new Prisma.PrismaClientKnownRequestError("Unique constraint failed", {
+        code: "P2002",
+        clientVersion: "test",
+        meta: { target },
+      });
+    const input = [{ lang: "ar", title: "فئة", slug: "fia" }];
+
+    async function conflictOf(promise: Promise<unknown>): Promise<ConflictException> {
+      const err = await promise.then(
+        () => null,
+        (e) => e,
+      );
+      expect(err).toBeInstanceOf(ConflictException);
+      return err as ConflictException;
+    }
+
+    beforeEach(() => {
+      prisma.$transaction.mockImplementation((arg: any) => (typeof arg === "function" ? arg(mockTx) : Promise.resolve(arg)));
+      mockTx.post_categories.create.mockResolvedValue(baseCategory);
+    });
+
+    it("create: a taken (lang, slug) names the slug and carries a stable code", async () => {
+      mockTx.post_category_translations.createMany.mockRejectedValue(p2002(["lang", "slug"]));
+      prisma.post_category_translations.findFirst.mockResolvedValue({ lang: "ar", slug: "fia" });
+
+      const err = await conflictOf(service.create({ translations: input }, "actor-1"));
+
+      expect(err.getResponse()).toEqual({
+        message: 'Slug "fia" (ar) is already used by another category',
+        code: "SLUG_ALREADY_USED",
+      });
+      // On create there is no category of its own to exclude from the lookup.
+      expect(prisma.post_category_translations.findFirst).toHaveBeenCalledWith(
+        expect.objectContaining({ where: { OR: [{ lang: "ar", slug: "fia" }] } }),
+      );
+    });
+
+    it("create: recognises the constraint-name form of the target", async () => {
+      mockTx.post_category_translations.createMany.mockRejectedValue(p2002("post_category_translations_lang_slug_key"));
+
+      const err = await conflictOf(service.create({ translations: input }, "actor-1"));
+
+      // The lookup found nothing (race): the message still names the field.
+      expect(err.getResponse()).toEqual({
+        message: "A slug in this request is already used by another category in the same language",
+        code: "SLUG_ALREADY_USED",
+      });
+    });
+
+    it("create: the same language sent twice is a duplicate-language conflict, not a slug one", async () => {
+      mockTx.post_category_translations.createMany.mockRejectedValue(p2002(["category_id", "lang"]));
+
+      const err = await conflictOf(service.create({ translations: input }, "actor-1"));
+
+      expect((err.getResponse() as any).code).toBe("DUPLICATE_TRANSLATION_LANG");
+      expect(prisma.post_category_translations.findFirst).not.toHaveBeenCalled();
+    });
+
+    it("create: a P2002 on an unknown index and non-unique errors pass through untouched", async () => {
+      const unknown = p2002(["something_else"]);
+      mockTx.post_category_translations.createMany.mockRejectedValueOnce(unknown);
+      await expect(service.create({ translations: input }, "actor-1")).rejects.toBe(unknown);
+
+      const boom = new Error("connection lost");
+      mockTx.post_category_translations.createMany.mockRejectedValueOnce(boom);
+      await expect(service.create({ translations: input }, "actor-1")).rejects.toBe(boom);
+    });
+
+    it("update: a taken slug is reported, ignoring the category's own rows in the lookup", async () => {
+      prisma.post_categories.findFirst.mockResolvedValue(baseCategory);
+      prisma.$transaction.mockRejectedValue(p2002(["lang", "slug"]));
+      prisma.post_category_translations.findFirst.mockResolvedValue({ lang: "ar", slug: "fia" });
+
+      const err = await conflictOf(service.update("cat-1", { translations: input }, "actor-1"));
+
+      expect((err.getResponse() as any).code).toBe("SLUG_ALREADY_USED");
+      expect(prisma.post_category_translations.findFirst).toHaveBeenCalledWith(
+        expect.objectContaining({ where: { OR: [{ lang: "ar", slug: "fia" }], NOT: { category_id: "cat-1" } } }),
       );
     });
   });

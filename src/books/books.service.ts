@@ -9,6 +9,7 @@ import { rethrowP2002AsConflict } from '../common/utils/prisma-error.util';
 import { assertExactlyOneDefault, resolveTranslation } from '../common/utils/translation.util';
 import { buildPaginationMeta, resolvePagination } from '../common/utils/pagination.util';
 import { publicWhere } from '../common/utils/visibility.util';
+import { assertSlugRenameAllowed } from '../common/utils/publish-rules.util';
 import { BOOK_PDF_PREFIX, DOCUMENT_PDF_BYTES, R2Service } from '../storage/r2.service';
 import { RequestPdfUploadUrlDto } from '../common/dto/request-pdf-upload-url.dto';
 import { BookQueryDto, CreateBookDto, UpdateBookDto } from './dto/book.dto';
@@ -16,11 +17,11 @@ import { BookQueryDto, CreateBookDto, UpdateBookDto } from './dto/book.dto';
 // List queries drop the full description from translations (typically the
 // heaviest field) and slim the cover-image record. Parts are hidden from
 // every PUBLIC/admin list view (see the `parent_id: null` filter in
-// findAll) — `_count.parts_rel` becomes `parts_count`, a cheap badge for
-// "this is a series with N parts"; the parts themselves are only on the
-// detail response. findTrash deliberately does NOT apply this filter — an
-// admin restoring a soft-deleted part needs to see and restore it as its
-// own row, not have it hidden behind a parent that may not even be deleted.
+// findAll) — `_count.parts_rel` (see bookListSelect) becomes `parts_count`, a
+// cheap badge for "this is a series with N parts"; the parts themselves are
+// only on the detail response. findTrash deliberately does NOT apply this
+// filter — an admin restoring a soft-deleted part needs to see and restore it
+// as its own row, not have it hidden behind a parent that may not even be deleted.
 const BOOK_LIST_SELECT = {
   id: true,
   category_id: true,
@@ -62,11 +63,26 @@ const BOOK_LIST_SELECT = {
       },
     },
   },
-  _count: { select: { parts_rel: true } },
 } satisfies Prisma.booksSelect;
 
-/** Shape of one row selected with BOOK_LIST_SELECT — used to type the list-mapping helper below. */
-type BookListRow = Prisma.booksGetPayload<{ select: typeof BOOK_LIST_SELECT }>;
+/**
+ * A series' visible parts: never trashed, and — for the public — published
+ * only. One definition for the detail's `parts[]` and the lists' `parts_count`
+ * so the badge can never promise more volumes than the detail page shows.
+ */
+function visiblePartsWhere(isAdmin: boolean) {
+  return { deleted_at: null, ...(isAdmin ? {} : { is_published: true }) };
+}
+
+function bookListSelect(isAdmin: boolean) {
+  return {
+    ...BOOK_LIST_SELECT,
+    _count: { select: { parts_rel: { where: visiblePartsWhere(isAdmin) } } },
+  } satisfies Prisma.booksSelect;
+}
+
+/** Shape of one row selected with bookListSelect — used to type the list-mapping helper below. */
+type BookListRow = Prisma.booksGetPayload<{ select: ReturnType<typeof bookListSelect> }>;
 
 /** Drop the internal `_count` wrapper in favour of a flat `parts_count`. */
 function withPartsCount(book: BookListRow) {
@@ -96,6 +112,79 @@ const BOOK_PARENT_SELECT = {
     select: { book_id: true, lang: true, title: true, author: true, publisher: true, series: true, is_default: true },
   },
 } satisfies Prisma.booksSelect;
+
+// Relations shared by both detail shapes. Parts are ordered so the caller can
+// render a "parts" list directly: part_number is unique per series but
+// optional — unnumbered parts sort last, and the tiebreaks keep their order
+// stable across calls. `parent` is only populated when this book IS a part and
+// is filtered like the parts are, so a live part cannot leak a soft-deleted or
+// unpublished parent's data through this back-ref.
+function bookDetailRelations(isAdmin: boolean) {
+  return {
+    book_translations: { include: { og_image: { select: OG_IMAGE_SELECT } } },
+    book_categories: { include: { book_category_translations: true } },
+    parts_rel: {
+      where: visiblePartsWhere(isAdmin),
+      orderBy: [{ part_number: 'asc' as const }, { created_at: 'asc' as const }, { id: 'asc' as const }],
+      select: BOOK_PART_SELECT,
+    },
+    parent: { where: visiblePartsWhere(isAdmin), select: BOOK_PARENT_SELECT },
+  };
+}
+
+// Admin detail (the CMS edit form): every column and the full media record,
+// exactly as before the public shape was narrowed.
+const BOOK_ADMIN_DETAIL_INCLUDE = {
+  ...bookDetailRelations(true),
+  media: { include: { media_variants: { select: MEDIA_VARIANT_SELECT, orderBy: { width: 'asc' as const } } } },
+} satisfies Prisma.booksInclude;
+
+// Public detail is an allow-list: `added_by` (a staff user id) and the media
+// row's file_size / uploaded_by stay server-side. A column added to `books`
+// later is NOT public until it is listed here.
+const BOOK_PUBLIC_DETAIL_SELECT = {
+  id: true,
+  category_id: true,
+  cover_image_id: true,
+  slug: true,
+  isbn: true,
+  pages: true,
+  publish_year: true,
+  pdf_url: true,
+  part_number: true,
+  parts: true,
+  views: true,
+  is_published: true,
+  document_languages: true,
+  parent_id: true,
+  is_publication: true,
+  created_at: true,
+  updated_at: true,
+  deleted_at: true,
+  ...bookDetailRelations(false),
+  media: { select: PUBLIC_MEDIA_SELECT },
+} satisfies Prisma.booksSelect;
+
+/** Same message and 404 the posts and gallery pre-checks raise, so a bad og_image_id answers alike everywhere. */
+const OG_IMAGE_NOT_FOUND = 'One or more og_image_id values do not match any media record';
+
+/** 409 texts for the unique indexes a books write can trip, keyed by a fragment of the index / column name. */
+const PART_NUMBER_TAKEN = 'That part number is already used by another part of this series';
+
+/**
+ * Mirror of the database CHECK `chk_books_parts`: `part_number` and `parts`
+ * are set together or not at all, and a part number never exceeds the total.
+ * Validated here so the editor gets a 400 that says what is wrong instead of
+ * the constraint's bare rejection.
+ */
+function assertPartFieldsConsistent(partNumber: number | null, parts: number | null): void {
+  if ((partNumber === null) !== (parts === null)) {
+    throw new BadRequestException('part_number and parts must be set together — send both, or neither');
+  }
+  if (partNumber !== null && parts !== null && partNumber > parts) {
+    throw new BadRequestException(`part_number (${partNumber}) cannot exceed parts (${parts})`);
+  }
+}
 
 @Injectable()
 export class BooksService {
@@ -132,7 +221,7 @@ export class BooksService {
     const [items, total] = await Promise.all([
       this.prisma.books.findMany({
         where,
-        select: BOOK_LIST_SELECT,
+        select: bookListSelect(isAdmin),
         orderBy: [{ created_at: 'desc' }, { id: 'asc' }],
         skip,
         take: limit,
@@ -151,34 +240,22 @@ export class BooksService {
     const where: Prisma.booksWhereInput = { id, deleted_at: null };
     if (!isAdmin) where.is_published = true;
 
-    const book = await this.prisma.books.findFirst({
-      where,
-      include: {
-        book_translations: { include: { og_image: { select: OG_IMAGE_SELECT } } },
-        media: { include: { media_variants: { select: MEDIA_VARIANT_SELECT, orderBy: { width: 'asc' } } } },
-        book_categories: { include: { book_category_translations: true } },
-        // Only populated when this book IS a series parent — ordered so the
-        // caller can render a "parts" list directly, no client-side sort.
-        parts_rel: {
-          where: { deleted_at: null, ...(isAdmin ? {} : { is_published: true }) },
-          orderBy: { part_number: 'asc' },
-          select: BOOK_PART_SELECT,
-        },
-        // Only populated when this book IS a part — links back to its series.
-        // Filtered the same way as parts_rel: a live part must not leak a
-        // soft-deleted or unpublished parent's data through this back-ref.
-        parent: {
-          where: { deleted_at: null, ...(isAdmin ? {} : { is_published: true }) },
-          select: BOOK_PARENT_SELECT,
-        },
-      },
-    });
+    // Two literal query shapes rather than one conditional: the admin `include`
+    // and the public allow-list `select` type differently in Prisma.
+    const book = isAdmin
+      ? await this.prisma.books.findFirst({ where, include: BOOK_ADMIN_DETAIL_INCLUDE })
+      : await this.prisma.books.findFirst({ where, select: BOOK_PUBLIC_DETAIL_SELECT });
     if (!book) throw new NotFoundException('Book not found');
 
-    // `include` (unlike the explicit BOOK_LIST_SELECT used elsewhere) pulls
-    // every raw scalar, including the internal `parent_id` FK — strip it so
-    // the response matches what BookDto actually promises (the resolved
-    // `parent` object below is the public-facing equivalent).
+    // A part is only as public as its series. Parts never appear in a list, so
+    // the parent's detail page is the one way in — when that parent is
+    // unpublished or trashed the filtered `parent` back-ref above comes back
+    // null, and the volume must not stay readable by UUID / slug on its own.
+    if (!isAdmin && book.parent_id && !book.parent) throw new NotFoundException('Book not found');
+
+    // Both shapes carry the internal `parent_id` FK — strip it so the response
+    // matches what BookDto actually promises (the resolved `parent` object
+    // below is the public-facing equivalent).
     const { parts_rel, parent, parent_id: _parentId, ...rest } = book;
     const mappedParts = parts_rel.map((p) => ({ ...p, translation: resolveTranslation(p.book_translations, lang) }));
 
@@ -247,9 +324,26 @@ export class BooksService {
     if (conflict) throw new ConflictException(`Slug "${slug}" is already used by another book`);
   }
 
+  /**
+   * Every translation-level og_image_id must name a media row. Without the
+   * pre-check a bad id reaches the FK and answers 400, while posts and gallery
+   * answer 404 for the same input.
+   */
+  private async assertOgImagesExist(translations: { og_image_id?: string | null }[] | undefined) {
+    const ids = (translations ?? []).map((t) => t.og_image_id).filter((v): v is string => typeof v === 'string');
+    if (ids.length === 0) return;
+    const found = await this.prisma.media.findMany({ where: { id: { in: ids } }, select: { id: true } });
+    if (found.length !== new Set(ids).size) throw new NotFoundException(OG_IMAGE_NOT_FOUND);
+  }
+
   async trackView(id: string) {
     const result = await this.prisma.books.updateMany({
-      where: { id, ...publicWhere(true) },
+      // Same visibility as findOne: a part of a hidden series is not public.
+      where: {
+        id,
+        ...publicWhere(true),
+        OR: [{ parent_id: null }, { parent: { deleted_at: null, is_published: true } }],
+      },
       data: { views: { increment: 1 } },
     });
     if (result.count === 0) throw new NotFoundException('Book not found');
@@ -268,15 +362,35 @@ export class BooksService {
    * small, trusted-staff CMS. Only the DB CHECK constraint on literal
    * self-reference is enforced at write time; depth is not.
    */
-  private async assertUsableParent(parentId: string): Promise<void> {
+  private async assertUsableParent(parentId: string): Promise<{ id: string; is_published: boolean }> {
     const parent = await this.prisma.books.findFirst({
       where: { id: parentId, deleted_at: null },
-      select: { id: true, parent_id: true },
+      select: { id: true, parent_id: true, is_published: true },
     });
     if (!parent) throw new NotFoundException('Parent book not found');
     if (parent.parent_id) {
       throw new BadRequestException('parent_id must point at a top-level book — that book is itself a part of a series');
     }
+    return { id: parent.id, is_published: parent.is_published };
+  }
+
+  /**
+   * Two live parts of one series can't share a part number — the parts list is
+   * ordered by it. The partial unique index uq_books_parent_part_number is the
+   * real guard (a concurrent write surfaces as P2002 → the same 409); this is
+   * the friendly pre-check. Trashed parts don't hold their number.
+   */
+  private async assertPartNumberAvailable(parentId: string, partNumber: number, excludeBookId: string | null) {
+    const clash = await this.prisma.books.findFirst({
+      where: {
+        parent_id: parentId,
+        part_number: partNumber,
+        deleted_at: null,
+        ...(excludeBookId ? { NOT: { id: excludeBookId } } : {}),
+      },
+      select: { id: true },
+    });
+    if (clash) throw new ConflictException(PART_NUMBER_TAKEN);
   }
 
   async create(dto: CreateBookDto, userId: string, lang: string | null) {
@@ -286,7 +400,14 @@ export class BooksService {
     const media = await this.prisma.media.findUnique({ where: { id: dto.cover_image_id } });
     if (!media) throw new NotFoundException('Cover image not found');
 
-    if (dto.parent_id) await this.assertUsableParent(dto.parent_id);
+    await this.assertOgImagesExist(dto.translations);
+
+    assertPartFieldsConsistent(dto.part_number ?? null, dto.parts ?? null);
+
+    const parent = dto.parent_id ? await this.assertUsableParent(dto.parent_id) : null;
+    if (parent && dto.part_number != null) {
+      await this.assertPartNumberAvailable(parent.id, dto.part_number, null);
+    }
 
     if (dto.isbn) {
       // Check the unique constraint as the DB sees it (no soft-delete filter):
@@ -316,8 +437,10 @@ export class BooksService {
             parts: dto.parts ?? null,
             // Books are typically uploaded already-final by staff (unlike posts,
             // which benefit from a draft-first workflow) — default to published,
-            // matching audios' precedent.
-            is_published: dto.is_published ?? true,
+            // matching audios' precedent. A new PART defaults to its series'
+            // state instead, so a volume added to a series that is still being
+            // prepared doesn't start out flagged public.
+            is_published: dto.is_published ?? parent?.is_published ?? true,
             is_publication: dto.is_publication ?? false,
             parent_id: dto.parent_id ?? null,
             added_by: userId,
@@ -341,12 +464,13 @@ export class BooksService {
         return created;
       });
     } catch (err) {
-      // A concurrent insert could claim the same slug (or ISBN) between the
-      // pre-check and the create — translate the unique-index P2002 into a
-      // friendly 409.
+      // A concurrent insert could claim the same slug (or ISBN, or part number)
+      // between the pre-check and the create — translate the unique-index
+      // P2002 into a friendly 409.
       rethrowP2002AsConflict(
         err,
         dto.slug ? `Slug "${dto.slug}" is already used by another book` : 'A unique field (slug or ISBN) is already in use',
+        { part_number: PART_NUMBER_TAKEN },
       );
     }
 
@@ -358,7 +482,10 @@ export class BooksService {
       changes: { method: 'POST', path: '/api/v1/books' },
     });
 
-    const { data } = await this.findOne(book.id, lang);
+    // Hydrate with the admin flag: the row may be a draft (is_published=false),
+    // which the public overload filters out — the write had already committed
+    // and the request would 404 despite succeeding.
+    const { data } = await this.findOne(book.id, lang, true);
     return { message: 'Book created', data };
   }
 
@@ -378,6 +505,8 @@ export class BooksService {
       if (!media) throw new NotFoundException('Cover image not found');
     }
 
+    await this.assertOgImagesExist(dto.translations);
+
     if (dto.isbn && dto.isbn !== book.isbn) {
       const conflict = await this.prisma.books.findUnique({ where: { isbn: dto.isbn } });
       if (conflict) throw new ConflictException('A book with that ISBN already exists');
@@ -396,6 +525,27 @@ export class BooksService {
       await this.assertUsableParent(dto.parent_id);
     }
 
+    // Validate the part fields as they will be AFTER this patch (a PATCH may
+    // send only one of them, or only move the book to another series).
+    const nextPartNumber = dto.part_number !== undefined ? dto.part_number : book.part_number;
+    const nextParts = dto.parts !== undefined ? dto.parts : book.parts;
+    const nextParentId = dto.parent_id !== undefined ? dto.parent_id : book.parent_id;
+    assertPartFieldsConsistent(nextPartNumber ?? null, nextParts ?? null);
+    if (
+      nextParentId &&
+      nextPartNumber != null &&
+      (nextParentId !== book.parent_id || nextPartNumber !== book.part_number)
+    ) {
+      await this.assertPartNumberAvailable(nextParentId, nextPartNumber, id);
+    }
+
+    assertSlugRenameAllowed({
+      resourceLabel: 'book',
+      currentSlug: book.slug,
+      nextSlug: dto.slug,
+      isPublished: book.is_published,
+      willBePublished: dto.is_published ?? book.is_published,
+    });
     if (dto.slug) await this.assertSlugAvailable(dto.slug, id);
 
     try {
@@ -452,6 +602,7 @@ export class BooksService {
       rethrowP2002AsConflict(
         err,
         dto.slug ? `Slug "${dto.slug}" is already used by another book` : 'A unique field (slug or ISBN) is already in use',
+        { part_number: PART_NUMBER_TAKEN },
       );
     }
 
@@ -463,7 +614,7 @@ export class BooksService {
       changes: { method: 'PATCH', path: `/api/v1/books/${id}` },
     });
 
-    const { data } = await this.findOne(id, lang);
+    const { data } = await this.findOne(id, lang, true);
     return { message: 'Book updated', data };
   }
 
@@ -475,7 +626,7 @@ export class BooksService {
     const [items, total] = await Promise.all([
       this.prisma.books.findMany({
         where,
-        select: BOOK_LIST_SELECT,
+        select: bookListSelect(true),
         orderBy: [{ deleted_at: 'desc' }, { id: 'asc' }],
         skip,
         take: limit,
@@ -525,11 +676,42 @@ export class BooksService {
       );
     }
 
+    // A part comes back under its series or not at all. While it sat in the
+    // trash the series may have been trashed too, or itself turned into a part
+    // of another series — restoring blindly would leave a live volume that no
+    // list or detail page can reach, or a two-level chain the UI can't render.
+    if (book.parent_id) {
+      const parent = await this.prisma.books.findUnique({
+        where: { id: book.parent_id },
+        select: { deleted_at: true, parent_id: true },
+      });
+      if (!parent || parent.deleted_at !== null) {
+        throw new ConflictException('Cannot restore: the series this part belongs to was deleted — restore the series first');
+      }
+      if (parent.parent_id) {
+        throw new ConflictException(
+          'Cannot restore: the series this part belonged to is now itself a part of another series — detach it first',
+        );
+      }
+    }
+
     const restoredIsbn = book.isbn ? stripSoftDeleteSuffix(book.isbn) : null;
     const restoredSlug = book.slug ? stripSoftDeleteSuffix(book.slug) : null;
 
     try {
       await this.prisma.$transaction(async (tx) => {
+        if (book.parent_id && book.part_number !== null) {
+          const clash = await tx.books.findFirst({
+            where: { parent_id: book.parent_id, part_number: book.part_number, deleted_at: null, NOT: { id } },
+            select: { id: true },
+          });
+          if (clash) {
+            throw new ConflictException(
+              `Cannot restore: part number ${book.part_number} is now used by another part of the series`,
+            );
+          }
+        }
+
         if (restoredIsbn) {
           const conflict = await tx.books.findFirst({
             where: { isbn: restoredIsbn, deleted_at: null, NOT: { id } },
@@ -562,7 +744,9 @@ export class BooksService {
       });
     } catch (err) {
       // DB-level backstop for a concurrent claim between check and update.
-      rethrowP2002AsConflict(err, 'Cannot restore: a unique field (ISBN or slug) was claimed by another book');
+      rethrowP2002AsConflict(err, 'Cannot restore: a unique field (ISBN or slug) was claimed by another book', {
+        part_number: 'Cannot restore: its part number was claimed by another part of the series',
+      });
     }
 
     await this.audit.write({
@@ -579,6 +763,18 @@ export class BooksService {
   async softDelete(id: string, userId: string) {
     const book = await this.prisma.books.findFirst({ where: { id, deleted_at: null } });
     if (!book) throw new NotFoundException('Book not found');
+
+    // A series parent is the only way to reach its parts: they are hidden from
+    // every list and surface only on the parent's detail page. Trashing the
+    // parent alone would strand them — live, published, and unreachable. The
+    // editor deletes (or detaches) the parts first; that keeps each removal an
+    // explicit, separately restorable step instead of a silent cascade.
+    const liveParts = await this.prisma.books.count({ where: { parent_id: id, deleted_at: null } });
+    if (liveParts > 0) {
+      throw new ConflictException(
+        `Cannot delete: this book is a series with ${liveParts} live part(s) — delete or detach the parts first`,
+      );
+    }
 
     // Free the unique ISBN and slug by suffixing them; without this,
     // recreating a book with the same ISBN/slug after deletion fails with a

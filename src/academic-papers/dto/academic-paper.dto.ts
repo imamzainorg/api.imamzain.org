@@ -1,6 +1,7 @@
 import { ApiProperty, ApiPropertyOptional } from "@nestjs/swagger";
 import { Type } from "class-transformer";
 import {
+  ArrayMaxSize,
   ArrayMinSize,
   IsArray,
   IsBoolean,
@@ -16,6 +17,8 @@ import {
   ValidateNested,
 } from "class-validator";
 import { PaginationDto } from "../../common/dto/pagination.dto";
+import { DTO_LIMITS } from "../../common/validators/dto-limits";
+import { SearchTerm } from "../../common/validators/search-term";
 
 export class AcademicPaperTranslationDto {
   @ApiProperty({ example: "ar", minLength: 2, maxLength: 2 })
@@ -23,37 +26,48 @@ export class AcademicPaperTranslationDto {
   @Length(2, 2)
   lang!: string;
 
-  @ApiProperty({ example: "فقه الإمام زين العابدين في الصحيفة السجادية" })
+  @ApiProperty({ example: "فقه الإمام زين العابدين في الصحيفة السجادية", maxLength: DTO_LIMITS.title })
   @IsString()
   @MinLength(1)
+  @MaxLength(DTO_LIMITS.title)
   title!: string;
 
-  @ApiPropertyOptional({ example: "ملخص الورقة البحثية حول المنهج الفقهي..." })
+  @ApiPropertyOptional({ example: "ملخص الورقة البحثية حول المنهج الفقهي...", maxLength: DTO_LIMITS.summary })
   @IsOptional()
   @IsString()
+  @MaxLength(DTO_LIMITS.summary)
   abstract?: string;
 
   @ApiPropertyOptional({
     type: [String],
     example: ["د. محمد العراقي", "أ. علي الكاظمي"],
+    maxItems: DTO_LIMITS.listItems,
+    description: "Up to 50 authors, each up to 300 characters.",
   })
   @IsOptional()
   @IsArray()
+  @ArrayMaxSize(DTO_LIMITS.listItems)
   @IsString({ each: true })
+  @MaxLength(DTO_LIMITS.person, { each: true })
   authors?: string[];
 
   @ApiPropertyOptional({
     type: [String],
     example: ["فقه", "أدعية", "الإمام السجاد"],
+    maxItems: DTO_LIMITS.listItems,
+    description: "Up to 50 keywords, each up to 200 characters.",
   })
   @IsOptional()
   @IsArray()
+  @ArrayMaxSize(DTO_LIMITS.listItems)
   @IsString({ each: true })
+  @MaxLength(DTO_LIMITS.label, { each: true })
   keywords?: string[];
 
-  @ApiPropertyOptional({ example: "مجلة الدراسات الإسلامية" })
+  @ApiPropertyOptional({ example: "مجلة الدراسات الإسلامية", maxLength: DTO_LIMITS.title })
   @IsOptional()
   @IsString()
+  @MaxLength(DTO_LIMITS.title)
   publication_venue?: string;
 
   @ApiPropertyOptional({ example: 24, minimum: 1 })
@@ -79,26 +93,31 @@ export class CreateAcademicPaperDto {
   @IsUUID()
   category_id!: string;
 
-  @ApiPropertyOptional({ example: "2022" })
+  @ApiPropertyOptional({ example: "2022", maxLength: DTO_LIMITS.code })
   @IsOptional()
   @IsString()
+  @MaxLength(DTO_LIMITS.code)
   published_year?: string;
 
   @ApiPropertyOptional({
     example: "https://cdn.imamzain.org/papers/paper.pdf",
     description: "Direct URL to the PDF file",
+    maxLength: DTO_LIMITS.url,
   })
   @IsOptional()
   @IsUrl()
+  @MaxLength(DTO_LIMITS.url)
   pdf_url?: string;
 
   @ApiPropertyOptional({
     example: ["ar"],
     description:
       "ISO 639-1 codes for the language(s) the PDF itself is written in. Distinct from `translations[].lang`, which describes the catalogue metadata — a paper can be catalogued in Arabic while the document is Persian. Defaults to an empty array.",
+    maxItems: DTO_LIMITS.listItems,
   })
   @IsOptional()
   @IsArray()
+  @ArrayMaxSize(DTO_LIMITS.listItems)
   @IsString({ each: true })
   @Length(2, 2, { each: true })
   document_languages?: string[];
@@ -114,11 +133,13 @@ export class CreateAcademicPaperDto {
   @ApiProperty({
     type: [AcademicPaperTranslationDto],
     description: "Must include exactly one translation with is_default: true",
+    maxItems: DTO_LIMITS.listItems,
   })
   @IsArray()
   @ValidateNested({ each: true })
   @Type(() => AcademicPaperTranslationDto)
   @ArrayMinSize(1)
+  @ArrayMaxSize(DTO_LIMITS.listItems)
   translations!: AcademicPaperTranslationDto[];
 }
 
@@ -128,24 +149,29 @@ export class UpdateAcademicPaperDto {
   @IsUUID()
   category_id?: string;
 
-  @ApiPropertyOptional({ example: "2023" })
+  @ApiPropertyOptional({ example: "2023", maxLength: DTO_LIMITS.code })
   @IsOptional()
   @IsString()
+  @MaxLength(DTO_LIMITS.code)
   published_year?: string;
 
   @ApiPropertyOptional({
     example: "https://cdn.imamzain.org/papers/updated-paper.pdf",
+    maxLength: DTO_LIMITS.url,
   })
   @IsOptional()
   @IsUrl()
+  @MaxLength(DTO_LIMITS.url)
   pdf_url?: string;
 
   @ApiPropertyOptional({
     example: ["ar", "fa"],
     description: "ISO 639-1 codes for the language(s) the PDF itself is written in. Replaces the whole array when supplied.",
+    maxItems: DTO_LIMITS.listItems,
   })
   @IsOptional()
   @IsArray()
+  @ArrayMaxSize(DTO_LIMITS.listItems)
   @IsString({ each: true })
   @Length(2, 2, { each: true })
   document_languages?: string[];
@@ -155,11 +181,12 @@ export class UpdateAcademicPaperDto {
   @IsBoolean()
   is_published?: boolean;
 
-  @ApiPropertyOptional({ type: [AcademicPaperTranslationDto] })
+  @ApiPropertyOptional({ type: [AcademicPaperTranslationDto], maxItems: DTO_LIMITS.listItems })
   @IsOptional()
   @IsArray()
   @ValidateNested({ each: true })
   @Type(() => AcademicPaperTranslationDto)
+  @ArrayMaxSize(DTO_LIMITS.listItems)
   translations?: AcademicPaperTranslationDto[];
 }
 
@@ -177,11 +204,10 @@ export class AcademicPaperQueryDto extends PaginationDto {
 
   @ApiPropertyOptional({
     example: "الصحيفة",
-    description: "Search across titles and abstracts",
+    description: "Search across titles and abstracts. 2–200 characters after trimming; a blank value is ignored.",
+    minLength: 2,
     maxLength: 200,
   })
-  @IsOptional()
-  @IsString()
-  @MaxLength(200)
+  @SearchTerm()
   search?: string;
 }

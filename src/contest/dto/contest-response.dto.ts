@@ -48,16 +48,31 @@ class StartContestDataDto {
       "HMAC token bound to attempt_id. Send back in the POST /submit body as `attempt_token`. Optional today, will become required once the frontend rolls out token support.",
   })
   attempt_token: string;
+
+  @ApiProperty({
+    example: false,
+    description:
+      "true when this identity had already opened an attempt it never submitted and that SAME attempt (same attempt_id and attempt_token) is handed back; false for a brand-new attempt.",
+  })
+  resumed: boolean;
 }
 
 export class StartContestResponseDto extends ApiEnvelope(StartContestDataDto, 'Contest started') {}
 
 class SubmitContestDataDto {
-  @ApiProperty({ example: 8 })
-  final_score: number;
+  @ApiProperty({
+    example: 8,
+    nullable: true,
+    description:
+      "The participant's score, or null when the server runs with CONTEST_REVEAL_SCORE=false (results are then announced by the committee; the score is still stored and visible to admins).",
+  })
+  final_score: number | null;
 
   @ApiProperty({ example: 10 })
   total_questions: number;
+
+  @ApiProperty({ example: true, description: "false when final_score was withheld on purpose." })
+  score_revealed: boolean;
 }
 
 export class SubmitContestResponseDto extends ApiEnvelope(SubmitContestDataDto, 'Contest submitted') {}

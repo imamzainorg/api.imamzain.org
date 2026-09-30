@@ -19,8 +19,9 @@ export class CreateContactDto {
   @MaxLength(100)
   name!: string;
 
-  @ApiProperty({ example: "ahmad@example.com", format: "email" })
+  @ApiProperty({ example: "ahmad@example.com", format: "email", maxLength: 254 })
   @IsEmail()
+  @MaxLength(254)
   email!: string;
 
   @ApiPropertyOptional({

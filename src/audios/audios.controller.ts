@@ -91,7 +91,7 @@ export class AudiosController {
   @Auth('audios:delete')
   @ApiOperation({
     summary: 'List soft-deleted audios (CMS trash view)',
-    description: 'Paginated list of audios whose `deleted_at` is set. Per-translation slugs are returned with the `__del_<timestamp>` suffix stripped. Requires permission: `audios:delete`.',
+    description: 'Paginated list of audios whose `deleted_at` is set. Each audio\'s slug (there is one slug per audio, not per translation) is returned with the `__del_<timestamp>` suffix stripped, showing what it reverts to on restore. Requires permission: `audios:delete`.',
   })
   @ApiQuery({ name: 'page', required: false, type: Number, example: 1 })
   @ApiQuery({ name: 'limit', required: false, type: Number, example: 20 })
@@ -104,7 +104,7 @@ export class AudiosController {
   @PublicCache(60, 300)
   @ApiOperation({
     summary: 'Get a single audio by slug (public)',
-    description: 'Resolves a published audio by an editor-assigned translation slug, regardless of the visitor\'s Accept-Language — the display translation still respects Accept-Language. 404 if no live audio owns that slug. CDN-cacheable.',
+    description: 'Resolves a published audio by its slug (one language-agnostic slug per audio, not per translation) — the display translation still respects Accept-Language. 404 if no live audio owns that slug. CDN-cacheable.',
   })
   @ApiParam({ name: 'slug', example: 'lecture-imam-sajjad' })
   @ApiOkResponse({ type: AudioDetailResponseDto })
@@ -135,7 +135,7 @@ export class AudiosController {
   @ApiCreatedResponse({ type: AudioCreatedResponseDto })
   @ApiBadRequestResponse({ type: ValidationErrorDto, description: 'Validation failed' })
   @ApiNotFoundResponse({ type: NotFoundErrorDto, description: 'The provided speaker_id does not match a live speaker' })
-  @ApiConflictResponse({ type: ConflictErrorDto, description: 'An audio translation slug is already in use' })
+  @ApiConflictResponse({ type: ConflictErrorDto, description: 'The slug is already used by another audio' })
   create(@Body() dto: CreateAudioDto, @CurrentUser() user: CurrentUserPayload, @Lang() lang: string | null) {
     return this.service.create(dto, user.id, lang);
   }
@@ -145,12 +145,12 @@ export class AudiosController {
   @Auth('audios:delete')
   @ApiOperation({
     summary: 'Restore a soft-deleted audio',
-    description: 'Clears `deleted_at` and reverses each translation slug suffix. 409 if an original slug was claimed meanwhile. Requires permission: `audios:delete`.',
+    description: 'Clears `deleted_at` and reverses the slug and audio_url suffixes. 409 if the original slug or audio_url was claimed meanwhile, or (`code: AUDIO_SPEAKER_DELETED`) if the audio\'s speaker is in the trash — restore the speaker first; it is never restored automatically. Requires permission: `audios:delete`.',
   })
   @ApiParam({ name: 'id', format: 'uuid' })
   @ApiOkResponse({ type: AudioMessageResponseDto })
   @ApiNotFoundResponse({ type: NotFoundErrorDto, description: 'No soft-deleted audio with that ID exists' })
-  @ApiConflictResponse({ type: ConflictErrorDto, description: 'A live audio has taken the restored slug' })
+  @ApiConflictResponse({ type: ConflictErrorDto, description: 'A live audio has taken the restored slug or audio_url, or the audio\'s speaker is trashed (`code: AUDIO_SPEAKER_DELETED`)' })
   restore(@Param('id') id: string, @CurrentUser() user: CurrentUserPayload) {
     return this.service.restore(id, user.id);
   }
@@ -185,7 +185,7 @@ export class AudiosController {
   @ApiOkResponse({ type: AudioDetailResponseDto })
   @ApiBadRequestResponse({ type: ValidationErrorDto, description: 'Validation failed' })
   @ApiNotFoundResponse({ type: NotFoundErrorDto, description: 'No audio with that ID exists, the speaker_id is unknown, or it has been deleted' })
-  @ApiConflictResponse({ type: ConflictErrorDto, description: 'An audio translation slug is already in use' })
+  @ApiConflictResponse({ type: ConflictErrorDto, description: 'The slug is already used by another audio' })
   update(@Param('id') id: string, @Body() dto: UpdateAudioDto, @CurrentUser() user: CurrentUserPayload, @Lang() lang: string | null) {
     return this.service.update(id, dto, user.id, lang);
   }
@@ -202,7 +202,7 @@ export class AudiosController {
 
   @Delete(':id')
   @Auth('audios:delete')
-  @ApiOperation({ summary: 'Soft-delete an audio', description: 'Sets `deleted_at` and suffixes each translation slug so it can be reused. Restore is reversible. Requires permission: `audios:delete`.' })
+  @ApiOperation({ summary: 'Soft-delete an audio', description: 'Sets `deleted_at` and suffixes the slug (if set) and audio_url with `__del_<timestamp>` so they can be reused. Restore is reversible. Requires permission: `audios:delete`.' })
   @ApiParam({ name: 'id', format: 'uuid' })
   @ApiOkResponse({ type: AudioMessageResponseDto })
   @ApiNotFoundResponse({ type: NotFoundErrorDto, description: 'No audio with that ID exists, or it has already been deleted' })

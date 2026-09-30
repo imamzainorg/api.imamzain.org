@@ -1,6 +1,5 @@
-import { Injectable, Logger, NotFoundException } from '@nestjs/common';
-import { Prisma } from '@prisma/client';
-import { EmailService } from '../email/email.service';
+import { BadRequestException, ConflictException, Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { contact_status, Prisma, proxy_visit_status } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { WhatsappService } from '../whatsapp/whatsapp.service';
 import { AuditService } from '../common/audit/audit.service';
@@ -9,18 +8,41 @@ import { buildPaginationMeta } from '../common/utils/pagination.util';
 import { CreateContactDto, UpdateContactDto } from './dto/contact.dto';
 import { CreateProxyVisitDto, UpdateProxyVisitDto } from './dto/proxy-visit.dto';
 
+/**
+ * Where a proxy-visit request may go from each status.
+ *
+ * COMPLETED is final: reaching it tells the visitor, over WhatsApp, that the
+ * visit was performed on their behalf. With no table, COMPLETED → PENDING →
+ * COMPLETED sent that message again, and nothing stopped a request bouncing
+ * between states with stale processed_* stamps. A request completed by mistake
+ * is corrected with a note (or deleted), not by pretending it never happened.
+ *
+ * PENDING is reachable again from APPROVED / REJECTED so a wrong decision can
+ * be undone before anything went out.
+ */
+export const PROXY_VISIT_TRANSITIONS: Record<proxy_visit_status, readonly proxy_visit_status[]> = {
+  PENDING: ['APPROVED', 'REJECTED', 'COMPLETED'],
+  APPROVED: ['COMPLETED', 'REJECTED', 'PENDING'],
+  REJECTED: ['PENDING', 'APPROVED'],
+  COMPLETED: [],
+};
+
+const STALE_UPDATE_MESSAGE = 'This record was changed by someone else a moment ago — reload it and try again';
+
 @Injectable()
 export class FormsService {
   private readonly logger = new Logger(FormsService.name);
 
   constructor(
     private readonly prisma: PrismaService,
-    private readonly emailService: EmailService,
     private readonly whatsappService: WhatsappService,
     private readonly audit: AuditService,
   ) {}
 
   async submitProxyVisit(dto: CreateProxyVisitDto) {
+    // No e-mail is sent from here. The row is born with notified_at = NULL and
+    // FormNotificationsService announces it in the next digest — see that
+    // service for why the public forms must not send mail one-for-one.
     const record = await this.prisma.proxy_visit_requests.create({
       data: {
         name: dto.visitor_name,
@@ -38,28 +60,7 @@ export class FormsService {
       changes: { method: 'POST', path: '/api/v1/forms/proxy-visit' },
     });
 
-    this.emailService
-      .notifyProxyVisit(record)
-      .then(async (ok) => {
-        if (!ok) await this.flagProxyVisitNotificationFailed(record.id);
-      })
-      .catch(async (err) => {
-        this.logger.warn(`Proxy-visit email failed: ${err}`);
-        await this.flagProxyVisitNotificationFailed(record.id);
-      });
-
     return { message: 'Proxy visit request submitted', data: record };
-  }
-
-  private async flagProxyVisitNotificationFailed(id: string) {
-    try {
-      await this.prisma.proxy_visit_requests.update({
-        where: { id },
-        data: { notification_failed_at: new Date() },
-      });
-    } catch (err) {
-      this.logger.warn(`Failed to flag proxy-visit ${id} notification_failed_at: ${err}`);
-    }
   }
 
   async updateProxyVisit(id: string, dto: UpdateProxyVisitDto, adminId: string) {
@@ -67,27 +68,49 @@ export class FormsService {
     if (!record) throw new NotFoundException('Request not found');
 
     const prevStatus = record.status;
-    // Using UncheckedUpdateInput so we can set the scalar `processed_by` FK
-    // directly instead of going through the relation connect form.
-    const updateData: Prisma.proxy_visit_requestsUncheckedUpdateInput = {};
-    if (dto.status) updateData.status = dto.status as Prisma.proxy_visit_requestsUncheckedUpdateInput['status'];
-    if (dto.notes !== undefined) updateData.notes = dto.notes;
+    const nextStatus = (dto.status as proxy_visit_status | undefined) ?? prevStatus;
+    const isTransition = nextStatus !== prevStatus;
 
-    // Only stamp processed_by/processed_at when the status is actually
-    // transitioning into a terminal state. Re-PATCHing the same status used
-    // to clobber the original processor and timestamp on every call.
-    const isTransitioningToTerminal =
-      dto.status &&
-      dto.status !== prevStatus &&
-      (dto.status === 'COMPLETED' || dto.status === 'REJECTED' || dto.status === 'APPROVED');
-    if (isTransitioningToTerminal) {
-      updateData.processed_by = adminId;
-      updateData.processed_at = dto.processed_at ? new Date(dto.processed_at) : new Date();
+    if (isTransition && !PROXY_VISIT_TRANSITIONS[prevStatus].includes(nextStatus)) {
+      const allowed = PROXY_VISIT_TRANSITIONS[prevStatus];
+      throw new BadRequestException(
+        allowed.length === 0
+          ? `A ${prevStatus} request is final — its status can no longer change`
+          : `A ${prevStatus} request cannot become ${nextStatus} (allowed: ${allowed.join(', ')})`,
+      );
     }
 
-    const updated = await this.prisma.proxy_visit_requests.update({ where: { id }, data: updateData });
+    // Using UncheckedUpdateInput so we can set the scalar `processed_by` FK
+    // directly instead of going through the relation connect form.
+    const updateData: Prisma.proxy_visit_requestsUncheckedUpdateManyInput = {};
+    if (dto.notes !== undefined) updateData.notes = dto.notes;
+    if (isTransition) {
+      updateData.status = nextStatus;
+      if (nextStatus === 'PENDING') {
+        // Back to the queue: nobody has "processed" it any more.
+        updateData.processed_by = null;
+        updateData.processed_at = null;
+      } else {
+        // Stamped on a real transition only — re-PATCHing the same status used
+        // to clobber the original processor and timestamp on every call.
+        updateData.processed_by = adminId;
+        updateData.processed_at = dto.processed_at ? new Date(dto.processed_at) : new Date();
+      }
+    }
 
-    if (prevStatus !== 'COMPLETED' && dto.status === 'COMPLETED') {
+    // Compare-and-set on the status we read. Two admins completing the same
+    // request at once both used to pass the check above and both sent the
+    // WhatsApp message; now exactly one UPDATE matches and the other gets 409.
+    // (An empty PATCH — same status, no note — has nothing to write.)
+    if (Object.keys(updateData).length > 0) {
+      const result = await this.prisma.proxy_visit_requests.updateMany({
+        where: { id, deleted_at: null, status: prevStatus },
+        data: updateData,
+      });
+      if (result.count === 0) throw new ConflictException(STALE_UPDATE_MESSAGE);
+    }
+
+    if (isTransition && nextStatus === 'COMPLETED') {
       this.whatsappService
         .sendProxyVisitCompletion(record.phone ?? '', record.name)
         .then((ok) => {
@@ -110,9 +133,10 @@ export class FormsService {
       action: AUDIT_ACTIONS.PROXY_VISIT_UPDATED,
       resourceType: 'proxy_visit_request',
       resourceId: id,
-      changes: { method: 'PATCH', path: `/api/v1/forms/proxy-visits/${id}`, from: prevStatus, to: dto.status },
+      changes: { method: 'PATCH', path: `/api/v1/forms/proxy-visits/${id}`, from: prevStatus, to: nextStatus },
     });
 
+    const updated = await this.prisma.proxy_visit_requests.findUniqueOrThrow({ where: { id } });
     return { message: 'Request updated', data: updated };
   }
 
@@ -176,6 +200,7 @@ export class FormsService {
   }
 
   async submitContact(dto: CreateContactDto) {
+    // Announced by FormNotificationsService's digest, not mailed inline.
     const record = await this.prisma.contact_submissions.create({
       data: {
         name: dto.name,
@@ -194,54 +219,52 @@ export class FormsService {
       changes: { method: 'POST', path: '/api/v1/forms/contact' },
     });
 
-    this.emailService
-      .notifyContactSubmission(record)
-      .then(async (ok) => {
-        if (!ok) await this.flagContactNotificationFailed(record.id);
-      })
-      .catch(async (err) => {
-        this.logger.warn(`Contact email failed: ${err}`);
-        await this.flagContactNotificationFailed(record.id);
-      });
-
     return { message: 'Contact submission received', data: record };
-  }
-
-  private async flagContactNotificationFailed(id: string) {
-    try {
-      await this.prisma.contact_submissions.update({
-        where: { id },
-        data: { notification_failed_at: new Date() },
-      });
-    } catch (err) {
-      this.logger.warn(`Failed to flag contact ${id} notification_failed_at: ${err}`);
-    }
   }
 
   async updateContact(id: string, dto: UpdateContactDto, adminId: string) {
     const record = await this.prisma.contact_submissions.findFirst({ where: { id, deleted_at: null } });
     if (!record) throw new NotFoundException('Submission not found');
 
+    // NEW / RESPONDED / SPAM may move freely — nothing is sent on any of them —
+    // but the responder stamp has to follow the status both ways.
     const prevStatus = record.status;
-    const updateData: Prisma.contact_submissionsUncheckedUpdateInput = {};
-    if (dto.status) updateData.status = dto.status as Prisma.contact_submissionsUncheckedUpdateInput['status'];
+    const nextStatus = (dto.status as contact_status | undefined) ?? prevStatus;
+    const isTransition = nextStatus !== prevStatus;
+
+    const updateData: Prisma.contact_submissionsUncheckedUpdateManyInput = {};
     if (dto.notes !== undefined) updateData.notes = dto.notes;
-    // Only stamp responder fields on transition into RESPONDED.
-    if (dto.status === 'RESPONDED' && prevStatus !== 'RESPONDED') {
-      updateData.responded_by = adminId;
-      updateData.responded_at = dto.responded_at ? new Date(dto.responded_at) : new Date();
+    if (isTransition) {
+      updateData.status = nextStatus;
+      if (nextStatus === 'RESPONDED') {
+        updateData.responded_by = adminId;
+        updateData.responded_at = dto.responded_at ? new Date(dto.responded_at) : new Date();
+      } else if (prevStatus === 'RESPONDED') {
+        // Un-responding used to leave "responded by X at T" on a NEW row.
+        updateData.responded_by = null;
+        updateData.responded_at = null;
+      }
     }
 
-    const updated = await this.prisma.contact_submissions.update({ where: { id }, data: updateData });
+    // Compare-and-set, as for proxy visits: a concurrent edit gets a 409
+    // rather than silently overwriting the other admin's stamp.
+    if (Object.keys(updateData).length > 0) {
+      const result = await this.prisma.contact_submissions.updateMany({
+        where: { id, deleted_at: null, status: prevStatus },
+        data: updateData,
+      });
+      if (result.count === 0) throw new ConflictException(STALE_UPDATE_MESSAGE);
+    }
 
     await this.audit.write({
       actorId: adminId,
       action: AUDIT_ACTIONS.CONTACT_UPDATED,
       resourceType: 'contact_submission',
       resourceId: id,
-      changes: { method: 'PATCH', path: `/api/v1/forms/contacts/${id}` },
+      changes: { method: 'PATCH', path: `/api/v1/forms/contacts/${id}`, from: prevStatus, to: nextStatus },
     });
 
+    const updated = await this.prisma.contact_submissions.findUniqueOrThrow({ where: { id } });
     return { message: 'Submission updated', data: updated };
   }
 

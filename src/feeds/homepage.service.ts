@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { resolveTranslation } from '../common/utils/translation.util';
 import { publicWhere } from '../common/utils/visibility.util';
+import { MEDIA_URL_WITH_VARIANTS_SELECT } from '../common/crud/media-selects';
 import { DailyHadithsService } from '../daily-hadiths/daily-hadiths.service';
 import { YoutubeService } from '../youtube/youtube.service';
 
@@ -18,13 +19,19 @@ const VIDEOS_COUNT = 7;
  * server-side; the response is consequently much smaller than the
  * per-resource list endpoints and cheaper to ship through the CDN.
  *
- * All seven buckets fan out as a single Promise.all so total wall time
+ * All the buckets fan out as a single Promise.all so total wall time
  * is max(individual queries). Most are indexed; the daily hadith pick
- * is cheap (max one row lookup + one rotation scan).
+ * is cheap (a scheduled-date lookup, then at most one locked-pick lookup
+ * or one draw from the unscheduled pool).
  *
- * The response is identical for every visitor on the same UTC date in
- * a given language, so it caches well at the CDN — see the controller
- * for the Cache-Control settings.
+ * The response is identical for every visitor on the same site calendar
+ * day (SITE_TIMEZONE, default Asia/Baghdad — see site-time.util) in a
+ * given language, so it caches well at the CDN — see the controller for
+ * the Cache-Control settings.
+ *
+ * Every image keeps its original-URL field (`image`, `path`) and gains a
+ * `<field>_variants` array (WebP renditions, width ascending, possibly empty)
+ * so the front end can build a srcset like on the detail endpoints.
  */
 @Injectable()
 export class HomepageService {
@@ -79,7 +86,7 @@ export class HomepageService {
         // Only the fields the mapper/resolveTranslation read — NOT the heavy
         // post_translations.body, which was being fetched then discarded.
         post_translations: { select: { lang: true, is_default: true, summary: true, title: true } },
-        media: { select: { url: true } },
+        media: { select: MEDIA_URL_WITH_VARIANTS_SELECT },
       },
       orderBy: [{ is_featured: 'desc' }, { published_at: 'desc' }, { id: 'asc' }],
       take: NEWS_COUNT,
@@ -90,6 +97,7 @@ export class HomepageService {
       return {
         slug: post.slug ?? null,
         image: post.media?.url ?? null,
+        image_variants: post.media?.media_variants ?? [],
         summary: t?.summary ?? null,
         title: t?.title ?? null,
       };
@@ -111,7 +119,7 @@ export class HomepageService {
         // Drop the heavy book_translations.description — the mapper only needs
         // the title (plus lang/is_default for resolveTranslation).
         book_translations: { select: { lang: true, is_default: true, title: true } },
-        media: { select: { url: true } },
+        media: { select: MEDIA_URL_WITH_VARIANTS_SELECT },
       },
       orderBy: [{ created_at: 'desc' }, { id: 'asc' }],
       take: PUBLICATIONS_COUNT,
@@ -126,6 +134,7 @@ export class HomepageService {
         slug: book.slug ?? book.id,
         title: t?.title ?? null,
         image: book.media?.url ?? null,
+        image_variants: book.media?.media_variants ?? [],
         pages: book.pages,
         views: Number(book.views),
       };
@@ -157,7 +166,7 @@ export class HomepageService {
   private async gallerySlider() {
     const images = await this.prisma.gallery_images.findMany({
       where: publicWhere(true),
-      include: { media: { select: { url: true } } },
+      include: { media: { select: MEDIA_URL_WITH_VARIANTS_SELECT } },
       orderBy: [{ created_at: 'desc' }, { media_id: 'asc' }],
       take: GALLERY_SLIDER_COUNT,
     });
@@ -165,6 +174,7 @@ export class HomepageService {
     return images.map((img) => ({
       id: img.media_id,
       path: img.media?.url ?? null,
+      path_variants: img.media?.media_variants ?? [],
     }));
   }
 
@@ -177,7 +187,7 @@ export class HomepageService {
         // gallery_category_translations has no is_default column (unlike the
         // other translation tables), so selecting it made every request throw.
         // resolveTranslation degrades correctly without it: no lang match falls
-        // through to translations[0].
+        // through to the site language, then to the lowest language code.
         gallery_category_translations: { select: { lang: true, title: true } },
       },
       orderBy: { created_at: 'asc' },

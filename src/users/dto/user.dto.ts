@@ -1,4 +1,5 @@
 import { ApiProperty, ApiPropertyOptional } from "@nestjs/swagger";
+import { Transform } from "class-transformer";
 import {
   IsOptional,
   IsString,
@@ -6,23 +7,30 @@ import {
   MaxLength,
   MinLength,
 } from "class-validator";
+import { PASSWORD_MAX_LENGTH, PASSWORD_MIN_LENGTH } from "../../common/validators/password-policy";
+
+// Usernames are stored byte-exact, so a stray leading/trailing space would mint
+// a look-alike account ("admin" vs "admin "). Passwords are never trimmed.
+const trimmed = ({ value }: { value: unknown }) => (typeof value === "string" ? value.trim() : value);
 
 export class CreateUserDto {
   @ApiProperty({ example: "editor01", minLength: 3, maxLength: 50 })
+  @Transform(trimmed)
   @IsString()
   @MinLength(3)
   @MaxLength(50)
   username!: string;
 
-  @ApiProperty({ example: "secret123", minLength: 6, maxLength: 128 })
+  @ApiProperty({ example: "correct-horse-battery", minLength: PASSWORD_MIN_LENGTH, maxLength: PASSWORD_MAX_LENGTH })
   @IsString()
-  @MinLength(6)
-  @MaxLength(128)
+  @MinLength(PASSWORD_MIN_LENGTH)
+  @MaxLength(PASSWORD_MAX_LENGTH)
   password!: string;
 }
 
 export class UpdateUserDto {
   @ApiPropertyOptional({ example: "editor02", minLength: 3, maxLength: 50 })
+  @Transform(trimmed)
   @IsOptional()
   @IsString()
   @MinLength(3)
@@ -42,12 +50,12 @@ export class AssignRoleDto {
 export class AdminResetPasswordDto {
   @ApiProperty({
     example: "new-strong-password",
-    description: "New password to assign. Min 6 chars; bcrypt truncates at 72 bytes so the max is generously bounded.",
-    minLength: 6,
-    maxLength: 128,
+    description: `New password to assign. Min ${PASSWORD_MIN_LENGTH} chars; bcrypt truncates at 72 bytes so the max is generously bounded.`,
+    minLength: PASSWORD_MIN_LENGTH,
+    maxLength: PASSWORD_MAX_LENGTH,
   })
   @IsString()
-  @MinLength(6)
-  @MaxLength(128)
+  @MinLength(PASSWORD_MIN_LENGTH)
+  @MaxLength(PASSWORD_MAX_LENGTH)
   new_password!: string;
 }

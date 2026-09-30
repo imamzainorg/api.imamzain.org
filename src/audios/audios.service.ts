@@ -19,8 +19,11 @@ import {
 } from './dto/audio.dto';
 
 // Nested speaker shape — enough for "by this lecturer" links + per-language name.
+// `deleted_at` is read only to decide visibility (see shapeSpeaker) and never
+// leaves the service.
 const SPEAKER_SELECT = {
   id: true,
+  deleted_at: true,
   speaker_translations: { select: { lang: true, name: true, is_default: true } },
 } satisfies Prisma.speakersSelect;
 
@@ -48,8 +51,12 @@ const AUDIO_DETAIL_SELECT = {
 
 type SpeakerRow = {
   id: string;
+  deleted_at: Date | null;
   speaker_translations: { lang: string; name: string; is_default: boolean }[];
 };
+
+/** Stable code for the 409 raised when an audio is restored under a trashed speaker. */
+export const AUDIO_SPEAKER_DELETED = 'AUDIO_SPEAKER_DELETED';
 
 /**
  * Audio lecture library. i18n via `audio_translations` (title per language) and
@@ -67,18 +74,29 @@ export class AudiosService {
     private readonly audit: AuditService,
   ) {}
 
-  /** Attach the resolved speaker (per request lang) instead of the raw relation. */
-  private shapeSpeaker(speaker: SpeakerRow | null, lang: string | null) {
+  /**
+   * Attach the resolved speaker (per request lang) instead of the raw relation.
+   * A trashed speaker is hidden from the public (`speaker: null`) — an audio can
+   * outlive its speaker's soft delete (trashed audios don't block it), and the
+   * name must not keep being served. The CMS still sees the speaker.
+   */
+  private shapeSpeaker(speaker: SpeakerRow | null, lang: string | null, isPublic: boolean) {
     if (!speaker) return null;
-    return { ...speaker, translation: resolveTranslation(speaker.speaker_translations, lang) };
+    const { deleted_at, ...rest } = speaker;
+    if (isPublic && deleted_at) return null;
+    return { ...rest, translation: resolveTranslation(speaker.speaker_translations, lang) };
   }
 
-  private shapeAudio<T extends { audio_translations: any[]; speakers?: SpeakerRow | null }>(row: T, lang: string | null) {
+  private shapeAudio<T extends { audio_translations: any[]; speakers?: SpeakerRow | null }>(
+    row: T,
+    lang: string | null,
+    isPublic: boolean,
+  ) {
     const { speakers, ...rest } = row;
     return {
       ...rest,
       translation: resolveTranslation(row.audio_translations, lang),
-      speaker: this.shapeSpeaker(speakers ?? null, lang),
+      speaker: this.shapeSpeaker(speakers ?? null, lang, isPublic),
     };
   }
 
@@ -97,8 +115,8 @@ export class AudiosService {
     const { page, limit, skip } = resolvePagination(query);
     const where: Prisma.audiosWhereInput = publicWhere(true);
     if (query.speaker_id) where.speaker_id = query.speaker_id;
-    if (query.search) this.applySearch(where, query.search);
-    return this.listWith(where, page, limit, skip, lang);
+    if (query.search) this.applySearch(where, query.search, true);
+    return this.listWith(where, page, limit, skip, lang, true);
   }
 
   async findAllAdmin(query: AudioAdminQueryDto, lang: string | null) {
@@ -106,19 +124,35 @@ export class AudiosService {
     const where: Prisma.audiosWhereInput = { deleted_at: null };
     if (query.is_published !== undefined) where.is_published = query.is_published;
     if (query.speaker_id) where.speaker_id = query.speaker_id;
-    if (query.search) this.applySearch(where, query.search);
-    return this.listWith(where, page, limit, skip, lang);
+    if (query.search) this.applySearch(where, query.search, false);
+    return this.listWith(where, page, limit, skip, lang, false);
   }
 
-  /** ?search= filters the list by audio title OR speaker name (case-insensitive). */
-  private applySearch(where: Prisma.audiosWhereInput, search: string) {
+  /**
+   * ?search= filters the list by audio title OR speaker name (case-insensitive).
+   * The public never matches on a trashed speaker's name — that would confirm
+   * a name the response itself hides.
+   */
+  private applySearch(where: Prisma.audiosWhereInput, search: string, isPublic: boolean) {
     where.OR = [
       { audio_translations: { some: { title: { contains: search, mode: 'insensitive' } } } },
-      { speakers: { speaker_translations: { some: { name: { contains: search, mode: 'insensitive' } } } } },
+      {
+        speakers: {
+          ...(isPublic ? { deleted_at: null } : {}),
+          speaker_translations: { some: { name: { contains: search, mode: 'insensitive' } } },
+        },
+      },
     ];
   }
 
-  private async listWith(where: Prisma.audiosWhereInput, page: number, limit: number, skip: number, lang: string | null) {
+  private async listWith(
+    where: Prisma.audiosWhereInput,
+    page: number,
+    limit: number,
+    skip: number,
+    lang: string | null,
+    isPublic: boolean,
+  ) {
     const [rows, total] = await Promise.all([
       this.prisma.audios.findMany({
         where,
@@ -129,7 +163,7 @@ export class AudiosService {
       }),
       this.prisma.audios.count({ where }),
     ]);
-    const items = rows.map((r) => this.shapeAudio(r, lang));
+    const items = rows.map((r) => this.shapeAudio(r, lang, isPublic));
     return { message: 'Audios fetched', data: { items, pagination: buildPaginationMeta(page, limit, total) } };
   }
 
@@ -142,7 +176,7 @@ export class AudiosService {
     if (!opts.allowUnpublished) where.is_published = true;
     const audio = await this.prisma.audios.findFirst({ where, select: AUDIO_DETAIL_SELECT });
     if (!audio) throw new NotFoundException('Audio not found');
-    return { message: 'Audio fetched', data: this.shapeAudio(audio, lang) };
+    return { message: 'Audio fetched', data: this.shapeAudio(audio, lang, !opts.allowUnpublished) };
   }
 
   /** Public detail by canonical slug. */
@@ -152,7 +186,7 @@ export class AudiosService {
       select: AUDIO_DETAIL_SELECT,
     });
     if (!audio) throw new NotFoundException('Audio not found');
-    return { message: 'Audio fetched', data: this.shapeAudio(audio, lang) };
+    return { message: 'Audio fetched', data: this.shapeAudio(audio, lang, true) };
   }
 
   async trackView(id: string) {
@@ -316,7 +350,7 @@ export class AudiosService {
       this.prisma.audios.count({ where }),
     ]);
     const items = rows.map((r) => {
-      const shaped = this.shapeAudio(r, lang);
+      const shaped = this.shapeAudio(r, lang, false);
       return {
         ...shaped,
         slug: shaped.slug ? stripSoftDeleteSuffix(shaped.slug) : shaped.slug,
@@ -329,14 +363,25 @@ export class AudiosService {
   /**
    * Restore a soft-deleted audio. Reverses the slug and audio_url suffixes
    * from softDelete. Refused with 409 if a live audio has taken the
-   * original slug or audio_url meanwhile.
+   * original slug or audio_url meanwhile, or if its speaker is in the trash
+   * (AUDIO_SPEAKER_DELETED — restore the speaker first; never auto-restored).
    */
   async restore(id: string, actorId: string) {
     const audio = await this.prisma.audios.findFirst({
       where: { id, deleted_at: { not: null } },
-      select: { id: true, slug: true, audio_url: true },
+      select: { id: true, slug: true, audio_url: true, speakers: { select: { deleted_at: true } } },
     });
     if (!audio) throw new NotFoundException('Deleted audio not found');
+
+    // Speaker soft delete only blocks on LIVE audios, so a trashed audio can
+    // keep pointing at a trashed speaker; restoring it would publish that
+    // speaker's name again.
+    if (audio.speakers?.deleted_at) {
+      throw new ConflictException({
+        message: 'Cannot restore: the speaker of this audio was deleted — restore the speaker first',
+        code: AUDIO_SPEAKER_DELETED,
+      });
+    }
 
     const original = audio.slug ? stripSoftDeleteSuffix(audio.slug) : null;
     const originalAudioUrl = stripSoftDeleteSuffix(audio.audio_url);

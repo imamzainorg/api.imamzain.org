@@ -36,6 +36,7 @@ import {
   DailyHadithDetailResponseDto,
   DailyHadithListResponseDto,
   DailyHadithMessageResponseDto,
+  DailyHadithRestoreResponseDto,
   PublicHadithListResponseDto,
   TodayHadithResponseDto,
 } from './dto/daily-hadith-response.dto';
@@ -50,11 +51,11 @@ export class DailyHadithsController {
   // ── Public ─────────────────────────────────────────────────────────────
 
   @Get('today')
-  @PublicCache(900, 3600)
+  @PublicCache(900, 3600, { untilSiteMidnight: true })
   @ApiOperation({
     summary: "Today's hadith (public)",
     description:
-      "Returns the hadith deliberately scheduled to today's UTC calendar date, if an editor set one. Otherwise falls back to a hadith drawn uniformly at random from every unscheduled hadith. That draw is locked in the first time it happens each day, so every visitor sees the same hadith for the rest of the UTC day regardless of caching or which server instance answers — the draw itself never sets the winning hadith's own `display_date`, only an editor's deliberate action does that. A hadith that's already scheduled to some other date is never eligible as a random filler. Returns `data: null` only when the table is empty or every hadith is scheduled elsewhere. Response is CDN-cacheable (`public, max-age=900, s-maxage=3600`) and varies by `Accept-Language`.",
+      "Returns the hadith deliberately scheduled to today's calendar date in the site time zone (`SITE_TIMEZONE`, default Asia/Baghdad — the day editors schedule in, not the UTC day), if an editor set one. Otherwise falls back to a hadith drawn uniformly at random from every unscheduled hadith. That draw is locked in the first time it happens each site day, so every visitor sees the same hadith for the rest of that day regardless of caching or which server instance answers — the draw itself never sets the winning hadith's own `display_date`, only an editor's deliberate action does that. A hadith that's already scheduled to some other date is never eligible as a random filler. Returns `data: null` only when the table is empty or every hadith is scheduled elsewhere; if a hadith is added to an empty pool later that day, the next request picks it up. Response is CDN-cacheable (`public, max-age=900, s-maxage=3600`, both cut short so the response never outlives site midnight) and varies by `Accept-Language`.",
   })
   @ApiOkResponse({
     type: TodayHadithResponseDto,
@@ -135,7 +136,10 @@ export class DailyHadithsController {
       'Creates a new hadith with translations. `display_date` is optional — set it only when the hadith is deliberately tied to a calendar occasion; omit it to leave the hadith in the unscheduled pool the random daily fallback draws from. Requires permission: `daily-hadiths:create`.',
   })
   @ApiCreatedResponse({ type: DailyHadithDetailResponseDto, description: 'Hadith created' })
-  @ApiBadRequestResponse({ type: ValidationErrorDto, description: 'Validation failed' })
+  @ApiBadRequestResponse({
+    type: ValidationErrorDto,
+    description: 'Validation failed, or the same language appears more than once in `translations` (`code: DUPLICATE_TRANSLATION_LANG`)',
+  })
   @ApiConflictResponse({ type: ConflictErrorDto, description: 'Another hadith is already scheduled to that display_date' })
   create(@Body() dto: CreateDailyHadithDto, @CurrentUser() user: CurrentUserPayload) {
     return this.service.create(dto, user.id);
@@ -150,7 +154,10 @@ export class DailyHadithsController {
   })
   @ApiParam({ name: 'id', format: 'uuid' })
   @ApiOkResponse({ type: DailyHadithMessageResponseDto, description: 'Hadith updated' })
-  @ApiBadRequestResponse({ type: ValidationErrorDto, description: 'Validation failed' })
+  @ApiBadRequestResponse({
+    type: ValidationErrorDto,
+    description: 'Validation failed, or the same language appears more than once in `translations` (`code: DUPLICATE_TRANSLATION_LANG`)',
+  })
   @ApiConflictResponse({ type: ConflictErrorDto, description: 'Another hadith is already scheduled to that display_date' })
   @ApiNotFoundResponse({ type: NotFoundErrorDto, description: 'No hadith with that ID exists, or it has been deleted' })
   update(@Param('id') id: string, @Body() dto: UpdateDailyHadithDto, @CurrentUser() user: CurrentUserPayload) {
@@ -176,12 +183,12 @@ export class DailyHadithsController {
   @Auth('daily-hadiths:delete')
   @ApiOperation({
     summary: 'Restore a soft-deleted hadith (admin)',
-    description: 'Clears `deleted_at`. Requires permission: `daily-hadiths:delete`.',
+    description:
+      "Clears `deleted_at`. If the hadith was scheduled to a date that another hadith has claimed while it sat in the trash, it is restored UNSCHEDULED (`display_date` cleared) rather than failing: the response `message` says so, `meta.unscheduled` is `true`, and `meta.previous_display_date` carries the date it lost. Requires permission: `daily-hadiths:delete`.",
   })
   @ApiParam({ name: 'id', format: 'uuid' })
-  @ApiOkResponse({ type: DailyHadithMessageResponseDto, description: 'Hadith restored' })
+  @ApiOkResponse({ type: DailyHadithRestoreResponseDto, description: 'Hadith restored (possibly unscheduled — see `meta`)' })
   @ApiNotFoundResponse({ type: NotFoundErrorDto, description: 'No soft-deleted hadith with that ID exists' })
-  @ApiConflictResponse({ type: ConflictErrorDto, description: "Another hadith has since been scheduled to this one's display_date" })
   restore(@Param('id') id: string, @CurrentUser() user: CurrentUserPayload) {
     return this.service.restore(id, user.id);
   }

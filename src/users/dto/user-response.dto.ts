@@ -1,4 +1,4 @@
-import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { ApiProperty } from '@nestjs/swagger';
 import { ApiEnvelope, ApiPaginatedData } from '../../common/dto/api-envelope';
 
 class RoleRefDto {

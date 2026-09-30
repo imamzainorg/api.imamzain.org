@@ -36,11 +36,11 @@ export class PostCategoriesController {
   @PublicCache(300, 1800)
   @ApiOperation({ summary: 'List all post categories (public, paginated)', description: 'Returns categories that have not been soft-deleted. Use Accept-Language to get translated title and slug. Response is CDN-cacheable (`public, max-age=300, s-maxage=1800`) and varies by `Accept-Language` — categories change rarely, so the longer TTL is safe.' })
   @ApiQuery({ name: 'page', required: false, type: Number, example: 1, description: 'Page number (default: 1)' })
-  @ApiQuery({ name: 'limit', required: false, type: Number, example: 100, description: 'Items per page (default: 100, max: 100)' })
+  @ApiQuery({ name: 'limit', required: false, type: Number, example: 20, description: 'Items per page (default: 20, max: 100)' })
   @ApiOkResponse({ type: PostCategoryListResponseDto, description: 'Paginated list of post categories' })
   @ApiBadRequestResponse({ type: ValidationErrorDto, description: 'Invalid query parameters (page < 1, limit out of 1–100, or non-integer values)' })
   findAll(@Lang() lang: string | null, @Query() query: PaginationDto) {
-    return this.service.findAll(lang, query.page ?? 1, query.limit ?? 100);
+    return this.service.findAll(lang, query.page ?? 1, query.limit ?? 20);
   }
 
   @Get('trash')

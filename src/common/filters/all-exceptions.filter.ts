@@ -6,7 +6,7 @@ import {
   HttpStatus,
   Logger,
 } from "@nestjs/common";
-import { SentryExceptionCaptured } from "@sentry/nestjs";
+import { captureException } from "@sentry/nestjs";
 import { Prisma } from "@prisma/client";
 import { Request, Response } from "express";
 
@@ -41,11 +41,46 @@ function defaultCodeForStatus(status: number): string {
   }
 }
 
+/**
+ * Errors raised by Express-level middleware (body-parser, raw-body, http-errors)
+ * are plain objects carrying a numeric `status`/`statusCode` and an `expose`
+ * flag — not HttpExceptions. Without this branch an oversized JSON body
+ * surfaced as a 500 with a stack trace and a Sentry event: a client error
+ * dressed up as an outage, and one that bypassed the throttler because
+ * body-parser runs before any guard. Only 4xx are mapped; a 5xx-shaped object
+ * still goes through the unhandled path below.
+ */
+function asClientHttpError(exception: unknown): { status: number; message: string } | null {
+  if (typeof exception !== "object" || exception === null) return null;
+  const ex = exception as { status?: unknown; statusCode?: unknown; message?: unknown; expose?: unknown };
+  const status =
+    typeof ex.status === "number" ? ex.status : typeof ex.statusCode === "number" ? ex.statusCode : null;
+  if (status === null || !Number.isInteger(status) || status < 400 || status > 499) return null;
+  const message = typeof ex.message === "string" && ex.message && ex.expose !== false ? ex.message : "Bad request";
+  return { status, message };
+}
+
+/**
+ * A CHECK-constraint violation (SQLSTATE 23514). Prisma has no P-code for it:
+ * it surfaces as PrismaClientUnknownRequestError with the Postgres text inside
+ * the message. It always means the request carried values the schema forbids
+ * (books part_number > parts, pages = 0 …), i.e. a 400, never an outage.
+ * Returns the constraint name when the message carries one.
+ */
+function asCheckViolation(exception: unknown): { constraint: string | null } | null {
+  if (!(exception instanceof Prisma.PrismaClientUnknownRequestError)) return null;
+  const text = exception.message;
+  if (!/23514|violates check constraint/i.test(text)) return null;
+  const match = /check constraint \\?"([A-Za-z0-9_]+)\\?"/i.exec(text);
+  return { constraint: match ? match[1] : null };
+}
+
+const SENTRY_MECHANISM = { mechanism: { handled: false, type: "auto.function.nestjs.exception_captured" } };
+
 @Catch()
 export class AllExceptionsFilter implements ExceptionFilter {
   private readonly logger = new Logger(AllExceptionsFilter.name);
 
-  @SentryExceptionCaptured()
   catch(exception: unknown, host: ArgumentsHost) {
     const ctx = host.switchToHttp();
     const response = ctx.getResponse<Response>();
@@ -58,6 +93,12 @@ export class AllExceptionsFilter implements ExceptionFilter {
     // `throw new UnauthorizedException({ message, code: 'AUTH_TOKEN_REUSED' })`).
     // Takes precedence over the status-derived default below.
     let code: string | undefined;
+    // Seconds a throw site asks the client to wait (`retryAfterSeconds` on the
+    // exception body) — emitted as a Retry-After header, never in the JSON.
+    let retryAfterSeconds: number | undefined;
+
+    const clientHttpError = exception instanceof HttpException ? null : asClientHttpError(exception);
+    const checkViolation = asCheckViolation(exception);
 
     if (exception instanceof HttpException) {
       status = exception.getStatus();
@@ -69,6 +110,9 @@ export class AllExceptionsFilter implements ExceptionFilter {
         const bodyObj = body as Record<string, unknown>;
         if (typeof bodyObj.code === "string") {
           code = bodyObj.code;
+        }
+        if (typeof bodyObj.retryAfterSeconds === "number" && bodyObj.retryAfterSeconds > 0) {
+          retryAfterSeconds = Math.ceil(bodyObj.retryAfterSeconds);
         }
         if (Array.isArray(bodyObj.message)) {
           errors = bodyObj.message as string[];
@@ -82,6 +126,20 @@ export class AllExceptionsFilter implements ExceptionFilter {
           message = "Error";
         }
       }
+    } else if (clientHttpError) {
+      status = clientHttpError.status;
+      message = clientHttpError.message;
+      // A client error: warn-level, no stack, no Sentry event.
+      this.logger.warn(`Request rejected before routing: ${status} ${message}`);
+    } else if (checkViolation) {
+      status = HttpStatus.BAD_REQUEST;
+      message = checkViolation.constraint
+        ? `The submitted values violate a data rule (${checkViolation.constraint})`
+        : "The submitted values violate a data rule";
+      code = "CHECK_CONSTRAINT_VIOLATION";
+      // Services are expected to validate these rules themselves and answer
+      // with a friendlier message; reaching here means one is missing.
+      this.logger.warn(`CHECK constraint rejected a write: ${checkViolation.constraint ?? "unknown"} (${request.method} ${request.url})`);
     } else if (exception instanceof Prisma.PrismaClientKnownRequestError) {
       if (exception.code === "P2002") {
         status = HttpStatus.CONFLICT;
@@ -100,14 +158,15 @@ export class AllExceptionsFilter implements ExceptionFilter {
         message = "Invalid identifier format";
         code = "INVALID_IDENTIFIER";
       } else {
-        // @SentryExceptionCaptured() already reports this unhandled error to
-        // Sentry with mechanism handled:false — capturing again here would
-        // double-count it (and with a different mechanism, so the two events
-        // may not even dedupe). Just log.
+        // Genuinely unexpected database error: report it once, here, with the
+        // request context Sentry's HTTP integration already attached.
+        captureException(exception, SENTRY_MECHANISM);
         this.logger.error(`Unhandled Prisma error ${exception.code}`, exception.stack);
       }
     } else {
-      // See note above — the decorator handles the Sentry capture.
+      // Sentry capture happens here rather than via @SentryExceptionCaptured so
+      // that the middleware 4xx branch above never produces an event.
+      captureException(exception, SENTRY_MECHANISM);
       this.logger.error("Unhandled exception", exception instanceof Error ? exception.stack : String(exception));
     }
 
@@ -124,6 +183,13 @@ export class AllExceptionsFilter implements ExceptionFilter {
       errorBody.errors = errors;
     }
 
+    if (retryAfterSeconds !== undefined) {
+      response.setHeader("Retry-After", String(retryAfterSeconds));
+    }
+
+    // Overrides the `public, s-maxage` that @PublicCache sets before the handler runs; otherwise the CDN keeps
+    // serving a 404 for a slug that has since been published (and a 429 to everyone behind the same edge).
+    response.setHeader("Cache-Control", "no-store");
     response.status(status).json(errorBody);
   }
 }

@@ -1,4 +1,14 @@
-import { applyDecorators, Header } from '@nestjs/common';
+import { applyDecorators, Header, UseInterceptors } from '@nestjs/common';
+import { SiteMidnightCacheInterceptor } from '../interceptors/site-midnight-cache.interceptor';
+
+export interface PublicCacheOptions {
+  /**
+   * Clamp `max-age` and `s-maxage` so the response never outlives the site's
+   * calendar day. For content that changes at site midnight (hadith of the
+   * day); leave off everywhere else.
+   */
+  untilSiteMidnight?: boolean;
+}
 
 /**
  * Mark a controller method as cacheable by intermediate caches (the CDN
@@ -24,18 +34,29 @@ import { applyDecorators, Header } from '@nestjs/common';
  *   - Returning data that is identical for every caller modulo
  *     `Accept-Language`
  *
- * NestJS / Express already emit `ETag: W/"<hash>"` on every JSON
- * response. The CDN automatically honours `If-None-Match` and serves
- * 304s — no extra work required here.
+ * Every 2xx JSON response carries a weak `ETag` computed by `envelopeEtag`
+ * (src/common/interceptors/response.interceptor.ts), which ignores the
+ * envelope `timestamp` and survives compression, so a matching
+ * `If-None-Match` gets a body-less 304. Error responses are always
+ * `no-store` (AllExceptionsFilter), whatever this decorator set earlier.
  *
  * Defaults: 60s browser, 300s CDN. Override per endpoint when the
  * data changes more slowly (sitemap.xml uses 900s, settings/public
  * could use longer, etc.).
+ *
+ * `{ untilSiteMidnight: true }` keeps the static header above as the baseline
+ * and lets an interceptor replace it on success with TTLs clamped to the time
+ * left in the site's calendar day. Without the option the headers are exactly
+ * the static ones, unchanged.
  */
-export function PublicCache(maxAgeSeconds = 60, sMaxAgeSeconds?: number) {
+export function PublicCache(maxAgeSeconds = 60, sMaxAgeSeconds?: number, options: PublicCacheOptions = {}) {
   const sMaxAge = sMaxAgeSeconds ?? maxAgeSeconds * 5;
-  return applyDecorators(
+  const decorators = [
     Header('Cache-Control', `public, max-age=${maxAgeSeconds}, s-maxage=${sMaxAge}`),
     Header('Vary', 'Accept-Language'),
-  );
+  ];
+  if (options.untilSiteMidnight) {
+    decorators.push(UseInterceptors(new SiteMidnightCacheInterceptor(maxAgeSeconds, sMaxAge)));
+  }
+  return applyDecorators(...decorators);
 }

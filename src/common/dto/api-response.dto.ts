@@ -57,6 +57,11 @@ export class TooManyRequestsErrorDto extends ErrorResponseDto {
   error: string;
 }
 
+export class ServiceUnavailableErrorDto extends ErrorResponseDto {
+  @ApiProperty({ example: 'Email delivery is not configured on this server (SMTP settings are missing), so nothing can be sent' })
+  error: string;
+}
+
 export class PayloadTooLargeErrorDto extends ErrorResponseDto {
   @ApiProperty({ example: 'File exceeds the 25 MB limit for image/jpeg' })
   error: string;

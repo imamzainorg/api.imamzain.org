@@ -6,24 +6,46 @@ import "reflect-metadata";
 };
 
 import * as Sentry from "@sentry/node";
+import { scrubBreadcrumb, scrubEvent } from "./common/utils/sentry-scrub.util";
 
 if (process.env.NODE_ENV === "production" && process.env.SENTRY_DSN) {
   Sentry.init({
     dsn: process.env.SENTRY_DSN,
     environment: process.env.NODE_ENV,
     tracesSampleRate: 0.1,
+    // The SDK defaults ship request bodies (login passwords, newsletter e-mails + tokens), cookies and the
+    // Authorization header. Switch the collectors off here; the hooks scrub whatever still leaks in.
+    sendDefaultPii: false,
+    integrations: [
+      Sentry.requestDataIntegration({ include: { cookies: false, data: false, ip: false } }),
+      Sentry.httpIntegration({ maxIncomingRequestBodySize: "none" }),
+    ],
+    beforeSend: scrubEvent,
+    beforeSendTransaction: scrubEvent,
+    beforeBreadcrumb: scrubBreadcrumb,
   });
 }
 
 import { NestFactory } from "@nestjs/core";
 import { ValidationPipe } from "@nestjs/common";
+import { NestExpressApplication } from "@nestjs/platform-express";
 import { DocumentBuilder, SwaggerModule } from "@nestjs/swagger";
 import { Logger } from "nestjs-pino";
 import helmet from "helmet";
 import { AppModule } from "./app.module";
 import { AllExceptionsFilter } from "./common/filters/all-exceptions.filter";
-import { ResponseInterceptor } from "./common/interceptors/response.interceptor";
+import { envelopeEtag, ResponseInterceptor } from "./common/interceptors/response.interceptor";
 import { smartCompression } from "./common/middleware/compression.middleware";
+import { docsPage } from "./common/middleware/docs.middleware";
+
+/**
+ * Explicit request-body limit for the JSON and urlencoded parsers. Express's
+ * body-parser defaults to 100 KB, which silently capped every request below
+ * the documented 200 KB-per-translation post body (and turned the rejection
+ * into a 500). A multi-language post with three full-size bodies fits in 1 MB
+ * with room for the rest of the payload.
+ */
+export const JSON_BODY_LIMIT = "1mb";
 
 function resolveCorsOrigin(): string[] | boolean {
   const allowedOriginsEnv = process.env.ALLOWED_ORIGINS;
@@ -47,18 +69,41 @@ function shouldExposeDocs(): boolean {
   return process.env.NODE_ENV !== "production";
 }
 
+/**
+ * How many proxy hops to trust when resolving the client IP from
+ * X-Forwarded-For. Render's load balancer alone is 1 (the default). With the
+ * project's Cloudflare zone proxying in front of Render it is 2 — with 1,
+ * req.ip resolves to the Cloudflare edge, so per-IP throttles and
+ * audit_logs.ip_address key on Cloudflare's addresses instead of the visitor.
+ * A container reachable directly (no proxy at all) must use 0, otherwise a
+ * client-supplied X-Forwarded-For header is trusted verbatim.
+ */
+export function resolveTrustProxyHops(env: NodeJS.ProcessEnv = process.env): number {
+  const raw = env.TRUST_PROXY_HOPS;
+  if (raw === undefined || raw === "") return 1;
+  const parsed = Number.parseInt(raw, 10);
+  return Number.isInteger(parsed) && parsed >= 0 ? parsed : 1;
+}
+
 async function bootstrap() {
-  const app = await NestFactory.create(AppModule, { bufferLogs: true });
+  // bodyParser: false so the two parsers below are registered with an explicit
+  // limit (see JSON_BODY_LIMIT) instead of body-parser's 100 KB default.
+  const app = await NestFactory.create<NestExpressApplication>(AppModule, {
+    bufferLogs: true,
+    bodyParser: false,
+  });
+  app.useBodyParser("json", { limit: JSON_BODY_LIMIT });
+  app.useBodyParser("urlencoded", { extended: true, limit: JSON_BODY_LIMIT });
 
   app.useLogger(app.get(Logger));
   app.enableShutdownHooks();
   app.setGlobalPrefix("api/v1");
 
-  // Trust the first proxy hop (Render's LB) so req.ip resolves to the real client
-  // via X-Forwarded-For, instead of every request looking like it came from the
-  // proxy. Without this, per-IP throttling and audit_logs.ip_address are useless.
-  // If a CDN (e.g. Cloudflare) is added in front of Render, bump to 2.
-  app.getHttpAdapter().getInstance().set("trust proxy", 1);
+  // See resolveTrustProxyHops(): without the right hop count, req.ip is the
+  // proxy rather than the client and per-IP throttling / audit IPs are useless.
+  app.getHttpAdapter().getInstance().set("trust proxy", resolveTrustProxyHops());
+  // Express's default ETag hashes the timestamped envelope, so it never matched; see envelopeEtag().
+  app.getHttpAdapter().getInstance().set("etag", envelopeEtag);
 
   app.use(
     helmet({
@@ -127,25 +172,7 @@ async function bootstrap() {
       res.send(JSON.stringify(document));
     });
 
-    app.use("/docs", (_req: any, res: any) => {
-      res.setHeader("Content-Type", "text/html");
-      res.send(`<!doctype html>
-<html>
-  <head>
-    <title>imamzain.org API Reference</title>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-  </head>
-  <body>
-    <script
-      id="api-reference"
-      data-url="/openapi.json"
-      data-configuration='{"theme":"purple","layout":"modern","defaultHttpClient":{"targetKey":"javascript","clientKey":"fetch"}}'
-    ></script>
-    <script src="https://cdn.jsdelivr.net/npm/@scalar/api-reference"></script>
-  </body>
-</html>`);
-    });
+    app.use("/docs", docsPage);
   }
   // ─────────────────────────────────────────────────────────────────────────
 
@@ -177,10 +204,10 @@ async function bootstrap() {
     `Sentry: ${process.env.SENTRY_DSN && process.env.NODE_ENV === "production" ? "enabled" : "disabled"}`,
     "Bootstrap",
   );
+  logger.log(`Trust proxy hops: ${resolveTrustProxyHops()}`, "Bootstrap");
 }
 
 bootstrap().catch((err) => {
-  // eslint-disable-next-line no-console
   console.error("Fatal: bootstrap failed", err);
   process.exit(1);
 });

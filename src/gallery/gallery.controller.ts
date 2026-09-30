@@ -107,7 +107,7 @@ export class GalleryController {
   @PublicCache(60)
   @ApiOperation({ summary: 'Get a single gallery image by its media ID (public)', description: 'The `id` parameter is the media record UUID (gallery images use media_id as their primary key). Response is CDN-cacheable (`public, max-age=60, s-maxage=300`) and varies by `Accept-Language`.' })
   @ApiParam({ name: 'id', format: 'uuid', description: 'Media ID (serves as the gallery image primary key)' })
-  @ApiOkResponse({ type: GalleryDetailResponseDto, description: 'Gallery image detail including linked media record and all translations' })
+  @ApiOkResponse({ type: GalleryDetailResponseDto, description: 'Gallery image detail including the linked media (slim public shape with `media_variants`) and all translations. `added_by` and the media storage fields (`file_size`, `uploaded_by`) are admin-only.' })
   @ApiNotFoundResponse({ type: NotFoundErrorDto, description: 'No gallery image with that media ID exists, or it has been deleted' })
   findOne(@Param('id') id: string, @Lang() lang: string | null) {
     return this.galleryService.findOne(id, lang);

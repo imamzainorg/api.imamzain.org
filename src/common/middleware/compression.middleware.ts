@@ -71,7 +71,6 @@ export function smartCompression() {
     // Buffer writes until end() so we can decide whether to compress based
     // on the final size and headers.
     const chunks: Buffer[] = [];
-    const origWrite = res.write.bind(res);
     const origEnd = res.end.bind(res);
 
     const push = (chunk: unknown, encodingArg?: BufferEncoding) => {
@@ -103,17 +102,19 @@ export function smartCompression() {
       const finish = (out: Buffer, contentEncoding: Encoder) => {
         if (contentEncoding !== 'identity') {
           res.setHeader('Content-Encoding', contentEncoding);
-          // ETag based on the original content shouldn't carry through after
-          // a transformative encoding — drop it so a downstream cache doesn't
-          // serve gzipped bytes against a brotli ETag (per RFC 7232 §2.3).
-          res.removeHeader('ETag');
+          // A strong ETag names exact bytes, so it cannot survive re-encoding (RFC 7232 §2.3): drop it.
+          // A weak one (envelopeEtag emits only those) names the representation and stays valid across
+          // br/gzip/identity — which is what lets a browser or the CDN revalidate a compressed body.
+          const etag = res.getHeader('ETag');
+          if (typeof etag !== 'string' || !etag.startsWith('W/')) res.removeHeader('ETag');
         }
         // Append (not replace) so the route's own Vary tokens survive — most
         // public endpoints set `Vary: Accept-Language` via @PublicCache, and
         // setHeader would clobber it, letting a CDN serve one language's body
         // to every language. res.vary() unions tokens into the existing header.
         res.vary('Accept-Encoding');
-        res.setHeader('Content-Length', out.length);
+        // Express strips Content-Length from a 304 (it may only repeat the 200's length); don't re-add a 0.
+        if (res.statusCode !== 304) res.setHeader('Content-Length', out.length);
         if (callback) origEnd(out, callback);
         else origEnd(out);
       };

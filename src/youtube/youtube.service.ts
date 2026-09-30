@@ -78,9 +78,19 @@ export class YoutubeService {
     };
   }
 
-  /** Used by the homepage aggregator to pull the most-recent N uploads. */
+  /**
+   * Used by the homepage aggregator to pull the most-recent N uploads.
+   *
+   * The mirror also holds other channels' videos that merely sit in one of the
+   * foundation's playlists (the playlist pages need them), so "recent uploads"
+   * is restricted to the configured channel. With no channel configured the
+   * sync is off too and there is nothing to compare against, so nothing is
+   * filtered.
+   */
   async findRecentVideos(limit: number) {
+    const channelId = process.env.YOUTUBE_CHANNEL_ID?.trim();
     return this.prisma.youtube_videos.findMany({
+      where: channelId ? { channel_id: channelId } : undefined,
       orderBy: [{ published_at: 'desc' }, { id: 'asc' }],
       take: limit,
     });

@@ -23,6 +23,7 @@ import {
   StaticPageDetailResponseDto,
   StaticPageListResponseDto,
   StaticPageMessageResponseDto,
+  StaticPagePublicListResponseDto,
 } from './dto/static-page-response.dto';
 import { StaticPagesService } from './static-pages.service';
 
@@ -37,11 +38,11 @@ export class StaticPagesController {
   @ApiOperation({
     summary: 'List published static pages (public, paginated)',
     description:
-      'Returns pages that are published and not soft-deleted, ordered by `display_order`. Use Accept-Language to get translated title/body; the slug is a single canonical value shared across languages. Response is CDN-cacheable (`public, max-age=300, s-maxage=1800`) and varies by `Accept-Language`.',
+      'Returns pages that are published and not soft-deleted, ordered by `display_order`. **The list is slim:** each item carries only the requested / fallback translation as `translation` (title, SEO metadata, `og_image_id`) WITHOUT its `body`, and there is no `static_page_translations` array — call `GET /static-pages/by-slug/:slug` or `GET /static-pages/:id` for the HTML and the other languages. The slug is a single canonical value shared across languages. Response is CDN-cacheable (`public, max-age=300, s-maxage=1800`) and varies by `Accept-Language`.',
   })
   @ApiQuery({ name: 'page', required: false, type: Number, example: 1 })
   @ApiQuery({ name: 'limit', required: false, type: Number, example: 20 })
-  @ApiOkResponse({ type: StaticPageListResponseDto, description: 'Paginated list of static pages' })
+  @ApiOkResponse({ type: StaticPagePublicListResponseDto, description: 'Paginated list of static pages; body-less, single translation per item' })
   @ApiBadRequestResponse({ type: ValidationErrorDto, description: 'Invalid query parameters' })
   findAllPublic(@Lang() lang: string | null, @Query() query: PaginationDto) {
     return this.service.findAllPublic(lang, query.page ?? 1, query.limit ?? 20);
@@ -155,7 +156,8 @@ export class StaticPagesController {
   })
   @ApiCreatedResponse({ type: StaticPageCreatedResponseDto, description: 'Static page created with all translations' })
   @ApiBadRequestResponse({ type: ValidationErrorDto, description: 'Validation failed' })
-  @ApiConflictResponse({ type: ConflictErrorDto, description: 'The slug is already used by another static page' })
+  @ApiNotFoundResponse({ type: NotFoundErrorDto, description: 'An `og_image_id` does not match any media record' })
+  @ApiConflictResponse({ type: ConflictErrorDto, description: 'The slug is already used by another static page, or a language / value appears twice in the request' })
   create(@Body() dto: CreateStaticPageDto, @CurrentUser() user: CurrentUserPayload) {
     return this.service.create(dto, user.id);
   }
@@ -169,8 +171,8 @@ export class StaticPagesController {
   @ApiParam({ name: 'id', format: 'uuid' })
   @ApiOkResponse({ type: StaticPageDetailResponseDto, description: 'Updated static page' })
   @ApiBadRequestResponse({ type: ValidationErrorDto, description: 'Validation failed' })
-  @ApiNotFoundResponse({ type: NotFoundErrorDto, description: 'No page with that ID exists, or it has been deleted' })
-  @ApiConflictResponse({ type: ConflictErrorDto, description: 'The slug is already used by another static page' })
+  @ApiNotFoundResponse({ type: NotFoundErrorDto, description: 'No page with that ID exists or it has been deleted, or an `og_image_id` does not match any media record' })
+  @ApiConflictResponse({ type: ConflictErrorDto, description: 'The slug is already used by another static page, or a language / value appears twice in the request' })
   update(
     @Param('id') id: string,
     @Body() dto: UpdateStaticPageDto,

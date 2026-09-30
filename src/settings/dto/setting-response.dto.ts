@@ -20,7 +20,7 @@ class SettingDto {
   @ApiProperty({ example: '2026-05-11T10:00:00.000Z' })
   updated_at: string;
 
-  @ApiPropertyOptional({ example: 'uuid-...', description: 'User who last changed this setting' })
+  @ApiPropertyOptional({ example: 'uuid-...', description: 'User who last changed this setting. Admin routes only — GET /settings/public omits it.' })
   updated_by?: string;
 }
 

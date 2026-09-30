@@ -51,7 +51,7 @@ export class SpeakersController {
   @Auth('audios:delete')
   @ApiOperation({
     summary: 'List soft-deleted speakers (CMS trash view)',
-    description: 'Paginated list of speakers whose `deleted_at` is set. Per-translation slugs are returned with the `__del_<timestamp>` suffix stripped. Requires permission: `audios:delete`.',
+    description: 'Paginated list of speakers whose `deleted_at` is set. Speakers have no slug — they are addressed by ID only. Requires permission: `audios:delete`.',
   })
   @ApiQuery({ name: 'page', required: false, type: Number, example: 1 })
   @ApiQuery({ name: 'limit', required: false, type: Number, example: 20 })

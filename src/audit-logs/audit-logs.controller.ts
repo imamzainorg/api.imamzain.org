@@ -1,4 +1,4 @@
-import { Controller, Get, Param, ParseUUIDPipe, Query } from '@nestjs/common';
+import { Controller, Get, Param, Query } from '@nestjs/common';
 import {
   ApiBadRequestResponse,
   ApiNotFoundResponse,
@@ -48,7 +48,7 @@ export class AuditLogsController {
   @ApiParam({ name: 'id', format: 'uuid' })
   @ApiOkResponse({ type: AuditLogResponseDto, description: 'Audit log entry' })
   @ApiNotFoundResponse({ type: NotFoundErrorDto, description: 'No audit log entry with that ID exists' })
-  findOne(@Param('id', new ParseUUIDPipe()) id: string) {
+  findOne(@Param('id') id: string) {
     return this.auditLogsService.findOne(id);
   }
 }

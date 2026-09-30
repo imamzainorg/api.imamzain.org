@@ -1,6 +1,7 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
 import {
+  ArrayMaxSize,
   ArrayMinSize,
   IsArray,
   IsOptional,
@@ -12,6 +13,7 @@ import {
   ValidateNested,
 } from 'class-validator';
 import { PaginationDto } from '../../common/dto/pagination.dto';
+import { DTO_LIMITS } from '../../common/validators/dto-limits';
 
 const CONTENT_MAX = 4000;
 const SOURCE_MAX = 500;
@@ -60,9 +62,11 @@ export class CreateDailyHadithDto {
   @ApiProperty({
     type: [DailyHadithTranslationDto],
     description: 'At least one translation.',
+    maxItems: DTO_LIMITS.listItems,
   })
   @IsArray()
   @ArrayMinSize(1)
+  @ArrayMaxSize(DTO_LIMITS.listItems)
   @ValidateNested({ each: true })
   @Type(() => DailyHadithTranslationDto)
   translations!: DailyHadithTranslationDto[];
@@ -78,9 +82,10 @@ export class UpdateDailyHadithDto {
   @Matches(DATE_ONLY, { message: 'display_date must be YYYY-MM-DD' })
   display_date?: string | null;
 
-  @ApiPropertyOptional({ type: [DailyHadithTranslationDto] })
+  @ApiPropertyOptional({ type: [DailyHadithTranslationDto], maxItems: DTO_LIMITS.listItems })
   @IsOptional()
   @IsArray()
+  @ArrayMaxSize(DTO_LIMITS.listItems)
   @ValidateNested({ each: true })
   @Type(() => DailyHadithTranslationDto)
   translations?: DailyHadithTranslationDto[];

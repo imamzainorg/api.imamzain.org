@@ -8,6 +8,7 @@ import {
   Patch,
   Post,
   Query,
+  Req,
 } from '@nestjs/common';
 import {
   ApiBadRequestResponse,
@@ -22,6 +23,7 @@ import {
   ApiTags,
 } from '@nestjs/swagger';
 import { Throttle } from '@nestjs/throttler';
+import { Request } from 'express';
 import { Auth } from '../common/decorators/auth.decorator';
 import { CurrentUser, CurrentUserPayload } from '../common/decorators/current-user.decorator';
 import { Lang } from '../common/decorators/language.decorator';
@@ -61,7 +63,7 @@ export class PostsController {
 
   @Get('by-slug/:slug')
   @PublicCache(60)
-  @ApiOperation({ summary: 'Get a published post by its translated slug (public)', description: 'Response is CDN-cacheable (`public, max-age=60, s-maxage=300`) and varies by `Accept-Language`.' })
+  @ApiOperation({ summary: 'Get a published post by its translated slug (public)', description: 'Response is CDN-cacheable (`public, max-age=60, s-maxage=300`) and varies by `Accept-Language`. The public shape omits `created_by`, and embedded media (cover and attachments) carry only `id`, `url`, `filename`, `alt_text`, `mime_type`, `width`, `height` and `media_variants` — the admin detail (`GET /posts/admin/:id`) keeps the full rows.' })
   @ApiParam({ name: 'slug', example: 'hayat-al-imam-zain', description: "The post's canonical URL slug" })
   @ApiOkResponse({ type: PostDetailResponseDto, description: 'Post detail with all translations and attached media records' })
   @ApiNotFoundResponse({ type: NotFoundErrorDto, description: 'No published post with that slug exists in any language' })
@@ -138,7 +140,7 @@ export class PostsController {
 
   @Get(':id')
   @PublicCache(60)
-  @ApiOperation({ summary: 'Get a single published post by ID (public)', description: 'Response is CDN-cacheable (`public, max-age=60, s-maxage=300`) and varies by `Accept-Language`.' })
+  @ApiOperation({ summary: 'Get a single published post by ID (public)', description: 'Response is CDN-cacheable (`public, max-age=60, s-maxage=300`) and varies by `Accept-Language`. The public shape omits `created_by`, and embedded media (cover and attachments) carry only `id`, `url`, `filename`, `alt_text`, `mime_type`, `width`, `height` and `media_variants` — the admin detail (`GET /posts/admin/:id`) keeps the full rows.' })
   @ApiParam({ name: 'id', format: 'uuid' })
   @ApiOkResponse({ type: PostDetailResponseDto, description: 'Post detail with all translations and attached media records (published only)' })
   @ApiNotFoundResponse({ type: NotFoundErrorDto, description: 'No published post with that ID exists, or it has been deleted/unpublished' })
@@ -148,12 +150,12 @@ export class PostsController {
 
   @Post(':id/view')
   @Throttle({ default: { ttl: 60_000, limit: 30 } })
-  @ApiOperation({ summary: 'Record a view for a published post (public)', description: 'Increments the view counter. Rate-limited to 30 calls per minute per IP.' })
+  @ApiOperation({ summary: 'Record a view for a published post (public)', description: 'Increments the view counter, at most once per client IP per post per 30 minutes: a repeat inside the window answers with the same success response but does not count. Rate-limited to 30 calls per minute per IP.' })
   @ApiParam({ name: 'id', format: 'uuid' })
-  @ApiOkResponse({ type: PostMessageResponseDto, description: 'View counter incremented by 1; only applies to currently published posts' })
+  @ApiOkResponse({ type: PostMessageResponseDto, description: 'View accepted. The counter goes up by 1 for the first view from this IP inside the 30-minute window; a repeat returns the same response without incrementing. Only applies to currently published posts' })
   @ApiNotFoundResponse({ type: NotFoundErrorDto, description: 'No post with that ID exists, it has been deleted, or it is not currently published' })
-  trackView(@Param('id') id: string) {
-    return this.postsService.trackView(id);
+  trackView(@Param('id') id: string, @Req() req: Request) {
+    return this.postsService.trackView(id, req.ip);
   }
 
   @Post()
@@ -186,7 +188,7 @@ export class PostsController {
 
   @Patch(':id/publish')
   @Auth('posts:update')
-  @ApiOperation({ summary: 'Publish or unpublish a post', description: 'Sets `published_at` automatically on first publish. Requires permission: `posts:update`.' })
+  @ApiOperation({ summary: 'Publish or unpublish a post', description: 'Sets `published_at` automatically on first publish. Idempotent: when the post is already in the requested state nothing is written (no audit row, `updated_at` unchanged) and the response message is `Post already in requested state`. Requires permission: `posts:update`.' })
   @ApiParam({ name: 'id', format: 'uuid' })
   @ApiOkResponse({ type: PostDetailResponseDto, description: 'Post publish state updated; published_at is set automatically on the first publish and is never overwritten on subsequent publishes' })
   @ApiNotFoundResponse({ type: NotFoundErrorDto, description: 'No post with that ID exists, or it has been deleted' })

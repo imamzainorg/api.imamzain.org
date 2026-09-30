@@ -3,7 +3,7 @@
  *
  * Strategy:
  *   - PrismaService   → real database (DATABASE_TEST_URL)
- *   - EmailService    → mock (external SMTP; not the thing being tested)
+ *   - EmailService    → mock (external SMTP; only FormNotificationsService uses it)
  *   - WhatsappService → mock (external Twilio; not the thing being tested)
  *
  * What these tests confirm that mocked unit tests cannot:
@@ -11,12 +11,15 @@
  *   - Status transitions update the correct columns (processed_by, processed_at).
  *   - soft-delete sets deleted_at without removing the row.
  *   - NotFoundException is thrown when a record is not found in the real DB.
- *   - WhatsApp notification is triggered only on PENDING→COMPLETED transition.
+ *   - WhatsApp notification is triggered only on a transition into COMPLETED,
+ *     and exactly once even when two admins complete the same request at once.
+ *   - The notification outbox coalesces a burst into one digest.
  *
  * Run with: npm run test:integration
  */
 import * as bcrypt from "bcryptjs";
-import { NotFoundException } from "@nestjs/common";
+import { BadRequestException, ConflictException, NotFoundException } from "@nestjs/common";
+import { FormNotificationsService } from "./form-notifications.service";
 import { FormsService } from "./forms.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { EmailService } from "../email/email.service";
@@ -28,9 +31,8 @@ const describeIfDb = process.env.DATABASE_TEST_URL ? describe : describe.skip;
 // Explicit mock objects — no jest.mock() hoisting needed here.
 // These replace the external I/O layers so tests stay DB-only.
 const mockEmail = {
-  send: jest.fn().mockResolvedValue(true),
-  notifyContactSubmission: jest.fn().mockResolvedValue(true),
-  notifyProxyVisit: jest.fn().mockResolvedValue(true),
+  isConfigured: jest.fn().mockReturnValue(true),
+  deliver: jest.fn().mockResolvedValue({ ok: true, messageId: "m-1" }),
 };
 
 const mockWhatsapp = {
@@ -57,9 +59,10 @@ describeIfDb("FormsService (integration)", () => {
 
     const { AuditService } = await import("../common/audit/audit.service");
     const audit = new AuditService(prisma as unknown as PrismaService);
+    mockEmail.isConfigured.mockReturnValue(true);
+    mockEmail.deliver.mockResolvedValue({ ok: true, messageId: "m-1" });
     service = new FormsService(
       prisma as unknown as PrismaService,
-      mockEmail as unknown as EmailService,
       mockWhatsapp as unknown as WhatsappService,
       audit,
     );
@@ -263,6 +266,122 @@ describeIfDb("FormsService (integration)", () => {
           adminId,
         ),
       ).rejects.toThrow(NotFoundException);
+    });
+
+    it("treats COMPLETED as final, so the WhatsApp message cannot be re-triggered", async () => {
+      const created = await service.submitProxyVisit({
+        visitor_name: "Final",
+        visitor_phone: "+9647801234567",
+        visitor_country: "IQ",
+      });
+      await service.updateProxyVisit(created.data.id, { status: "COMPLETED" }, adminId);
+      jest.clearAllMocks();
+
+      await expect(
+        service.updateProxyVisit(created.data.id, { status: "PENDING" }, adminId),
+      ).rejects.toThrow(BadRequestException);
+
+      const row = await prisma.proxy_visit_requests.findUnique({ where: { id: created.data.id } });
+      expect(row!.status).toBe("COMPLETED");
+      expect(mockWhatsapp.sendProxyVisitCompletion).not.toHaveBeenCalled();
+    });
+
+    it("sends exactly one WhatsApp when two admins complete the same request at once", async () => {
+      const created = await service.submitProxyVisit({
+        visitor_name: "Raced",
+        visitor_phone: "+9647801234567",
+        visitor_country: "IQ",
+      });
+
+      const outcomes = await Promise.allSettled([
+        service.updateProxyVisit(created.data.id, { status: "COMPLETED" }, adminId),
+        service.updateProxyVisit(created.data.id, { status: "COMPLETED" }, adminId),
+      ]);
+
+      // Whichever way the two requests interleave — the loser either sees
+      // COMPLETED already (a no-op) or loses the compare-and-set (409) — only
+      // one of them may have sent the message.
+      expect(mockWhatsapp.sendProxyVisitCompletion).toHaveBeenCalledTimes(1);
+      for (const o of outcomes) {
+        if (o.status === "rejected") expect(o.reason).toBeInstanceOf(ConflictException);
+      }
+    });
+
+    it("clears the processed_* stamps when a request goes back to PENDING", async () => {
+      const created = await service.submitProxyVisit({
+        visitor_name: "Undo",
+        visitor_phone: "+9647801234567",
+        visitor_country: "IQ",
+      });
+      await service.updateProxyVisit(created.data.id, { status: "APPROVED" }, adminId);
+
+      await service.updateProxyVisit(created.data.id, { status: "PENDING" }, adminId);
+
+      const row = await prisma.proxy_visit_requests.findUnique({ where: { id: created.data.id } });
+      expect(row!.status).toBe("PENDING");
+      expect(row!.processed_by).toBeNull();
+      expect(row!.processed_at).toBeNull();
+    });
+  });
+
+  // ─── notification outbox ──────────────────────────────────────────────────
+
+  describe("FormNotificationsService", () => {
+    let notifier: FormNotificationsService;
+
+    beforeEach(() => {
+      delete process.env.FORM_NOTIFY_MIN_INTERVAL_SECONDS;
+      notifier = new FormNotificationsService(
+        prisma as unknown as PrismaService,
+        mockEmail as unknown as EmailService,
+      );
+    });
+
+    it("sends one digest for a burst and stamps every row", async () => {
+      for (let i = 0; i < 6; i++) {
+        await service.submitProxyVisit({
+          visitor_name: `Burst ${i}`,
+          visitor_phone: "+9647801234567",
+          visitor_country: "IQ",
+        });
+      }
+      await service.submitContact({ name: "C", email: "c@test.com", message: "hi" });
+
+      expect(await notifier.drainOutbox()).toBe("sent");
+
+      expect(mockEmail.deliver).toHaveBeenCalledTimes(1);
+      expect(mockEmail.deliver.mock.calls[0][0].subject).toBe("7 new form submissions (1 contact, 6 proxy visit)");
+      expect(await prisma.proxy_visit_requests.count({ where: { notified_at: null } })).toBe(0);
+      expect(await prisma.contact_submissions.count({ where: { notified_at: null } })).toBe(0);
+    });
+
+    it("holds the next digest back until the cool-down has passed", async () => {
+      await service.submitContact({ name: "First", email: "a@test.com", message: "hi" });
+      expect(await notifier.drainOutbox()).toBe("sent");
+
+      await service.submitContact({ name: "Second", email: "b@test.com", message: "hi" });
+      expect(await notifier.drainOutbox()).toBe("cooling-down");
+      expect(mockEmail.deliver).toHaveBeenCalledTimes(1);
+
+      const later = new Date(Date.now() + 6 * 60_000);
+      expect(await notifier.drainOutbox(later)).toBe("sent");
+      expect(mockEmail.deliver).toHaveBeenCalledTimes(2);
+    });
+
+    it("keeps rows pending when the send fails, so the next digest still carries them", async () => {
+      process.env.FORM_NOTIFY_MIN_INTERVAL_SECONDS = "0";
+      await service.submitContact({ name: "Retry", email: "r@test.com", message: "hi" });
+      mockEmail.deliver.mockResolvedValueOnce({ ok: false, kind: "transient", error: "timeout" });
+
+      expect(await notifier.drainOutbox()).toBe("failed");
+      const failed = await prisma.contact_submissions.findFirst({ where: { name: "Retry" } });
+      expect(failed!.notified_at).toBeNull();
+      expect(failed!.notification_failed_at).not.toBeNull();
+
+      expect(await notifier.drainOutbox()).toBe("sent");
+      const delivered = await prisma.contact_submissions.findFirst({ where: { name: "Retry" } });
+      expect(delivered!.notified_at).not.toBeNull();
+      expect(delivered!.notification_failed_at).toBeNull();
     });
   });
 

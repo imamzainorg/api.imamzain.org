@@ -44,12 +44,39 @@ class GalleryImageListTranslationItemDto {
   og_image_id?: string;
 }
 
+/** One pre-generated WebP rendition, ordered by width — feed these to `srcset`. */
+class GalleryMediaVariantDto {
+  @ApiProperty({ example: 'uuid-...' })
+  id: string;
+
+  @ApiProperty({ example: 768, description: 'Output width in pixels' })
+  width: number;
+
+  @ApiProperty({ example: 'https://cdn.imamzain.org/media/variants/uuid/w768.webp' })
+  url: string;
+
+  @ApiProperty({ example: 'webp' })
+  format: string;
+}
+
+/**
+ * Public shape of the embedded media: `file_size`, `created_at` and
+ * `uploaded_by` are not part of it. The admin reads (`GET /gallery/admin`,
+ * `/gallery/admin/:id` and the create / update / publish responses) return the
+ * full media record on top of this.
+ */
 class GalleryMediaDto {
   @ApiProperty({ example: 'uuid-...' })
   id: string;
 
   @ApiProperty({ example: 'https://cdn.example.com/image.jpg' })
   url: string;
+
+  @ApiProperty({ example: 'image.jpg' })
+  filename: string;
+
+  @ApiPropertyOptional({ example: 'صورة من المعرض', nullable: true })
+  alt_text?: string | null;
 
   @ApiProperty({ example: 'image/jpeg' })
   mime_type: string;
@@ -59,6 +86,12 @@ class GalleryMediaDto {
 
   @ApiPropertyOptional({ example: 1080 })
   height?: number;
+
+  @ApiProperty({
+    type: [GalleryMediaVariantDto],
+    description: 'WebP variants ordered by width ascending; may be shorter than the standard four (small originals skip up-scaled widths) or empty.',
+  })
+  media_variants: GalleryMediaVariantDto[];
 }
 
 class GalleryCategoryTranslationRefDto {
@@ -116,6 +149,9 @@ class GalleryImageDto {
 
   @ApiProperty({ example: '2024-01-01T00:00:00.000Z' })
   updated_at: string;
+
+  @ApiPropertyOptional({ format: 'uuid', nullable: true, description: 'Staff user who added the image. Admin responses only — the public detail route omits it.' })
+  added_by?: string | null;
 
   @ApiProperty({ type: GalleryMediaDto })
   media: GalleryMediaDto;

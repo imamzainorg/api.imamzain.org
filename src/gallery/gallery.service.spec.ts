@@ -1,8 +1,11 @@
 import { Test, TestingModule } from "@nestjs/testing";
-import { NotFoundException } from "@nestjs/common";
+import { ConflictException, NotFoundException } from "@nestjs/common";
+import { Prisma } from "@prisma/client";
 import { GalleryService } from "./gallery.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { AuditService } from "../common/audit/audit.service";
+import { PUBLIC_MEDIA_SELECT } from "../common/crud/media-selects";
+import { setActiveLanguages } from "../common/utils/translation.util";
 
 const baseImage = {
   media_id: "media-1",
@@ -40,6 +43,7 @@ describe("GalleryService", () => {
             gallery_images: {
               findMany: jest.fn(),
               findFirst: jest.fn(),
+              findUnique: jest.fn(),
               count: jest.fn(),
               update: jest.fn().mockResolvedValue({}),
             },
@@ -56,7 +60,10 @@ describe("GalleryService", () => {
     prisma = module.get(PrismaService);
   });
 
-  afterEach(() => jest.clearAllMocks());
+  afterEach(() => {
+    jest.clearAllMocks();
+    setActiveLanguages(null);
+  });
 
   describe("findAll", () => {
     it("returns paginated images with resolved translation", async () => {
@@ -118,6 +125,28 @@ describe("GalleryService", () => {
   });
 
   describe("create", () => {
+    it("returns the created row even when it is a draft (hydrates with the admin flag)", async () => {
+      prisma.media.findUnique.mockResolvedValue({ id: "media-1" });
+      mockTx.gallery_images.create.mockResolvedValue({ ...baseImage, is_published: false });
+      mockTx.gallery_image_translations.createMany.mockResolvedValue({});
+      prisma.$transaction.mockImplementation((cb: any) => cb(mockTx));
+      // A public-only hydrate (`is_published: true` in the where) finds nothing —
+      // which used to turn a committed create into a 404.
+      prisma.gallery_images.findFirst.mockImplementation(async (args: any) =>
+        args?.where?.is_published === true ? null : { ...baseImage, is_published: false },
+      );
+
+      const result = await service.create(
+        { media_id: "media-1", translations: [{ lang: "ar", title: "صورة" }] },
+        "user-1",
+        null,
+      );
+
+      expect(result.message).toBe("Gallery image created");
+      const calls = prisma.gallery_images.findFirst.mock.calls;
+      expect(calls[calls.length - 1][0].where.is_published).toBeUndefined();
+    });
+
     it("creates image and returns hydrated detail", async () => {
       prisma.media.findUnique.mockResolvedValue({ id: "media-1" });
       mockTx.gallery_images.create.mockResolvedValue(baseImage);
@@ -204,6 +233,168 @@ describe("GalleryService", () => {
       await expect(service.softDelete("ghost", "user-1")).rejects.toThrow(
         NotFoundException,
       );
+    });
+  });
+
+  describe("public vs admin detail shape (S23)", () => {
+    it("the public read selects explicit columns: no added_by, slim media", async () => {
+      prisma.gallery_images.findFirst.mockResolvedValue(baseImage);
+
+      await service.findOne("media-1", "ar");
+
+      const args = prisma.gallery_images.findFirst.mock.calls[0][0];
+      expect(args.include).toBeUndefined();
+      expect(args.select).toBeDefined();
+      expect(args.select.added_by).toBeUndefined();
+      expect(args.select.users).toBeUndefined();
+      expect(args.select.media).toEqual({ select: PUBLIC_MEDIA_SELECT });
+      expect(Object.keys(args.select.media.select)).not.toEqual(
+        expect.arrayContaining(["file_size", "uploaded_by"]),
+      );
+      // Everything the public site rendered before is still selected.
+      expect(args.select).toEqual(
+        expect.objectContaining({
+          media_id: true,
+          category_id: true,
+          taken_at: true,
+          author: true,
+          tags: true,
+          locations: true,
+          views: true,
+          is_published: true,
+          gallery_image_translations: expect.anything(),
+          gallery_categories: expect.anything(),
+        }),
+      );
+    });
+
+    it("the admin read keeps the whole row and the full media row (the CMS uses them)", async () => {
+      prisma.gallery_images.findFirst.mockResolvedValue(baseImage);
+
+      await service.findOne("media-1", "ar", true);
+
+      const args = prisma.gallery_images.findFirst.mock.calls[0][0];
+      expect(args.select).toBeUndefined();
+      expect(args.include.media.include).toEqual(expect.objectContaining({ media_variants: expect.anything() }));
+      expect(args.where).toEqual({ media_id: "media-1", deleted_at: null });
+    });
+
+    it("hydrating after a write (create/update/publish) uses the admin shape", async () => {
+      prisma.gallery_images.findFirst.mockResolvedValue(baseImage);
+      mockTx.gallery_images.update.mockResolvedValue({});
+      prisma.$transaction.mockImplementation((cb: any) => cb(mockTx));
+
+      await service.update("media-1", { author: "New" }, "user-1", null);
+
+      const calls = prisma.gallery_images.findFirst.mock.calls;
+      expect(calls[calls.length - 1][0].include).toBeDefined();
+      expect(calls[calls.length - 1][0].select).toBeUndefined();
+    });
+  });
+
+  describe("translation resolution", () => {
+    const rows = [
+      { lang: "fa", title: "fa", description: null },
+      { lang: "en", title: "en", description: null },
+      { lang: "ar", title: "ar", description: null },
+    ];
+
+    it("is deterministic when no translation is flagged default (Q7)", async () => {
+      prisma.gallery_images.findMany.mockResolvedValue([
+        { ...baseImage, gallery_image_translations: rows },
+        { ...baseImage, gallery_image_translations: [...rows].reverse() },
+      ]);
+      prisma.gallery_images.count.mockResolvedValue(2);
+
+      const result = await service.findAll({}, "fr");
+
+      expect(result.data.items.map((i: any) => i.translation.lang)).toEqual(["ar", "ar"]);
+    });
+
+    it("never serves a translation in a retired language (S24)", async () => {
+      setActiveLanguages(["ar", "en"]);
+      prisma.gallery_images.findFirst.mockResolvedValue({ ...baseImage, gallery_image_translations: rows });
+
+      const result = await service.findOne("media-1", "fa");
+
+      expect(result.data.translation!.lang).toBe("ar");
+    });
+
+    it("admin reads are unaffected by retired languages (the CMS still shows the title)", async () => {
+      setActiveLanguages(["ar", "en"]);
+      prisma.gallery_images.findFirst.mockResolvedValue({ ...baseImage, gallery_image_translations: rows });
+      prisma.gallery_images.findMany.mockResolvedValue([{ ...baseImage, gallery_image_translations: rows }]);
+      prisma.gallery_images.count.mockResolvedValue(1);
+
+      const one = await service.findOne("media-1", "fa", true);
+      const list = await service.findAll({}, "fa", true);
+      const trash = await service.findTrash(1, 20);
+
+      expect(one.data.translation!.lang).toBe("fa");
+      expect(list.data.items[0]!.translation!.lang).toBe("fa");
+      // Trash is an admin view with no language: the deterministic fallback, retired rows included.
+      expect(trash.data.items[0]!.translation!.lang).toBe("ar");
+    });
+  });
+
+  describe("create: unique-key conflicts (Q8)", () => {
+    const p2002 = (target: unknown) =>
+      new Prisma.PrismaClientKnownRequestError("Unique constraint failed", {
+        code: "P2002",
+        clientVersion: "test",
+        meta: { target },
+      });
+    const dto = { media_id: "media-1", translations: [{ lang: "ar", title: "صورة" }] };
+
+    async function conflictOf(promise: Promise<unknown>): Promise<ConflictException> {
+      const err = await promise.then(
+        () => null,
+        (e) => e,
+      );
+      expect(err).toBeInstanceOf(ConflictException);
+      return err as ConflictException;
+    }
+
+    beforeEach(() => {
+      prisma.media.findUnique.mockResolvedValue({ id: "media-1" });
+      prisma.$transaction.mockImplementation((cb: any) => cb(mockTx));
+    });
+
+    it("a media that is already in the gallery gets a specific message and code", async () => {
+      mockTx.gallery_images.create.mockRejectedValue(p2002(["media_id"]));
+      prisma.gallery_images.findUnique.mockResolvedValue({ deleted_at: null });
+
+      const err = await conflictOf(service.create(dto, "user-1", null));
+
+      expect((err.getResponse() as any).code).toBe("GALLERY_IMAGE_EXISTS");
+      expect((err.getResponse() as any).message).toMatch(/already in the gallery/);
+    });
+
+    it("a media whose entry sits in the trash says so (the primary key is never freed)", async () => {
+      mockTx.gallery_images.create.mockRejectedValue(p2002("gallery_images_pkey"));
+      prisma.gallery_images.findUnique.mockResolvedValue({ deleted_at: new Date() });
+
+      const err = await conflictOf(service.create(dto, "user-1", null));
+
+      expect((err.getResponse() as any).code).toBe("GALLERY_IMAGE_IN_TRASH");
+      expect((err.getResponse() as any).message).toMatch(/restore it/);
+    });
+
+    it("the same language sent twice is a duplicate-language conflict", async () => {
+      mockTx.gallery_images.create.mockResolvedValue(baseImage);
+      mockTx.gallery_image_translations.createMany.mockRejectedValue(p2002(["media_id", "lang"]));
+
+      const err = await conflictOf(service.create(dto, "user-1", null));
+
+      expect((err.getResponse() as any).code).toBe("DUPLICATE_TRANSLATION_LANG");
+      expect(prisma.gallery_images.findUnique).not.toHaveBeenCalled();
+    });
+
+    it("errors that are not unique violations are not rewritten", async () => {
+      const boom = new Error("connection lost");
+      mockTx.gallery_images.create.mockRejectedValue(boom);
+
+      await expect(service.create(dto, "user-1", null)).rejects.toBe(boom);
     });
   });
 });
