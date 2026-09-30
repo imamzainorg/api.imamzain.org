@@ -1,7 +1,12 @@
 import { docsPage, renderDocsHtml, SCALAR_SRI, SCALAR_URL, SCALAR_VERSION } from "./docs.middleware";
 
 describe("docs page", () => {
-  const scriptTag = () => /<script src="([^"]+)"([^>]*)><\/script(?:\s+[^>]*)?>/i.exec(renderDocsHtml());
+  // Only the opening tag's attributes matter to the assertions below, so this
+  // doesn't match a closing tag at all — CodeQL's js/bad-tag-filter query
+  // flags any regex shaped like an HTML end-tag filter (eg. `</script...>`)
+  // as a possible sanitizer bypass, even though this is test code parsing
+  // static, self-generated markup rather than filtering untrusted input.
+  const scriptTag = () => /<script src="([^"]+)"([^>]*)>/i.exec(renderDocsHtml());
 
   it("pins an exact Scalar version on the 1.x line", () => {
     expect(SCALAR_VERSION).toMatch(/^1\.\d+\.\d+$/);

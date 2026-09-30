@@ -15,7 +15,7 @@ import { ConflictException, NotFoundException } from '@nestjs/common'
 import { UsersService } from './users.service'
 import { PrismaService } from '../prisma/prisma.service'
 import { AuditService } from '../common/audit/audit.service'
-import { prisma, cleanDatabase, settlePendingWrites } from '../../test/db-helpers'
+import { prisma, cleanDatabase, waitForRow } from '../../test/db-helpers'
 
 const describeIfDb = process.env.DATABASE_TEST_URL ? describe : describe.skip
 
@@ -117,11 +117,14 @@ describeIfDb('UsersService (integration)', () => {
             const user = await service.create({ username: 'before-name', password: 'first-password' }, realActor.id)
 
             await service.update(user.data.id, { username: 'after-name' }, { ...actor, id: realActor.id })
-            await settlePendingWrites()
 
-            const row = await prisma.audit_logs.findFirst({
-                where: { action: 'USER_UPDATED', resource_id: user.data.id },
-            })
+            // audit.write() is fire-and-forget (see audit.service.ts) — poll instead
+            // of asserting the row exists the instant update() resolves.
+            const row = await waitForRow(() =>
+                prisma.audit_logs.findFirst({
+                    where: { action: 'USER_UPDATED', resource_id: user.data.id },
+                }),
+            )
             expect((row!.changes as any).username).toEqual({ before: 'before-name', after: 'after-name' })
         })
 
