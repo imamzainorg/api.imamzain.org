@@ -1,7 +1,7 @@
 import { docsPage, renderDocsHtml, SCALAR_SRI, SCALAR_URL, SCALAR_VERSION } from "./docs.middleware";
 
 describe("docs page", () => {
-  const scriptTag = () => /<script src="([^"]+)"([^>]*)><\/script>/.exec(renderDocsHtml());
+  const scriptTag = () => /<script src="([^"]+)"([^>]*)><\/script\s*>/i.exec(renderDocsHtml());
 
   it("pins an exact Scalar version on the 1.x line", () => {
     expect(SCALAR_VERSION).toMatch(/^1\.\d+\.\d+$/);
