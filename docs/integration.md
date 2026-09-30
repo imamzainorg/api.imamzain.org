@@ -1727,3 +1727,4 @@ working again on reconnect. No request path blocks on Redis being up.
 - [`/docs`](https://api.imamzain.org/docs) — interactive Scalar UI; per-endpoint reference.
 - [permissions.md](permissions.md) — full permission catalogue, default role mappings, and audit-action vocabulary.
 - [CMS-INTEGRATION-NOTES.md](CMS-INTEGRATION-NOTES.md) — chronological release notes per round of API changes.
+- [REHAUL-FINDINGS-2026-09.md](REHAUL-FINDINGS-2026-09.md) — independent review findings from the September 2026 audit round, not yet actioned.
