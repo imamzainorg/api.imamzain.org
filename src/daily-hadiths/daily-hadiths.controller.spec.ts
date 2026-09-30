@@ -32,6 +32,28 @@ class FakeJwtGuard implements CanActivate {
 
 const UUID = '11111111-2222-4333-8444-555555555555';
 
+// Freeze only the wall clock: the HTTP server and fetch still need real timers.
+const REAL_TIMERS = [
+  'hrtime',
+  'nextTick',
+  'performance',
+  'queueMicrotask',
+  'requestAnimationFrame',
+  'cancelAnimationFrame',
+  'requestIdleCallback',
+  'cancelIdleCallback',
+  'setImmediate',
+  'clearImmediate',
+  'setInterval',
+  'clearInterval',
+  'setTimeout',
+  'clearTimeout',
+] as const;
+const freezeClock = (iso: string) => jest.useFakeTimers({ now: new Date(iso), doNotFake: [...REAL_TIMERS] });
+
+// Site midnight (Asia/Baghdad, UTC+3, no DST) is 21:00:00 UTC.
+const MIDDAY = '2026-05-12T06:00:00.000Z';
+
 describe('DailyHadithsController (HTTP)', () => {
   let app: INestApplication;
   let base: string;
@@ -47,6 +69,11 @@ describe('DailyHadithsController (HTTP)', () => {
       findAll: jest.fn().mockResolvedValue({ message: 'Hadiths fetched', data: { items: [], pagination: {} } }),
       findOne: jest.fn().mockResolvedValue({ message: 'Hadith fetched', data: { id: UUID } }),
       findTrash: jest.fn().mockResolvedValue({ message: 'Trash fetched', data: { items: [], pagination: {} } }),
+      restore: jest.fn().mockResolvedValue({
+        message: 'Hadith restored',
+        data: null,
+        meta: { unscheduled: false, previous_display_date: null },
+      }),
     };
 
     const moduleRef = await Test.createTestingModule({
@@ -68,11 +95,15 @@ describe('DailyHadithsController (HTTP)', () => {
   });
 
   afterAll(() => app.close());
-  afterEach(() => jest.clearAllMocks());
+  afterEach(() => {
+    jest.clearAllMocks();
+    jest.useRealTimers();
+  });
 
   // ── Public routes ──────────────────────────────────────────────────────
 
   it('GET /daily-hadiths/today is public, envelopes meta, and is CDN-cacheable', async () => {
+    freezeClock(MIDDAY);
     const res = await get('/daily-hadiths/today');
     const body = await res.json();
 
@@ -81,6 +112,43 @@ describe('DailyHadithsController (HTTP)', () => {
     expect(body).toMatchObject({ success: true, message: "Today's hadith", data: null, meta: { date: '2026-05-12' } });
     expect(res.headers.get('cache-control')).toBe('public, max-age=900, s-maxage=3600');
     expect(res.headers.get('vary')).toContain('Accept-Language');
+  });
+
+  describe('GET /daily-hadiths/today never outlives site midnight', () => {
+    const cacheControl = async (iso: string) => {
+      freezeClock(iso);
+      const res = await get('/daily-hadiths/today');
+      expect(res.status).toBe(200);
+      expect(res.headers.get('vary')).toContain('Accept-Language');
+      return res.headers.get('cache-control');
+    };
+
+    it('keeps the configured TTLs while there is more than an hour of the site day left', async () => {
+      expect(await cacheControl(MIDDAY)).toBe('public, max-age=900, s-maxage=3600');
+      expect(await cacheControl('2026-05-12T20:00:00.000Z')).toBe('public, max-age=900, s-maxage=3600'); // exactly 1h left
+    });
+
+    it('cuts the CDN TTL, then the browser TTL, as midnight approaches', async () => {
+      expect(await cacheControl('2026-05-12T20:30:00.000Z')).toBe('public, max-age=900, s-maxage=1800');
+      expect(await cacheControl('2026-05-12T20:50:00.000Z')).toBe('public, max-age=600, s-maxage=600');
+    });
+
+    it('is the full configured TTL again the instant the new site day begins (edge: 00:00:00.000)', async () => {
+      expect(await cacheControl('2026-05-12T21:00:00.000Z')).toBe('public, max-age=900, s-maxage=3600');
+    });
+
+    it('is never below 1 second, right up to the last millisecond of the day', async () => {
+      expect(await cacheControl('2026-05-12T20:59:59.000Z')).toBe('public, max-age=1, s-maxage=1');
+      expect(await cacheControl('2026-05-12T20:59:59.999Z')).toBe('public, max-age=1, s-maxage=1');
+    });
+
+    it('leaves every other public route on its fixed, byte-identical header, even a second before midnight', async () => {
+      freezeClock('2026-05-12T20:59:59.000Z');
+      const res = await get('/daily-hadiths?date=2026-05-15');
+
+      expect(res.status).toBe(200);
+      expect(res.headers.get('cache-control')).toBe('public, max-age=300, s-maxage=1800');
+    });
   });
 
   it('GET /daily-hadiths is public and not shadowed by /today or /admin', async () => {
@@ -120,6 +188,26 @@ describe('DailyHadithsController (HTTP)', () => {
     expect(res.status).toBe(200);
     expect(service.findOne).toHaveBeenCalledWith(UUID, null);
     expect(service.findPublic).not.toHaveBeenCalled();
+  });
+
+  it('POST /daily-hadiths/:id/restore requires daily-hadiths:delete and returns the unscheduled flag in meta', async () => {
+    const post = (headers: Record<string, string> = {}) =>
+      (globalThis as any).fetch(`${base}/daily-hadiths/${UUID}/restore`, { method: 'POST', headers }) as Promise<Response>;
+
+    expect((await post()).status).toBe(401);
+    expect((await post({ 'x-test-permissions': 'daily-hadiths:update' })).status).toBe(403);
+
+    service.restore.mockResolvedValueOnce({
+      message: 'Hadith restored without its schedule: 2026-05-15 is now taken by another hadith',
+      data: null,
+      meta: { unscheduled: true, previous_display_date: '2026-05-15' },
+    });
+    const res = await post({ 'x-test-permissions': 'daily-hadiths:delete' });
+    const body = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(service.restore).toHaveBeenCalledWith(UUID, 'editor');
+    expect(body).toMatchObject({ success: true, data: null, meta: { unscheduled: true, previous_display_date: '2026-05-15' } });
   });
 
   it('trash keeps its route and permission', async () => {

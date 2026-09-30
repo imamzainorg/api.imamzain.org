@@ -76,6 +76,26 @@ class BookCategoryRefDto {
   book_category_translations: BookCategoryTranslationRefDto[];
 }
 
+/** One pre-generated WebP rendition of a cover, ordered by width — feed these to `srcset`. */
+class BookMediaVariantRefDto {
+  @ApiProperty({ example: 'uuid-...' })
+  id: string;
+
+  @ApiProperty({ example: 768, description: 'Output width in pixels' })
+  width: number;
+
+  @ApiProperty({ example: 'https://cdn.imamzain.org/media/variants/uuid/w768.webp' })
+  url: string;
+
+  @ApiProperty({ example: 'webp' })
+  format: string;
+}
+
+/**
+ * Public shape of an embedded cover: file_size, created_at and uploaded_by are
+ * not part of it. Admin reads of `GET /books/admin/:id` (and the create /
+ * update / publish responses) return the full media record on top of this.
+ */
 class BookMediaRefDto {
   @ApiProperty({ example: 'uuid-...' })
   id: string;
@@ -97,6 +117,9 @@ class BookMediaRefDto {
 
   @ApiPropertyOptional({ example: 1800, nullable: true })
   height: number | null;
+
+  @ApiProperty({ type: [BookMediaVariantRefDto], description: 'WebP variants ordered by width ascending; may be shorter than the standard four (small originals skip up-scaled widths) or empty.' })
+  media_variants: BookMediaVariantRefDto[];
 }
 
 /** One part of a multi-part series, as returned on the parent's detail response. */
@@ -170,7 +193,7 @@ class BookDto {
   @ApiPropertyOptional({ example: 1, description: 'Position of this book within its series. Only set when the book has a parent (is one part of a series).' })
   part_number?: number;
 
-  @ApiProperty({ example: 0, description: 'Number of parts in this series. 0 for a standalone book or for a part itself — only a series parent has parts.' })
+  @ApiProperty({ example: 0, description: 'Number of parts in this series that this caller can see (published and not deleted; the admin routes count drafts too). Equals the length of `parts`. 0 for a standalone book or for a part itself — only a series parent has parts.' })
   parts_count: number;
 
   @ApiProperty({ example: 0 })
@@ -187,6 +210,9 @@ class BookDto {
 
   @ApiProperty({ example: '2024-01-01T00:00:00.000Z' })
   updated_at: string;
+
+  @ApiPropertyOptional({ example: 'uuid-...', nullable: true, description: 'Staff user who added the book. Admin routes only — never present on public reads.' })
+  added_by?: string | null;
 
   @ApiProperty({ type: [BookTranslationItemDto], description: 'All stored translations' })
   book_translations: BookTranslationItemDto[];
@@ -249,7 +275,7 @@ class BookListItemDto {
   @ApiPropertyOptional({ example: 1, description: 'Position of this book within its series. Never set on a list item — parts are hidden from list responses (see parts_count on the series parent).' })
   part_number?: number;
 
-  @ApiProperty({ example: 0, description: 'Number of parts in this series. 0 for a normal book. Call the detail endpoint to fetch the parts themselves.' })
+  @ApiProperty({ example: 0, description: 'Number of parts in this series that this caller can see: published and not deleted on the public list, every live part (drafts included) on the admin list and trash. Matches the length of `parts` on the detail response. 0 for a normal book. Call the detail endpoint to fetch the parts themselves.' })
   parts_count: number;
 
   @ApiProperty({ example: 0 })

@@ -1,111 +1,290 @@
-import { ConflictException, Injectable, NotFoundException, UnauthorizedException } from '@nestjs/common';
-import { Prisma } from '@prisma/client';
-import * as crypto from 'crypto';
+import {
+  Injectable,
+  Logger,
+  NotFoundException,
+  OnModuleDestroy,
+  UnauthorizedException,
+} from '@nestjs/common';
+import { newsletter_subscribers, Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuditService } from '../common/audit/audit.service';
 import { AUDIT_ACTIONS } from '../common/audit/audit.actions';
+import { EmailService } from '../email/email.service';
+import { hmacHex, HmacKeyring, KEY_INFO, resolveHmacKeyring, verifyHmacHex } from '../common/utils/derive-key.util';
 import { buildPaginationMeta } from '../common/utils/pagination.util';
-import { rethrowP2002AsConflict } from '../common/utils/prisma-error.util';
-import { SubscribeDto, UnsubscribeDto } from './dto/newsletter.dto';
+import { isUniqueViolation } from '../common/utils/prisma-error.util';
+import {
+  buildConfirmationEmail,
+  CONFIRM_RESEND_COOLDOWN_MS,
+  CONFIRM_TTL_MS,
+  confirmationUrl,
+  resolveConfirmConfig,
+} from './confirmation.util';
+import { ConfirmSubscriptionDto, SubscribeDto, UnsubscribeDto } from './dto/newsletter.dto';
 
-function resolveUnsubscribeSecret(): string {
-  const secret = process.env.NEWSLETTER_UNSUBSCRIBE_SECRET ?? process.env.JWT_SECRET;
-  if (!secret) {
-    // Empty string here would produce HMAC tokens an attacker can forge.
-    // Refuse to boot so the misconfig is caught immediately rather than
-    // silently disabling unsubscribe-token verification.
-    throw new Error('NEWSLETTER_UNSUBSCRIBE_SECRET (or JWT_SECRET) is required');
-  }
-  return secret;
+// A dedicated NEWSLETTER_UNSUBSCRIBE_SECRET is used as-is for both token types.
+// Unset (or BLANK, as .env.example ships it) each type gets its own HKDF-derived
+// key of JWT_SECRET instead of JWT_SECRET itself — subscriber ids are guessable
+// inputs, so the raw key would hand anonymous callers known-plaintext MAC pairs —
+// while tokens minted before that change (unsubscribe links already in sent
+// campaigns, confirmation links still inside their 72 h) keep verifying.
+function resolveTokenKeys(info: string): HmacKeyring {
+  return resolveHmacKeyring({
+    dedicatedSecret: process.env.NEWSLETTER_UNSUBSCRIBE_SECRET,
+    dedicatedName: 'NEWSLETTER_UNSUBSCRIBE_SECRET',
+    jwtSecret: process.env.JWT_SECRET,
+    info,
+  });
 }
 
+const ONE_HOUR_MS = 3_600_000;
+
+// One answer for every address in every state — see subscribe().
+const SUBSCRIBE_ACCEPTED_MESSAGE = 'Please check your inbox to confirm your subscription';
+// One answer for every way a link can be bad — see confirm().
+const INVALID_LINK_MESSAGE = 'This confirmation link is invalid or has expired';
+
+/** On the list and mailable right now. */
+const isLive = (s: Pick<newsletter_subscribers, 'is_active' | 'deleted_at'>) =>
+  s.is_active && s.deleted_at === null;
+
 @Injectable()
-export class NewsletterService {
-  private readonly unsubscribeSecret = resolveUnsubscribeSecret();
+export class NewsletterService implements OnModuleDestroy {
+  private readonly logger = new Logger(NewsletterService.name);
+  private readonly unsubscribeKeys = resolveTokenKeys(KEY_INFO.newsletterUnsubscribe);
+  private readonly confirmKeys = resolveTokenKeys(KEY_INFO.newsletterConfirm);
+  /** Confirmation mails still being sent after their request already got its answer. */
+  private readonly pendingSends = new Set<Promise<void>>();
 
   constructor(
     private readonly prisma: PrismaService,
     private readonly audit: AuditService,
+    private readonly email: EmailService,
   ) {}
 
+  /** Don't cut off a confirmation mail that is on the wire when the process is asked to stop. */
+  async onModuleDestroy(): Promise<void> {
+    await Promise.allSettled([...this.pendingSends]);
+  }
+
   /**
-   * HMAC of the subscriber id, returned to the client at subscribe time and
-   * required at unsubscribe time. Replaces the previous "anyone can
-   * unsubscribe anyone by guessing an email" surface.
+   * HMAC of the subscriber id, required at unsubscribe time and embedded in the
+   * unsubscribe link of every campaign e-mail. It is no longer handed out by
+   * the public subscribe endpoint (which used to return it to whoever asked).
    *
    * Exposed publicly so the campaign sender can build unsubscribe URLs
    * for each recipient at send time. The secret is server-side only —
    * the token itself is safe to embed in outbound emails.
    */
   signUnsubscribeToken(subscriberId: string): string {
-    return crypto
-      .createHmac('sha256', this.unsubscribeSecret)
-      .update(subscriberId)
-      .digest('hex');
+    return hmacHex(this.unsubscribeKeys.signingKey, subscriberId);
   }
 
   private verifyUnsubscribeToken(subscriberId: string, token: string): boolean {
-    const expected = this.signUnsubscribeToken(subscriberId);
-    const a = Buffer.from(expected, 'utf8');
-    const b = Buffer.from(token, 'utf8');
-    if (a.length !== b.length) return false;
-    return crypto.timingSafeEqual(a, b);
+    return verifyHmacHex(this.unsubscribeKeys, subscriberId, token);
   }
 
+  /**
+   * Bound to (subscriber, the moment that e-mail was claimed): requesting a
+   * fresh confirmation kills every older link, and the `confirm:` prefix keeps
+   * it from ever being the same string as an unsubscribe token.
+   */
+  private confirmationMessage(subscriberId: string, issuedAt: Date): string {
+    return `confirm:${subscriberId}:${issuedAt.getTime()}`;
+  }
+
+  private signConfirmationToken(subscriberId: string, issuedAt: Date): string {
+    return hmacHex(this.confirmKeys.signingKey, this.confirmationMessage(subscriberId, issuedAt));
+  }
+
+  private verifyConfirmationToken(subscriberId: string, issuedAt: Date, token: string): boolean {
+    return verifyHmacHex(this.confirmKeys, this.confirmationMessage(subscriberId, issuedAt), token);
+  }
+
+  // ── Public: double opt-in ──────────────────────────────────────────────
+
+  /**
+   * Ask to join the list. Nobody is subscribed by this call: the address gets a
+   * confirmation e-mail and only clicking its link (POST /newsletter/confirm)
+   * makes the subscription real — so a stranger typing your address into the
+   * form cannot subscribe you, or re-subscribe you after you opted out.
+   *
+   * The reply is deliberately identical for a new address, a pending one, an
+   * unsubscribed one, a deleted one and one that is already subscribed. It used
+   * to answer 409 for active addresses only (a membership oracle) and to return
+   * the subscriber row plus its unsubscribe token to anyone who asked. The
+   * confirmation mail is sent AFTER the reply is on its way, so response time
+   * does not give the state away either.
+   */
   async subscribe(dto: SubscribeDto) {
-    // Look across all rows (including soft-deleted ones) so a previously
-    // soft-deleted address can be re-subscribed instead of crashing into
-    // the DB-level unique(email) constraint.
-    const existing = await this.prisma.newsletter_subscribers.findUnique({
-      where: { email: dto.email },
-    });
+    await this.requestConfirmation(dto.email);
+    return { message: SUBSCRIBE_ACCEPTED_MESSAGE, data: null };
+  }
 
-    if (existing) {
-      if (existing.is_active && existing.deleted_at === null) {
-        throw new ConflictException('This email is already subscribed');
+  private async requestConfirmation(email: string): Promise<void> {
+    let subscriber = await this.prisma.newsletter_subscribers.findUnique({ where: { email } });
+    if (subscriber && isLive(subscriber)) return; // already on the list: nothing to confirm
+
+    let created = false;
+    if (!subscriber) {
+      try {
+        // Inactive until the link is clicked — never mailable before that.
+        subscriber = await this.prisma.newsletter_subscribers.create({ data: { email, is_active: false } });
+        created = true;
+      } catch (err: unknown) {
+        if (!isUniqueViolation(err)) throw err;
+        // A concurrent request created the row first; carry on with theirs.
+        subscriber = await this.prisma.newsletter_subscribers.findUnique({ where: { email } });
+        if (!subscriber || isLive(subscriber)) return;
       }
-      const updated = await this.prisma.newsletter_subscribers.update({
-        where: { id: existing.id },
-        data: { is_active: true, unsubscribed_at: null, deleted_at: null },
-      });
-
-      await this.audit.write({
-        actorId: null,
-        action: AUDIT_ACTIONS.NEWSLETTER_RESUBSCRIBED,
-        resourceType: 'newsletter_subscriber',
-        resourceId: existing.id,
-        changes: { method: 'POST', path: '/api/v1/newsletter/subscribe' },
-      });
-
-      return {
-        message: 'Successfully resubscribed',
-        data: { ...updated, unsubscribe_token: this.signUnsubscribeToken(existing.id) },
-      };
     }
 
-    let subscriber;
-    try {
-      subscriber = await this.prisma.newsletter_subscribers.create({
-        data: { email: dto.email, is_active: true },
+    if (created) {
+      await this.audit.write({
+        actorId: null,
+        action: AUDIT_ACTIONS.NEWSLETTER_SUBSCRIBE_REQUESTED,
+        resourceType: 'newsletter_subscriber',
+        resourceId: subscriber.id,
+        changes: { method: 'POST', path: '/api/v1/newsletter/subscribe' },
       });
+    }
+
+    // An unsubscribed or deleted row is left exactly as it is until the link is
+    // clicked: asking to come back must not undo an opt-out by itself.
+    await this.sendConfirmation(subscriber);
+  }
+
+  /**
+   * Claim the right to send one confirmation mail, then send it in the
+   * background. Claiming is a conditional UPDATE on `confirmation_sent_at`, so
+   * two concurrent requests send one mail and the per-address cool-down needs no
+   * lock. Both limits fail quietly — the caller must not be able to tell.
+   */
+  private async sendConfirmation(subscriber: newsletter_subscribers): Promise<void> {
+    if (!this.email.isConfigured()) {
+      this.logger.warn('Newsletter confirmation not sent — SMTP is not configured');
+      return;
+    }
+
+    const config = resolveConfirmConfig();
+    const now = new Date();
+
+    const claimedLastHour = await this.prisma.newsletter_subscribers.count({
+      where: { confirmation_sent_at: { gte: new Date(now.getTime() - ONE_HOUR_MS) } },
+    });
+    if (claimedLastHour >= config.maxPerHour) {
+      this.logger.warn(`Newsletter confirmation held back — hourly cap of ${config.maxPerHour} reached`);
+      return;
+    }
+
+    const claim = await this.prisma.newsletter_subscribers.updateMany({
+      where: {
+        id: subscriber.id,
+        OR: [
+          { confirmation_sent_at: null },
+          { confirmation_sent_at: { lt: new Date(now.getTime() - CONFIRM_RESEND_COOLDOWN_MS) } },
+        ],
+      },
+      data: { confirmation_sent_at: now },
+    });
+    if (claim.count === 0) return; // inside the cool-down, or another request claimed it first
+
+    const send = this.deliverConfirmation(subscriber, now, subscriber.confirmation_sent_at).catch((err: unknown) => {
+      this.logger.error(`Newsletter confirmation failed: ${err instanceof Error ? err.message : String(err)}`);
+    });
+    this.pendingSends.add(send);
+    void send.finally(() => this.pendingSends.delete(send));
+  }
+
+  private async deliverConfirmation(
+    subscriber: newsletter_subscribers,
+    claimedAt: Date,
+    previousSentAt: Date | null,
+  ): Promise<void> {
+    let delivered = false;
+    try {
+      const token = this.signConfirmationToken(subscriber.id, claimedAt);
+      const message = buildConfirmationEmail(
+        confirmationUrl(resolveConfirmConfig().urlBase, subscriber.email, token),
+      );
+      const result = await this.email.deliver({
+        to: subscriber.email,
+        subject: message.subject,
+        html: message.html,
+        text: message.text,
+        lane: 'transactional',
+      });
+      delivered = result.ok;
+      if (!result.ok) {
+        this.logger.warn(`Newsletter confirmation e-mail failed (${result.kind}): ${result.error}`);
+      }
     } catch (err: unknown) {
-      // Concurrent subscribe with the same email lost the race; turn the
-      // P2002 unique violation into a clean 409 instead of a 500.
-      rethrowP2002AsConflict(err, 'This email is already subscribed');
+      this.logger.error(
+        `Newsletter confirmation e-mail failed: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+
+    if (!delivered) {
+      // Nothing reached the inbox, so neither the cool-down nor the hourly cap
+      // should stay spent on it — the visitor can simply try again.
+      await this.prisma.newsletter_subscribers.updateMany({
+        where: { id: subscriber.id, confirmation_sent_at: claimedAt },
+        data: { confirmation_sent_at: previousSentAt },
+      });
+    }
+  }
+
+  /**
+   * The click. Turns a pending / opted-out / deleted address into an active
+   * subscriber and stamps `confirmed_at` — the moment the CURRENT consent was
+   * given. Every way a link can be bad (unknown address, wrong or superseded
+   * token, expired, or the person opted out after it was issued) gets the same
+   * 401, so the endpoint cannot be used to probe the list.
+   */
+  async confirm(dto: ConfirmSubscriptionDto) {
+    const subscriber = await this.prisma.newsletter_subscribers.findUnique({ where: { email: dto.email } });
+    const issuedAt = subscriber?.confirmation_sent_at ?? null;
+    if (!subscriber || !issuedAt || !this.verifyConfirmationToken(subscriber.id, issuedAt, dto.token)) {
+      throw new UnauthorizedException(INVALID_LINK_MESSAGE);
+    }
+
+    // Idempotent: a double click, or a refresh of the confirm page.
+    if (isLive(subscriber)) return { message: 'Subscription already confirmed', data: null };
+
+    const now = new Date();
+    if (now.getTime() - issuedAt.getTime() > CONFIRM_TTL_MS) throw new UnauthorizedException(INVALID_LINK_MESSAGE);
+    // Opted out (or removed by an admin) AFTER this link was sent: it no longer
+    // speaks for them, so an old e-mail cannot quietly undo an unsubscribe.
+    if (
+      (subscriber.unsubscribed_at && subscriber.unsubscribed_at > issuedAt) ||
+      (subscriber.deleted_at && subscriber.deleted_at > issuedAt)
+    ) {
+      throw new UnauthorizedException(INVALID_LINK_MESSAGE);
+    }
+
+    const activated = await this.prisma.newsletter_subscribers.updateMany({
+      // Still inactive and still THIS link: two concurrent clicks activate once.
+      where: { id: subscriber.id, is_active: false, confirmation_sent_at: issuedAt },
+      data: { is_active: true, confirmed_at: now, unsubscribed_at: null, deleted_at: null },
+    });
+    if (activated.count === 0) {
+      const fresh = await this.prisma.newsletter_subscribers.findUnique({ where: { id: subscriber.id } });
+      if (fresh && isLive(fresh)) return { message: 'Subscription already confirmed', data: null };
+      throw new UnauthorizedException(INVALID_LINK_MESSAGE);
     }
 
     await this.audit.write({
       actorId: null,
-      action: AUDIT_ACTIONS.NEWSLETTER_SUBSCRIBED,
+      action:
+        subscriber.confirmed_at === null
+          ? AUDIT_ACTIONS.NEWSLETTER_SUBSCRIBED
+          : AUDIT_ACTIONS.NEWSLETTER_RESUBSCRIBED,
       resourceType: 'newsletter_subscriber',
       resourceId: subscriber.id,
-      changes: { method: 'POST', path: '/api/v1/newsletter/subscribe' },
+      changes: { method: 'POST', path: '/api/v1/newsletter/confirm' },
     });
 
-    return {
-      message: 'Successfully subscribed',
-      data: { ...subscriber, unsubscribe_token: this.signUnsubscribeToken(subscriber.id) },
-    };
+    return { message: 'Subscription confirmed', data: null };
   }
 
   async unsubscribe(dto: UnsubscribeDto) {
@@ -140,6 +319,8 @@ export class NewsletterService {
 
     return { message: 'Successfully unsubscribed', data: updated };
   }
+
+  // ── Admin ──────────────────────────────────────────────────────────────
 
   async findAll(page: number, limit: number, filters: { search?: string; is_active?: boolean }) {
     const skip = (page - 1) * limit;
@@ -196,8 +377,10 @@ export class NewsletterService {
 
   /**
    * Admin-side resubscribe — flips an inactive subscriber back to active
-   * without going through the public subscribe endpoint, useful when a user
-   * asks support to put them back on the list.
+   * without going through the confirmation e-mail, for when a person asks
+   * support to put them back on the list. The admin is vouching for the
+   * consent, so `confirmed_at` is re-stamped: it always says when the current
+   * consent was given, however it was given.
    */
   async resubscribeAsAdmin(id: string, actorId: string) {
     const subscriber = await this.prisma.newsletter_subscribers.findFirst({
@@ -211,7 +394,7 @@ export class NewsletterService {
 
     const updated = await this.prisma.newsletter_subscribers.update({
       where: { id },
-      data: { is_active: true, unsubscribed_at: null },
+      data: { is_active: true, unsubscribed_at: null, confirmed_at: new Date() },
     });
 
     await this.audit.write({
@@ -265,10 +448,11 @@ export class NewsletterService {
   }
 
   /**
-   * Restore a soft-deleted subscriber. The email never leaves the unique
-   * constraint while trashed (subscribe() re-activates the same row rather than
-   * inserting a duplicate), so no conflict is possible — this just reverses the
-   * delete: clears `deleted_at` and flips `is_active` back on.
+   * Restore a soft-deleted subscriber. Undoing an accidental delete is the point
+   * of the trash, so someone who was subscribed when they were deleted is active
+   * again — but an explicit opt-out survives the round trip (it used to be wiped,
+   * putting people who had unsubscribed back on the list), and a sign-up that
+   * was never confirmed stays waiting for its confirmation.
    */
   async restore(id: string, actorId: string) {
     const subscriber = await this.prisma.newsletter_subscribers.findFirst({
@@ -276,9 +460,10 @@ export class NewsletterService {
     });
     if (!subscriber) throw new NotFoundException('Deleted subscriber not found');
 
+    const wasSubscribed = subscriber.unsubscribed_at === null && subscriber.confirmed_at !== null;
     const updated = await this.prisma.newsletter_subscribers.update({
       where: { id },
-      data: { deleted_at: null, is_active: true, unsubscribed_at: null },
+      data: { deleted_at: null, is_active: wasSubscribed },
     });
 
     await this.audit.write({
@@ -286,7 +471,11 @@ export class NewsletterService {
       action: AUDIT_ACTIONS.NEWSLETTER_SUBSCRIBER_RESTORED,
       resourceType: 'newsletter_subscriber',
       resourceId: id,
-      changes: { method: 'POST', path: `/api/v1/newsletter/subscribers/${id}/restore` },
+      changes: {
+        method: 'POST',
+        path: `/api/v1/newsletter/subscribers/${id}/restore`,
+        is_active: wasSubscribed,
+      },
     });
 
     return { message: 'Subscriber restored', data: updated };

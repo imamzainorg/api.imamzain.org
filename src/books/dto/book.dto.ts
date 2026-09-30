@@ -1,6 +1,7 @@
 import { ApiProperty, ApiPropertyOptional } from "@nestjs/swagger";
 import { Transform, Type } from "class-transformer";
 import {
+  ArrayMaxSize,
   ArrayMinSize,
   IsArray,
   IsBoolean,
@@ -17,9 +18,9 @@ import {
   ValidateNested,
 } from "class-validator";
 import { PaginationDto } from "../../common/dto/pagination.dto";
-
-/** class-transformer's @Type(() => Boolean) does JS `Boolean(value)`, which makes the STRING "false" truthy — parse query strings explicitly instead. */
-const toQueryBoolean = ({ value }: { value: unknown }) => (value === true || value === "true" ? true : value === false || value === "false" ? false : value);
+import { DTO_LIMITS } from "../../common/validators/dto-limits";
+import { toQueryBoolean } from "../../common/validators/query-boolean";
+import { SearchTerm } from "../../common/validators/search-term";
 
 const HTTP_URL = /^https?:\/\/.+/i;
 
@@ -29,31 +30,37 @@ export class BookTranslationDto {
   @Length(2, 2)
   lang!: string;
 
-  @ApiProperty({ example: "الصحيفة السجادية" })
+  @ApiProperty({ example: "الصحيفة السجادية", maxLength: DTO_LIMITS.title })
   @IsString()
   @MinLength(1)
+  @MaxLength(DTO_LIMITS.title)
   title!: string;
 
-  @ApiPropertyOptional({ example: "الإمام علي بن الحسين" })
+  @ApiPropertyOptional({ example: "الإمام علي بن الحسين", maxLength: DTO_LIMITS.person })
   @IsOptional()
   @IsString()
+  @MaxLength(DTO_LIMITS.person)
   author?: string;
 
-  @ApiPropertyOptional({ example: "دار الإسلام" })
+  @ApiPropertyOptional({ example: "دار الإسلام", maxLength: DTO_LIMITS.person })
   @IsOptional()
   @IsString()
+  @MaxLength(DTO_LIMITS.person)
   publisher?: string;
 
   @ApiPropertyOptional({
     example: "مجموعة أدعية مأثورة عن الإمام زين العابدين",
+    maxLength: DTO_LIMITS.summary,
   })
   @IsOptional()
   @IsString()
+  @MaxLength(DTO_LIMITS.summary)
   description?: string;
 
-  @ApiPropertyOptional({ example: "أدعية الأئمة" })
+  @ApiPropertyOptional({ example: "أدعية الأئمة", maxLength: DTO_LIMITS.title })
   @IsOptional()
   @IsString()
+  @MaxLength(DTO_LIMITS.title)
   series?: string;
 
   @ApiPropertyOptional({ description: "SEO <title> override for this translation." })
@@ -108,10 +115,11 @@ export class CreateBookDto {
   @MaxLength(200)
   slug?: string;
 
-  @ApiPropertyOptional({ example: "978-9953-0-2287-6" })
+  @ApiPropertyOptional({ example: "978-9953-0-2287-6", maxLength: DTO_LIMITS.code })
   @IsOptional()
   @IsString()
   @MinLength(1)
+  @MaxLength(DTO_LIMITS.code)
   isbn?: string;
 
   @ApiPropertyOptional({ example: 320, minimum: 1 })
@@ -120,9 +128,10 @@ export class CreateBookDto {
   @Min(1)
   pages?: number;
 
-  @ApiPropertyOptional({ example: "2010" })
+  @ApiPropertyOptional({ example: "2010", maxLength: DTO_LIMITS.code })
   @IsOptional()
   @IsString()
+  @MaxLength(DTO_LIMITS.code)
   publish_year?: string;
 
   @ApiPropertyOptional({
@@ -139,9 +148,11 @@ export class CreateBookDto {
     example: ["ar"],
     description:
       "ISO 639-1 codes for the language(s) the PDF itself is written in. Distinct from `translations[].lang`, which describes the catalogue metadata — a book can be catalogued in Arabic and English while the document is Arabic-only. Defaults to an empty array.",
+    maxItems: DTO_LIMITS.listItems,
   })
   @IsOptional()
   @IsArray()
+  @ArrayMaxSize(DTO_LIMITS.listItems)
   @IsString({ each: true })
   @Length(2, 2, { each: true })
   document_languages?: string[];
@@ -194,11 +205,13 @@ export class CreateBookDto {
   @ApiProperty({
     type: [BookTranslationDto],
     description: "Must include exactly one translation with is_default: true",
+    maxItems: DTO_LIMITS.listItems,
   })
   @IsArray()
   @ValidateNested({ each: true })
   @Type(() => BookTranslationDto)
   @ArrayMinSize(1)
+  @ArrayMaxSize(DTO_LIMITS.listItems)
   translations!: BookTranslationDto[];
 }
 
@@ -220,10 +233,11 @@ export class UpdateBookDto {
   @MaxLength(200)
   slug?: string;
 
-  @ApiPropertyOptional({ example: "978-9953-0-2287-6" })
+  @ApiPropertyOptional({ example: "978-9953-0-2287-6", maxLength: DTO_LIMITS.code })
   @IsOptional()
   @IsString()
   @MinLength(1)
+  @MaxLength(DTO_LIMITS.code)
   isbn?: string;
 
   @ApiPropertyOptional({ example: 400, minimum: 1 })
@@ -232,9 +246,10 @@ export class UpdateBookDto {
   @Min(1)
   pages?: number;
 
-  @ApiPropertyOptional({ example: "2015" })
+  @ApiPropertyOptional({ example: "2015", maxLength: DTO_LIMITS.code })
   @IsOptional()
   @IsString()
+  @MaxLength(DTO_LIMITS.code)
   publish_year?: string;
 
   @ApiPropertyOptional({
@@ -250,9 +265,11 @@ export class UpdateBookDto {
   @ApiPropertyOptional({
     example: ["ar", "fa"],
     description: "ISO 639-1 codes for the language(s) the PDF itself is written in. Replaces the whole array when supplied.",
+    maxItems: DTO_LIMITS.listItems,
   })
   @IsOptional()
   @IsArray()
+  @ArrayMaxSize(DTO_LIMITS.listItems)
   @IsString({ each: true })
   @Length(2, 2, { each: true })
   document_languages?: string[];
@@ -293,11 +310,12 @@ export class UpdateBookDto {
   @IsBoolean()
   is_publication?: boolean;
 
-  @ApiPropertyOptional({ type: [BookTranslationDto] })
+  @ApiPropertyOptional({ type: [BookTranslationDto], maxItems: DTO_LIMITS.listItems })
   @IsOptional()
   @IsArray()
   @ValidateNested({ each: true })
   @Type(() => BookTranslationDto)
+  @ArrayMaxSize(DTO_LIMITS.listItems)
   translations?: BookTranslationDto[];
 }
 
@@ -315,16 +333,17 @@ export class BookQueryDto extends PaginationDto {
 
   @ApiPropertyOptional({
     example: "الصحيفة",
-    description: "Search across book titles",
+    description: "Search across book titles. 2–200 characters after trimming; a blank value is ignored.",
+    minLength: 2,
+    maxLength: 200,
   })
-  @IsOptional()
-  @IsString()
+  @SearchTerm()
   search?: string;
 
   @ApiPropertyOptional({
     example: true,
     description:
-      'Filter to books on the institution\'s "الإصدارات" (Publications) release list. Independent of category_id — a book can carry a topical category AND be flagged as a Publication.',
+      'Filter to books on the institution\'s "الإصدارات" (Publications) release list. Independent of category_id — a book can carry a topical category AND be flagged as a Publication. Only `true` / `false` are accepted.',
   })
   @IsOptional()
   @Transform(toQueryBoolean)

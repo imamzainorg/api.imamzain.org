@@ -76,7 +76,7 @@ export class UsersController {
   @ApiNotFoundResponse({ type: NotFoundErrorDto, description: 'No soft-deleted user with that ID exists' })
   @ApiConflictResponse({ type: ConflictErrorDto, description: 'The original username was reclaimed by another live user' })
   restore(@Param('id') id: string, @CurrentUser() user: CurrentUserPayload) {
-    return this.usersService.restore(id, user.id);
+    return this.usersService.restore(id, user);
   }
 
   @Get(':id')
@@ -101,7 +101,11 @@ export class UsersController {
 
   @Patch(':id')
   @Auth('users:update')
-  @ApiOperation({ summary: "Update a user's username", description: 'Requires permission: `users:update`' })
+  @ApiOperation({
+    summary: "Update a user's username",
+    description:
+      'Requires permission: `users:update`. Subject to the privilege envelope: returns 403 when the target holds any permission the caller does not.',
+  })
   @ApiParam({ name: 'id', format: 'uuid' })
   @ApiOkResponse({ type: UserDetailResponseDto, description: 'Updated user with the new username, roles, and permissions' })
   @ApiBadRequestResponse({ type: ValidationErrorDto, description: 'Validation failed' })
@@ -111,17 +115,22 @@ export class UsersController {
     @Body() dto: UpdateUserDto,
     @CurrentUser() user: CurrentUserPayload,
   ) {
-    return this.usersService.update(id, dto, user.id);
+    return this.usersService.update(id, dto, user);
   }
 
   @Delete(':id')
   @Auth('users:delete')
-  @ApiOperation({ summary: 'Soft-delete a user', description: 'Requires permission: `users:delete`' })
+  @ApiOperation({
+    summary: 'Soft-delete a user',
+    description:
+      'Requires permission: `users:delete`. Refused with 403 for your own account or for a target holding permissions beyond your own, and with 409 when the target is the last active user holding every permission.',
+  })
   @ApiParam({ name: 'id', format: 'uuid' })
   @ApiOkResponse({ type: UserMessageResponseDto, description: 'User account soft-deleted; the account is deactivated and excluded from all future queries — data is preserved' })
   @ApiNotFoundResponse({ type: NotFoundErrorDto, description: 'No user with that ID exists, or the account has already been deleted' })
+  @ApiConflictResponse({ type: ConflictErrorDto, description: 'Deleting this user would leave no administrator holding every permission' })
   remove(@Param('id') id: string, @CurrentUser() user: CurrentUserPayload) {
-    return this.usersService.softDelete(id, user.id);
+    return this.usersService.softDelete(id, user);
   }
 
   @Post(':id/roles')
@@ -164,6 +173,7 @@ export class UsersController {
       'Sets a new password for a user who has forgotten theirs (no self-service forgot-password flow — the users table has no email column). ' +
       'Bumps `token_version` to invalidate every outstanding access token, and revokes every active refresh token so the user must re-authenticate on next use. ' +
       'The admin who triggered this is responsible for handing the new password to the user out-of-band (in person, Slack, phone). ' +
+      'Subject to the privilege envelope: returns 403 when the target holds any permission the caller does not (a `users:update` holder cannot reset a super-admin). ' +
       'Requires permission: `users:update`.',
   })
   @ApiParam({ name: 'id', format: 'uuid', description: 'User ID' })
@@ -175,6 +185,6 @@ export class UsersController {
     @Body() dto: AdminResetPasswordDto,
     @CurrentUser() user: CurrentUserPayload,
   ) {
-    return this.usersService.adminResetPassword(id, dto, user.id);
+    return this.usersService.adminResetPassword(id, dto, user);
   }
 }

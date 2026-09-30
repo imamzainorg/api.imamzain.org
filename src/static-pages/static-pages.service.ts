@@ -9,6 +9,7 @@ import { assertExactlyOneDefault, resolveTranslation } from '../common/utils/tra
 import { buildPaginationMeta, resolvePagination } from '../common/utils/pagination.util';
 import { rethrowP2002AsConflict } from '../common/utils/prisma-error.util';
 import { publicWhere } from '../common/utils/visibility.util';
+import { assertSlugRenameAllowed } from '../common/utils/publish-rules.util';
 import { OG_IMAGE_SELECT } from '../common/crud/media-selects';
 import {
   CreateStaticPageDto,
@@ -17,6 +18,46 @@ import {
   UpdateStaticPageDto,
 } from './dto/static-page.dto';
 
+// The public list is a directory (titles + SEO metadata), not a reading
+// surface: it used to ship the full HTML body of EVERY translation of every
+// page on each request. The detail routes keep the body.
+const STATIC_PAGE_LIST_TRANSLATION_SELECT = {
+  page_id: true,
+  lang: true,
+  title: true,
+  is_default: true,
+  meta_title: true,
+  meta_description: true,
+  og_image_id: true,
+} satisfies Prisma.static_page_translationsSelect;
+
+const STATIC_PAGE_PUBLIC_LIST_SELECT = {
+  id: true,
+  display_order: true,
+  is_published: true,
+  slug: true,
+  created_at: true,
+  updated_at: true,
+  deleted_at: true,
+  static_page_translations: { select: STATIC_PAGE_LIST_TRANSLATION_SELECT },
+} satisfies Prisma.static_pagesSelect;
+
+/**
+ * Message per violated unique index, for `rethrowP2002AsConflict`. Only the
+ * slug index may produce the "slug already used" text; the other unique key a
+ * page write can hit is the (page, lang) primary key of its translations.
+ */
+function pageConflictMessages(slug: string | undefined): { fallback: string; byTarget: Record<string, string> } {
+  return {
+    fallback: 'A value in this request is already in use by another record',
+    byTarget: {
+      slug: slug ? `Slug "${slug}" is already used by another static page` : 'The slug is already used by another static page',
+      static_page_translations: 'The same language appears more than once in translations',
+      lang: 'The same language appears more than once in translations',
+    },
+  };
+}
+
 @Injectable()
 export class StaticPagesService {
   constructor(
@@ -24,23 +65,27 @@ export class StaticPagesService {
     private readonly audit: AuditService,
   ) {}
 
-  /** Public list: published pages only, ordered by display_order then id. */
+  /**
+   * Public list: published pages only, ordered by display_order then id. Each
+   * item carries ONLY the requested/fallback translation, without its body —
+   * fetch the detail for the HTML.
+   */
   async findAllPublic(lang: string | null, pageInput: number, limitInput: number) {
     const { page, limit, skip } = resolvePagination({ page: pageInput, limit: limitInput });
     const where: Prisma.static_pagesWhereInput = publicWhere(true);
     const [pages, total] = await Promise.all([
       this.prisma.static_pages.findMany({
         where,
-        include: { static_page_translations: true },
+        select: STATIC_PAGE_PUBLIC_LIST_SELECT,
         orderBy: [{ display_order: 'asc' }, { id: 'asc' }],
         skip,
         take: limit,
       }),
       this.prisma.static_pages.count({ where }),
     ]);
-    const items = pages.map((p) => ({
+    const items = pages.map(({ static_page_translations, ...p }) => ({
       ...p,
-      translation: resolveTranslation(p.static_page_translations, lang),
+      translation: resolveTranslation(static_page_translations, lang),
     }));
     return { message: 'Static pages fetched', data: { items, pagination: buildPaginationMeta(page, limit, total) } };
   }
@@ -101,6 +146,25 @@ export class StaticPagesService {
     };
   }
 
+  /**
+   * Validate every translation-level og_image_id up front so a bad one surfaces
+   * as 404 with a useful message (same text and status as posts) instead of a
+   * Prisma FK error.
+   */
+  private async assertOgImagesExist(translations: { og_image_id?: string | null }[]): Promise<void> {
+    const ogImageIds = translations
+      .map((t) => t.og_image_id)
+      .filter((v): v is string => typeof v === 'string');
+    if (ogImageIds.length === 0) return;
+    const found = await this.prisma.media.findMany({
+      where: { id: { in: ogImageIds } },
+      select: { id: true },
+    });
+    if (found.length !== new Set(ogImageIds).size) {
+      throw new NotFoundException('One or more og_image_id values do not match any media record');
+    }
+  }
+
   /** Reject a slug that collides with another live static page's slug. */
   private async assertSlugAvailable(slug: string, excludePageId: string | null) {
     const conflict = await this.prisma.static_pages.findFirst({
@@ -111,6 +175,7 @@ export class StaticPagesService {
   }
 
   async create(dto: CreateStaticPageDto, actorId: string) {
+    await this.assertOgImagesExist(dto.translations);
     await this.assertSlugAvailable(dto.slug, null);
     assertExactlyOneDefault(dto.translations);
 
@@ -144,7 +209,8 @@ export class StaticPagesService {
         return row;
       });
     } catch (err) {
-      rethrowP2002AsConflict(err, `Slug "${dto.slug}" is already used by another static page`);
+      const { fallback, byTarget } = pageConflictMessages(dto.slug);
+      rethrowP2002AsConflict(err, fallback, byTarget);
     }
 
     await this.audit.write({
@@ -163,6 +229,15 @@ export class StaticPagesService {
     const existing = await this.prisma.static_pages.findFirst({ where: { id, deleted_at: null } });
     if (!existing) throw new NotFoundException('Static page not found');
 
+    if (dto.translations) await this.assertOgImagesExist(dto.translations);
+
+    assertSlugRenameAllowed({
+      resourceLabel: 'static page',
+      currentSlug: existing.slug,
+      nextSlug: dto.slug,
+      isPublished: existing.is_published,
+      willBePublished: dto.is_published ?? existing.is_published,
+    });
     if (dto.slug !== undefined) await this.assertSlugAvailable(dto.slug, id);
 
     try {
@@ -205,7 +280,8 @@ export class StaticPagesService {
         }
       });
     } catch (err) {
-      rethrowP2002AsConflict(err, `Slug "${dto.slug}" is already used by another static page`);
+      const { fallback, byTarget } = pageConflictMessages(dto.slug);
+      rethrowP2002AsConflict(err, fallback, byTarget);
     }
 
     await this.audit.write({

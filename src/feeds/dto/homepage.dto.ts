@@ -1,5 +1,20 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 
+/** One pre-generated WebP rendition of an image, ordered by width — feed these to `srcset`. */
+class HomepageImageVariantDto {
+  @ApiProperty({ format: 'uuid' })
+  id!: string;
+
+  @ApiProperty({ example: 768, description: 'Output width in pixels' })
+  width!: number;
+
+  @ApiProperty({ example: 'https://cdn.imamzain.org/media/variants/uuid/w768.webp' })
+  url!: string;
+
+  @ApiProperty({ example: 'webp' })
+  format!: string;
+}
+
 class HomepageHadithDto {
   @ApiProperty({ format: 'uuid' })
   id!: string;
@@ -21,6 +36,12 @@ class HomepageNewsItemDto {
   @ApiPropertyOptional({ example: 'https://cdn.imamzain.org/media/abc.jpg' })
   image?: string | null;
 
+  @ApiProperty({
+    type: [HomepageImageVariantDto],
+    description: 'WebP variants of `image`, width ascending. May be shorter than the standard four (small originals skip up-scaled widths) or empty — fall back to `image` then.',
+  })
+  image_variants!: HomepageImageVariantDto[];
+
   @ApiPropertyOptional({ example: 'نبذة مختصرة عن المقالة' })
   summary?: string | null;
 
@@ -40,6 +61,12 @@ class HomepagePublicationItemDto {
 
   @ApiPropertyOptional({ example: 'https://cdn.imamzain.org/media/cover.jpg' })
   image?: string | null;
+
+  @ApiProperty({
+    type: [HomepageImageVariantDto],
+    description: 'WebP variants of `image`, width ascending. May be shorter than the standard four or empty — fall back to `image` then.',
+  })
+  image_variants!: HomepageImageVariantDto[];
 
   @ApiPropertyOptional({ example: 220 })
   pages?: number | null;
@@ -71,6 +98,12 @@ class HomepageGallerySliderItemDto {
 
   @ApiPropertyOptional({ example: 'https://cdn.imamzain.org/media/photo.jpg' })
   path?: string | null;
+
+  @ApiProperty({
+    type: [HomepageImageVariantDto],
+    description: 'WebP variants of `path`, width ascending. May be shorter than the standard four or empty — fall back to `path` then.',
+  })
+  path_variants!: HomepageImageVariantDto[];
 }
 
 class HomepageGalleryCategoryItemDto {
@@ -93,7 +126,7 @@ class HomepageDataDto {
   @ApiProperty({
     type: HomepageHadithDto,
     nullable: true,
-    description: 'Null when the daily_hadiths table is empty or all entries are inactive.',
+    description: 'Null when nothing is scheduled for today (site calendar day) and the unscheduled random pool is empty.',
   })
   hadith_of_day!: HomepageHadithDto | null;
 
@@ -103,7 +136,7 @@ class HomepageDataDto {
   @ApiProperty({ type: [HomepagePublicationItemDto], description: 'Up to 10 latest books by created_at.' })
   publications!: HomepagePublicationItemDto[];
 
-  @ApiProperty({ type: [HomepageVideoItemDto], description: 'Most recent 7 YouTube videos from the local mirror.' })
+  @ApiProperty({ type: [HomepageVideoItemDto], description: "Most recent 7 videos uploaded by the foundation's own channel, from the local mirror. Videos from other channels that merely sit in one of its playlists are not included." })
   videos!: HomepageVideoItemDto[];
 
   @ApiProperty({ type: HomepageGalleryDto })

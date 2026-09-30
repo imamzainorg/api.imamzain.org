@@ -1,6 +1,7 @@
 import { ApiProperty, ApiPropertyOptional } from "@nestjs/swagger";
 import { Type } from "class-transformer";
 import {
+  ArrayMaxSize,
   ArrayMinSize,
   IsArray,
   IsInt,
@@ -13,6 +14,7 @@ import {
   MinLength,
   ValidateNested,
 } from "class-validator";
+import { DTO_LIMITS } from "../../common/validators/dto-limits";
 
 // ── Translations ────────────────────────────────────────────────────────────
 
@@ -81,11 +83,12 @@ export class CreateStoreLocationDto {
   @Min(0)
   display_order?: number;
 
-  @ApiProperty({ type: [StoreLocationTranslationDto] })
+  @ApiProperty({ type: [StoreLocationTranslationDto], maxItems: DTO_LIMITS.listItems })
   @IsArray()
   @ValidateNested({ each: true })
   @Type(() => StoreLocationTranslationDto)
   @ArrayMinSize(1)
+  @ArrayMaxSize(DTO_LIMITS.listItems)
   translations!: StoreLocationTranslationDto[];
 }
 
@@ -114,22 +117,24 @@ export class UpdateStoreLocationDto {
   @Min(0)
   display_order?: number;
 
-  @ApiPropertyOptional({ type: [StoreLocationTranslationDto] })
+  @ApiPropertyOptional({ type: [StoreLocationTranslationDto], maxItems: DTO_LIMITS.listItems })
   @IsOptional()
   @IsArray()
   @ValidateNested({ each: true })
   @Type(() => StoreLocationTranslationDto)
+  @ArrayMaxSize(DTO_LIMITS.listItems)
   translations?: StoreLocationTranslationDto[];
 }
 
 // ── Stores ──────────────────────────────────────────────────────────────────
 
 export class CreateStoreDto {
-  @ApiProperty({ type: [StoreTranslationDto] })
+  @ApiProperty({ type: [StoreTranslationDto], maxItems: DTO_LIMITS.listItems })
   @IsArray()
   @ValidateNested({ each: true })
   @Type(() => StoreTranslationDto)
   @ArrayMinSize(1)
+  @ArrayMaxSize(DTO_LIMITS.listItems)
   translations!: StoreTranslationDto[];
 
   @ApiPropertyOptional({ example: 0, minimum: 0 })
@@ -140,21 +145,24 @@ export class CreateStoreDto {
 
   @ApiPropertyOptional({
     type: [CreateStoreLocationDto],
-    description: "Optional sale-points to create alongside the store in one call.",
+    description: "Optional sale-points to create alongside the store in one call (at most 200).",
+    maxItems: DTO_LIMITS.ids,
   })
   @IsOptional()
   @IsArray()
   @ValidateNested({ each: true })
   @Type(() => CreateStoreLocationDto)
+  @ArrayMaxSize(DTO_LIMITS.ids)
   locations?: CreateStoreLocationDto[];
 }
 
 export class UpdateStoreDto {
-  @ApiPropertyOptional({ type: [StoreTranslationDto] })
+  @ApiPropertyOptional({ type: [StoreTranslationDto], maxItems: DTO_LIMITS.listItems })
   @IsOptional()
   @IsArray()
   @ValidateNested({ each: true })
   @Type(() => StoreTranslationDto)
+  @ArrayMaxSize(DTO_LIMITS.listItems)
   translations?: StoreTranslationDto[];
 
   @ApiPropertyOptional({ example: 0, minimum: 0 })

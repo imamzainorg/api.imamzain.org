@@ -16,7 +16,7 @@ import {
   ValidationErrorDto,
 } from '../common/dto/api-response.dto';
 import { PublicCache } from '../common/decorators/public-cache.decorator';
-import { UpsertSettingDto } from './dto/setting.dto';
+import { SettingKeyParamDto, UpsertSettingDto } from './dto/setting.dto';
 import {
   SettingListResponseDto,
   SettingMessageResponseDto,
@@ -39,7 +39,7 @@ export class SettingsController {
   @ApiOperation({
     summary: 'List public site settings (no auth)',
     description:
-      'Returns the subset of settings flagged `is_public=true`. Use this from the front-end at build / runtime; admin-only settings stay invisible. Values are decoded per their stored `type` (string / number / boolean / json). Response is CDN-cacheable (`public, max-age=900, s-maxage=3600`) — site settings change rarely, so a 1-hour CDN TTL is safe; the front-end can also pull these at build time.\n\n**Server-side cache:** results are also cached in-process for 60 s and pre-warmed at boot, so cold-cache cost is paid once per deploy, not on the first request.',
+      'Returns the subset of settings flagged `is_public=true`. Use this from the front-end at build / runtime; admin-only settings stay invisible. Values are decoded per their stored `type` (string / number / boolean / json). Staff identity (`updated_by`) is not included. Response is CDN-cacheable (`public, max-age=900, s-maxage=3600`) — site settings change rarely, so a 1-hour CDN TTL is safe; the front-end can also pull these at build time.\n\n**Server-side cache:** results are also cached in-process for 60 s and pre-warmed at boot, so cold-cache cost is paid once per deploy, not on the first request.',
   })
   @ApiOkResponse({ type: SettingListResponseDto, description: 'Public settings list' })
   findPublic() {
@@ -60,7 +60,7 @@ export class SettingsController {
   @ApiParam({ name: 'key' })
   @ApiOkResponse({ type: SettingResponseDto, description: 'Setting detail' })
   @ApiNotFoundResponse({ type: NotFoundErrorDto, description: 'No setting with that key exists' })
-  findOne(@Param('key') key: string) {
+  findOne(@Param() { key }: SettingKeyParamDto) {
     return this.service.findOne(key);
   }
 
@@ -77,7 +77,7 @@ export class SettingsController {
   @ApiBadRequestResponse({ type: ValidationErrorDto, description: 'Validation failed, or value did not match declared type' })
   @ApiConflictResponse({ type: ConflictErrorDto, description: 'Attempted to change the type of an existing setting' })
   upsert(
-    @Param('key') key: string,
+    @Param() { key }: SettingKeyParamDto,
     @Body() dto: UpsertSettingDto,
     @CurrentUser() user: CurrentUserPayload,
   ) {
@@ -90,7 +90,7 @@ export class SettingsController {
   @ApiParam({ name: 'key' })
   @ApiOkResponse({ type: SettingMessageResponseDto, description: 'Setting deleted' })
   @ApiNotFoundResponse({ type: NotFoundErrorDto, description: 'No setting with that key exists' })
-  delete(@Param('key') key: string, @CurrentUser() user: CurrentUserPayload) {
+  delete(@Param() { key }: SettingKeyParamDto, @CurrentUser() user: CurrentUserPayload) {
     return this.service.delete(key, user.id);
   }
 }

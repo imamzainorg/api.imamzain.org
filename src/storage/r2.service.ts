@@ -10,6 +10,7 @@ import {
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { randomUUID } from 'crypto';
 import type { Readable } from 'stream';
+import { IMAGE_SNIFF_BYTES } from '../common/utils/image-sniff.util';
 
 const ALLOWED_MIME_TYPES = new Set([
   'image/jpeg',
@@ -24,6 +25,14 @@ const ALLOWED_EXTENSIONS: Record<string, string> = {
   'image/gif': 'gif',
   'image/webp': 'webp',
 };
+
+/**
+ * Lifetime of a pending image upload: the presigned PUT URL and its
+ * `pending_media_uploads` row both expire this long after issue. One constant on
+ * both sides so the URL can never outlive the row that tracks the object — a PUT
+ * landing after the row is gone is a blob nothing would ever sweep.
+ */
+export const PENDING_UPLOAD_TTL_SECONDS = 15 * 60;
 
 const KEY_PREFIX = 'media/';
 const ORIGINALS_PREFIX = `${KEY_PREFIX}originals/`;
@@ -85,6 +94,22 @@ function slugifyFilename(filename: string): string {
 export interface HeadObjectResult {
   contentType: string | undefined;
   contentLength: number | undefined;
+  cacheControl?: string | undefined;
+}
+
+/**
+ * True when an S3/R2 error means "no such object". Deleting a key that is
+ * already gone is the goal state, not a failure.
+ */
+export function isStorageNotFound(err: unknown): boolean {
+  if (typeof err !== 'object' || err === null) return false;
+  const e = err as { name?: unknown; Code?: unknown; $metadata?: { httpStatusCode?: unknown } };
+  return (
+    e.name === 'NoSuchKey' ||
+    e.name === 'NotFound' ||
+    e.Code === 'NoSuchKey' ||
+    e.$metadata?.httpStatusCode === 404
+  );
 }
 
 @Injectable()
@@ -102,7 +127,8 @@ export class R2Service {
 
     this.bucket = process.env.R2_BUCKET ?? 'imamzain-media';
     this.publicBaseUrl = (process.env.R2_PUBLIC_BASE_URL ?? 'https://cdn.imamzain.org').replace(/\/$/, '');
-    this.uploadUrlTtl = parseInt(process.env.R2_UPLOAD_URL_TTL_SECONDS ?? '900', 10);
+    const configuredTtl = parseInt(process.env.R2_UPLOAD_URL_TTL_SECONDS ?? '900', 10);
+    this.uploadUrlTtl = Number.isFinite(configuredTtl) && configuredTtl > 0 ? configuredTtl : 900;
 
     this.client = new S3Client({
       region: 'auto',
@@ -176,7 +202,9 @@ export class R2Service {
       ContentType: mimeType,
     });
 
-    const uploadUrl = await getSignedUrl(this.client, command, { expiresIn: this.uploadUrlTtl });
+    // Image uploads are tracked by a pending row that lives PENDING_UPLOAD_TTL_SECONDS,
+    // so the URL never outlives it (R2_UPLOAD_URL_TTL_SECONDS can only shorten it).
+    const uploadUrl = await getSignedUrl(this.client, command, this.presignOptions(PENDING_UPLOAD_TTL_SECONDS));
     const publicUrl = `${this.publicBaseUrl}/${key}`;
 
     return { uploadUrl, key, publicUrl, mediaId, maxBytes: this.maxBytesFor(mimeType) };
@@ -215,7 +243,7 @@ export class R2Service {
       ContentType: contentType,
     });
 
-    const uploadUrl = await getSignedUrl(this.client, command, { expiresIn: this.uploadUrlTtl });
+    const uploadUrl = await getSignedUrl(this.client, command, this.presignOptions());
     const publicUrl = `${this.publicBaseUrl}/${key}`;
 
     return { uploadUrl, key, publicUrl, maxBytes: MAX_AUDIO_BYTES };
@@ -241,7 +269,7 @@ export class R2Service {
       ContentType: PDF_MIME_TYPE,
     });
 
-    const uploadUrl = await getSignedUrl(this.client, command, { expiresIn: this.uploadUrlTtl });
+    const uploadUrl = await getSignedUrl(this.client, command, this.presignOptions());
     const publicUrl = `${this.publicBaseUrl}/${key}`;
 
     return { uploadUrl, key, publicUrl, maxBytes };
@@ -291,6 +319,25 @@ export class R2Service {
   }
 
   /**
+   * Options for every presigned PUT. `signableHeaders` forces Content-Type
+   * into the signature: the S3 presigner deliberately leaves it unsigned by
+   * default, which let a client PUT `text/html` bytes under a URL presigned
+   * for `image/jpeg` — and R2 would then serve them as HTML from the CDN
+   * origin. With it signed, R2 rejects a PUT whose Content-Type differs from
+   * the one declared to the upload-url call (the CMS always sends the same
+   * value on all three upload paths).
+   */
+  private presignOptions(maxTtlSeconds?: number) {
+    const expiresIn = maxTtlSeconds === undefined ? this.uploadUrlTtl : Math.min(this.uploadUrlTtl, maxTtlSeconds);
+    return { expiresIn, signableHeaders: new Set(['content-type']) };
+  }
+
+  /** True when `mime` is one of the image types an upload may carry (jpeg/png/gif/webp). */
+  isAllowedImageMime(mime: string | undefined): mime is string {
+    return typeof mime === 'string' && ALLOWED_MIME_TYPES.has(mime);
+  }
+
+  /**
    * Fetch the actual stored Content-Type and Content-Length so the service
    * layer can compare them against client-declared values. Returns null when
    * the object isn't present.
@@ -301,6 +348,7 @@ export class R2Service {
       return {
         contentType: result.ContentType,
         contentLength: typeof result.ContentLength === 'number' ? result.ContentLength : undefined,
+        cacheControl: result.CacheControl,
       };
     } catch (err) {
       this.logger.warn(`HeadObject failed for ${key}: ${err}`);
@@ -308,10 +356,25 @@ export class R2Service {
     }
   }
 
+  /**
+   * Read only the first `bytes` bytes of an object (HTTP Range request) —
+   * enough to sniff a magic number without pulling a 25 MB original through
+   * the dyno. Used by the media confirm step.
+   */
+  async getObjectPrefix(key: string, bytes = IMAGE_SNIFF_BYTES): Promise<Buffer> {
+    const result = await this.client.send(
+      new GetObjectCommand({ Bucket: this.bucket, Key: key, Range: `bytes=0-${bytes - 1}` }),
+    );
+    return this.readBody(key, result.Body as Readable | undefined);
+  }
+
   /** Fetch an object's body as a Buffer. Used by the variant generator. */
   async getObjectBuffer(key: string): Promise<Buffer> {
     const result = await this.client.send(new GetObjectCommand({ Bucket: this.bucket, Key: key }));
-    const body = result.Body as Readable | undefined;
+    return this.readBody(key, result.Body as Readable | undefined);
+  }
+
+  private async readBody(key: string, body: Readable | undefined): Promise<Buffer> {
     if (!body) throw new Error(`R2 object ${key} returned an empty body`);
     const chunks: Buffer[] = [];
     for await (const chunk of body) {
@@ -320,14 +383,18 @@ export class R2Service {
     return Buffer.concat(chunks);
   }
 
-  /** Upload a buffer to R2 and return the resulting public URL. */
-  async putObjectBuffer(key: string, body: Buffer, contentType: string): Promise<string> {
+  /**
+   * Upload a buffer to R2 and return the resulting public URL. `cacheControl` is
+   * only sent when given, so overwriting an object can keep the header it had.
+   */
+  async putObjectBuffer(key: string, body: Buffer, contentType: string, cacheControl?: string): Promise<string> {
     await this.client.send(
       new PutObjectCommand({
         Bucket: this.bucket,
         Key: key,
         Body: body,
         ContentType: contentType,
+        ...(cacheControl ? { CacheControl: cacheControl } : {}),
       }),
     );
     return `${this.publicBaseUrl}/${key}`;

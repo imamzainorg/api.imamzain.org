@@ -3,7 +3,9 @@ import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuditService } from '../common/audit/audit.service';
 import { AUDIT_ACTIONS } from '../common/audit/audit.actions';
+import { CurrentUserPayload } from '../common/decorators/current-user.decorator';
 import { buildPaginationMeta } from '../common/utils/pagination.util';
+import { assertNotLastAdministrator, assertWithinActorEnvelope } from '../common/utils/rbac.util';
 import { resolveTranslation } from '../common/utils/translation.util';
 import { invalidateJwtUserCache } from '../auth/strategies/jwt.strategy';
 import { AssignPermissionDto, CreateRoleDto, UpdateRoleDto } from './dto/role.dto';
@@ -104,12 +106,29 @@ export class RolesService {
     return { message: 'Role fetched', data: await this.hydrateRole(id, lang) };
   }
 
+  /**
+   * 409 when a role already carries this name in ANY letter case. Role names are
+   * stored byte-exact (the unique index is case-sensitive), so without this
+   * "Admin" and "admin" would be two different roles that look identical in the
+   * CMS. `exceptId` is the role being renamed.
+   */
+  private async assertRoleNameAvailable(name: string, exceptId?: string): Promise<void> {
+    const conflict = await this.prisma.roles.findFirst({
+      where: {
+        name: { equals: name, mode: 'insensitive' },
+        ...(exceptId ? { NOT: { id: exceptId } } : {}),
+      },
+      select: { id: true },
+    });
+    if (conflict) throw new ConflictException('A role with that name already exists');
+  }
+
   async create(dto: CreateRoleDto, actorId: string, lang: string | null) {
-    const existing = await this.prisma.roles.findFirst({ where: { name: dto.name } });
-    if (existing) throw new ConflictException('A role with that name already exists');
+    const name = dto.name.trim();
+    await this.assertRoleNameAvailable(name);
 
     const role = await this.prisma.$transaction(async (tx) => {
-      const created = await tx.roles.create({ data: { name: dto.name } });
+      const created = await tx.roles.create({ data: { name } });
       await tx.role_translations.createMany({
         data: dto.translations.map((t) => ({
           role_id: created.id,
@@ -136,15 +155,14 @@ export class RolesService {
     const role = await this.prisma.roles.findUnique({ where: { id } });
     if (!role) throw new NotFoundException('Role not found');
 
-    if (dto.name && dto.name !== role.name) {
-      const conflict = await this.prisma.roles.findFirst({ where: { name: dto.name } });
-      if (conflict) throw new ConflictException('A role with that name already exists');
-    }
+    const name = dto.name?.trim() || undefined;
+    const renamed = name !== undefined && name !== role.name;
+    if (renamed) await this.assertRoleNameAvailable(name, id);
 
     await this.prisma.$transaction(async (tx) => {
       await tx.roles.update({
         where: { id },
-        data: dto.name ? { name: dto.name } : {},
+        data: name ? { name } : {},
       });
 
       if (dto.translations) {
@@ -163,19 +181,29 @@ export class RolesService {
       action: AUDIT_ACTIONS.ROLE_UPDATED,
       resourceType: 'role',
       resourceId: id,
-      changes: { method: 'PATCH', path: `/api/v1/roles/${id}` },
+      changes: {
+        method: 'PATCH',
+        path: `/api/v1/roles/${id}`,
+        ...(renamed ? { name: { before: role.name, after: name } } : {}),
+      },
     });
 
     return { message: 'Role updated', data: await this.hydrateRole(id, lang) };
   }
 
   async delete(id: string, actorId: string) {
-    // Move the assignment check inside the transaction so a concurrent
-    // assignRole call between count and delete cannot orphan the user_roles
-    // row via the Cascade delete.
+    // The assignment check lives inside the transaction, behind a row lock on
+    // the role. A concurrent user_roles insert takes a KEY SHARE lock on this row
+    // through its foreign key, which conflicts with FOR UPDATE: it either commits
+    // first and is counted below, or waits until we are done. Without the lock the
+    // count could read 0 while an assignment was in flight, and the Cascade
+    // delete would then silently remove it.
     await this.prisma.$transaction(async (tx) => {
       const role = await tx.roles.findUnique({ where: { id } });
       if (!role) throw new NotFoundException('Role not found');
+
+      const locked = await tx.$queryRaw<{ id: string }[]>`SELECT id FROM roles WHERE id = ${id}::uuid FOR UPDATE`;
+      if (locked.length === 0) throw new NotFoundException('Role not found');
 
       const assigned = await tx.user_roles.count({ where: { role_id: id } });
       if (assigned > 0) {
@@ -198,9 +226,37 @@ export class RolesService {
     return { message: 'Role deleted', data: null };
   }
 
-  async assignPermission(roleId: string, dto: AssignPermissionDto, actorId: string, lang: string | null) {
-    const role = await this.prisma.roles.findUnique({ where: { id: roleId } });
+  /**
+   * Resolve the (role, permission) pair behind a grant/revoke and apply the
+   * privilege envelope: an actor may only grant or revoke a permission they
+   * hold themselves. Without this, any custom role carrying `roles:update`
+   * is a super-admin in disguise — it could attach every other permission to
+   * itself. Super-admins hold everything, so nothing changes for them.
+   */
+  private async loadRoleAndPermission(
+    roleId: string,
+    permissionId: string,
+    actor: CurrentUserPayload,
+    verb: 'grant' | 'revoke',
+  ) {
+    const [role, permission] = await Promise.all([
+      this.prisma.roles.findUnique({ where: { id: roleId } }),
+      this.prisma.permissions.findUnique({ where: { id: permissionId } }),
+    ]);
     if (!role) throw new NotFoundException('Role not found');
+    if (!permission) throw new NotFoundException('Permission not found');
+
+    assertWithinActorEnvelope(
+      actor.permissions,
+      [permission.name],
+      `You cannot ${verb} a permission you do not hold yourself`,
+    );
+
+    return { role, permission };
+  }
+
+  async assignPermission(roleId: string, dto: AssignPermissionDto, actor: CurrentUserPayload, lang: string | null) {
+    await this.loadRoleAndPermission(roleId, dto.permissionId, actor, 'grant');
 
     await this.prisma.role_permissions.upsert({
       where: { role_id_permission_id: { role_id: roleId, permission_id: dto.permissionId } },
@@ -211,7 +267,7 @@ export class RolesService {
     await this.invalidateRoleHolders(roleId);
 
     await this.audit.write({
-      actorId,
+      actorId: actor.id,
       action: AUDIT_ACTIONS.PERMISSION_ASSIGNED_TO_ROLE,
       resourceType: 'role',
       resourceId: roleId,
@@ -221,12 +277,19 @@ export class RolesService {
     return { message: 'Permission assigned', data: await this.hydrateRole(roleId, lang) };
   }
 
-  async removePermission(roleId: string, permissionId: string, actorId: string, lang: string | null) {
-    const role = await this.prisma.roles.findUnique({ where: { id: roleId } });
-    if (!role) throw new NotFoundException('Role not found');
+  async removePermission(roleId: string, permissionId: string, actor: CurrentUserPayload, lang: string | null) {
+    await this.loadRoleAndPermission(roleId, permissionId, actor, 'revoke');
 
-    const result = await this.prisma.role_permissions.deleteMany({
-      where: { role_id: roleId, permission_id: permissionId },
+    // Revoking e.g. `roles:update` from the seeded super-admin role would leave
+    // nobody able to grant anything ever again (the actor's own token dies on
+    // the spot). Refuse while at least one full-permission administrator
+    // would not survive the change — checked in the same transaction as the
+    // delete so the snapshot cannot drift.
+    const result = await this.prisma.$transaction(async (tx) => {
+      await assertNotLastAdministrator(tx, { kind: 'remove-permission', roleId, permissionId });
+      return tx.role_permissions.deleteMany({
+        where: { role_id: roleId, permission_id: permissionId },
+      });
     });
     if (result.count === 0) {
       throw new NotFoundException('Permission is not assigned to this role');
@@ -235,7 +298,7 @@ export class RolesService {
     await this.invalidateRoleHolders(roleId);
 
     await this.audit.write({
-      actorId,
+      actorId: actor.id,
       action: AUDIT_ACTIONS.PERMISSION_REMOVED_FROM_ROLE,
       resourceType: 'role',
       resourceId: roleId,

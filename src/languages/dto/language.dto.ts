@@ -1,6 +1,9 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Transform } from 'class-transformer';
-import { IsBoolean, IsOptional, IsString, Matches, MinLength } from 'class-validator';
+import { IsBoolean, IsOptional, IsString, Matches, MaxLength, MinLength } from 'class-validator';
+
+// A language name is a word or two; the cap only keeps a stray paste out of the language list.
+const LANGUAGE_NAME_MAX = 100;
 
 export class CreateLanguageDto {
   // The column is Char(2) and language resolution is case-sensitive lowercase
@@ -13,14 +16,16 @@ export class CreateLanguageDto {
   @Matches(/^[a-z]{2}$/, { message: 'code must be a 2-letter lowercase ISO 639-1 code' })
   code!: string;
 
-  @ApiProperty({ example: 'Arabic' })
+  @ApiProperty({ example: 'Arabic', maxLength: LANGUAGE_NAME_MAX })
   @IsString()
   @MinLength(1)
+  @MaxLength(LANGUAGE_NAME_MAX)
   name!: string;
 
-  @ApiProperty({ example: 'العربية' })
+  @ApiProperty({ example: 'العربية', maxLength: LANGUAGE_NAME_MAX })
   @IsString()
   @MinLength(1)
+  @MaxLength(LANGUAGE_NAME_MAX)
   native_name!: string;
 
   @ApiPropertyOptional({ example: true, default: true })
@@ -30,14 +35,16 @@ export class CreateLanguageDto {
 }
 
 export class UpdateLanguageDto {
-  @ApiPropertyOptional({ example: 'Arabic' })
+  @ApiPropertyOptional({ example: 'Arabic', maxLength: LANGUAGE_NAME_MAX })
   @IsOptional()
   @IsString()
+  @MaxLength(LANGUAGE_NAME_MAX)
   name?: string;
 
-  @ApiPropertyOptional({ example: 'العربية' })
+  @ApiPropertyOptional({ example: 'العربية', maxLength: LANGUAGE_NAME_MAX })
   @IsOptional()
   @IsString()
+  @MaxLength(LANGUAGE_NAME_MAX)
   native_name?: string;
 
   @ApiPropertyOptional({ example: true })

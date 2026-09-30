@@ -5,6 +5,9 @@ import { PrismaService } from '../prisma/prisma.service';
 import { ADVISORY_LOCK_KEYS, withAdvisoryLock } from '../common/utils/advisory-lock.util';
 
 const YOUTUBE_API_BASE = 'https://www.googleapis.com/youtube/v3';
+// The API key travels in this header, never in the URL: a query-string key ends
+// up in every access log, proxy log and error report that records the URL.
+const YOUTUBE_API_KEY_HEADER = 'x-goog-api-key';
 const SYNC_TIMEOUT_MS = 30_000;
 // The whole guarded sync is allowed to hold its advisory-lock transaction this
 // long; a normal sync is sub-minute, but a slow channel with many playlists
@@ -17,6 +20,14 @@ const SYNC_MIN_INTERVAL_MS = 5 * 60 * 60 * 1000 + 30 * 60 * 1000; // 5h30m
 const MAX_RECENT_UPLOADS = 50;
 const MAX_PLAYLISTS_PER_CHANNEL = 50;
 const MAX_VIDEOS_PER_PLAYLIST = 200;
+// Pruning (see pruneVanished). Rows a sync did not touch are re-checked by id
+// before anything is deleted; this bounds that re-check (1 quota unit per 50).
+const MAX_PRUNE_CHECKS_PER_SYNC = 2_000;
+// Safety valve on an automatic delete: if one run wants to remove more than a
+// quarter of the mirror (and more than a handful of rows), something upstream
+// is off — skip and shout rather than empty the homepage.
+const PRUNE_MAX_SHARE = 0.25;
+const PRUNE_ALWAYS_ALLOWED = 10;
 
 type YouTubeApiVideo = {
   id: string;
@@ -70,8 +81,11 @@ type YouTubeApiPlaylist = {
  * 3. Pull all public playlists on the channel via playlists.list (1 unit per page).
  * 4. For each playlist, pull its items.
  * 5. Hydrate every unique video ID with full details via videos.list (1 unit per 50).
+ * 6. Prune: re-check by id every mirror row steps 1–5 didn't touch and delete
+ *    the ones YouTube no longer returns (deleted / made private) — 1 unit per 50.
  *
- * Total per sync: ~10–20 units depending on playlist count.
+ * Total per sync: ~10–20 units depending on playlist count, plus ~1 unit per
+ * 50 older videos that sit outside the recent-uploads window and every playlist.
  *
  * Boot behaviour: skipped silently when `YOUTUBE_API_KEY` or
  * `YOUTUBE_CHANNEL_ID` are unset — same pattern as the SMTP service.
@@ -163,6 +177,9 @@ export class YoutubeSyncService {
 
     try {
       this.logger.log(`YouTube sync starting (trigger=${trigger})`);
+      // Every row this run writes gets last_synced_at >= this instant, so
+      // "older than syncStartedAt" afterwards means "this run never saw it".
+      const syncStartedAt = new Date();
 
       const uploadsPlaylistId = await this.resolveUploadsPlaylistId(channelId, apiKey);
       if (!uploadsPlaylistId) {
@@ -193,8 +210,13 @@ export class YoutubeSyncService {
       const upsertedVideos = await this.upsertVideos(hydratedVideos);
       const upsertedPlaylists = await this.upsertPlaylists(playlists, playlistItemsByPlaylist, upsertedVideos);
 
+      // Only reached when every fetch + upsert above succeeded — a partial
+      // sync must never be allowed to decide what no longer exists.
+      const pruned = await this.pruneVanished(syncStartedAt, apiKey);
+
       this.logger.log(
-        `YouTube sync complete (trigger=${trigger}): ${upsertedVideos.size} videos, ${upsertedPlaylists} playlists`,
+        `YouTube sync complete (trigger=${trigger}): ${upsertedVideos.size} videos, ${upsertedPlaylists} playlists` +
+          `; pruned ${pruned.videos} video(s), ${pruned.playlists} playlist(s)`,
       );
 
       return { videos: upsertedVideos.size, playlists: upsertedPlaylists };
@@ -209,8 +231,8 @@ export class YoutubeSyncService {
   // ── YouTube Data API calls ─────────────────────────────────────────────
 
   private async resolveUploadsPlaylistId(channelId: string, apiKey: string): Promise<string | null> {
-    const url = `${YOUTUBE_API_BASE}/channels?part=contentDetails&id=${encodeURIComponent(channelId)}&key=${apiKey}`;
-    const data = await this.fetchJson(url);
+    const url = `${YOUTUBE_API_BASE}/channels?part=contentDetails&id=${encodeURIComponent(channelId)}`;
+    const data = await this.fetchJson(url, apiKey);
     const items = data.items ?? [];
     if (items.length === 0) return null;
     return items[0].contentDetails?.relatedPlaylists?.uploads ?? null;
@@ -224,9 +246,9 @@ export class YoutubeSyncService {
       const pageSize = Math.min(50, cap - out.length);
       const url =
         `${YOUTUBE_API_BASE}/playlistItems?part=snippet&playlistId=${encodeURIComponent(playlistId)}` +
-        `&maxResults=${pageSize}&key=${apiKey}` +
+        `&maxResults=${pageSize}` +
         (pageToken ? `&pageToken=${pageToken}` : '');
-      const data = await this.fetchJson(url);
+      const data = await this.fetchJson(url, apiKey);
       const items: YouTubePlaylistItem[] = data.items ?? [];
       out.push(...items);
       pageToken = data.nextPageToken;
@@ -243,9 +265,9 @@ export class YoutubeSyncService {
     while (out.length < MAX_PLAYLISTS_PER_CHANNEL) {
       const url =
         `${YOUTUBE_API_BASE}/playlists?part=snippet,contentDetails&channelId=${encodeURIComponent(channelId)}` +
-        `&maxResults=50&key=${apiKey}` +
+        `&maxResults=50` +
         (pageToken ? `&pageToken=${pageToken}` : '');
-      const data = await this.fetchJson(url);
+      const data = await this.fetchJson(url, apiKey);
       const items: YouTubeApiPlaylist[] = data.items ?? [];
       out.push(...items);
       pageToken = data.nextPageToken;
@@ -264,8 +286,8 @@ export class YoutubeSyncService {
       const batch = videoIds.slice(i, i + 50);
       const url =
         `${YOUTUBE_API_BASE}/videos?part=snippet,contentDetails,statistics` +
-        `&id=${batch.map(encodeURIComponent).join(',')}&key=${apiKey}`;
-      const data = await this.fetchJson(url);
+        `&id=${batch.map(encodeURIComponent).join(',')}`;
+      const data = await this.fetchJson(url, apiKey);
       const items: YouTubeApiVideo[] = data.items ?? [];
       out.push(...items);
     }
@@ -390,14 +412,115 @@ export class YoutubeSyncService {
     return playlists.length;
   }
 
+  // ── Pruning ────────────────────────────────────────────────────────────
+
+  /**
+   * Drop mirror rows for videos / playlists that no longer exist publicly on
+   * YouTube. The mirror was upsert-only, so anything deleted or made private
+   * upstream stayed on the homepage and in /youtube/* forever.
+   *
+   * "This sync didn't touch it" is NOT proof it is gone: a sync only walks the
+   * 50 newest uploads plus playlist contents (capped), so an older upload that
+   * sits in no playlist is legitimately untouched. Each untouched row is
+   * therefore re-checked BY ID — videos.list / playlists.list simply omit ids
+   * that are deleted or private — and only the omitted ones are removed.
+   * Videos that do still exist get their stats refreshed on the way.
+   *
+   * Never throws: a failed prune must not fail a sync whose upserts landed.
+   */
+  private async pruneVanished(syncStartedAt: Date, apiKey: string): Promise<{ videos: number; playlists: number }> {
+    try {
+      const videos = await this.pruneVanishedVideos(syncStartedAt, apiKey);
+      const playlists = await this.pruneVanishedPlaylists(syncStartedAt, apiKey);
+      return { videos, playlists };
+    } catch (err) {
+      this.logger.warn(`YouTube prune skipped: ${err instanceof Error ? err.message : String(err)}`);
+      return { videos: 0, playlists: 0 };
+    }
+  }
+
+  /** True when deleting `goneCount` of `total` rows is small enough to trust. */
+  private pruneLooksSane(kind: string, goneCount: number, total: number): boolean {
+    const allowed = Math.max(PRUNE_ALWAYS_ALLOWED, Math.floor(total * PRUNE_MAX_SHARE));
+    if (goneCount <= allowed) return true;
+    this.logger.warn(
+      `YouTube prune refused: ${goneCount} of ${total} ${kind} look deleted upstream (limit ${allowed} per sync) — ` +
+        'verify the channel / API key, then remove them manually if this is real',
+    );
+    return false;
+  }
+
+  private async pruneVanishedVideos(syncStartedAt: Date, apiKey: string): Promise<number> {
+    const untouched = await this.prisma.youtube_videos.findMany({
+      where: { last_synced_at: { lt: syncStartedAt } },
+      select: { id: true, video_id: true },
+      // Oldest-checked first, so a backlog larger than the cap rotates through
+      // over successive syncs (a re-check bumps last_synced_at).
+      orderBy: { last_synced_at: 'asc' },
+      take: MAX_PRUNE_CHECKS_PER_SYNC,
+    });
+    if (untouched.length === 0) return 0;
+
+    const stillPublic = await this.fetchVideoDetails(untouched.map((v) => v.video_id), apiKey);
+    await this.upsertVideos(stillPublic);
+
+    const alive = new Set(stillPublic.map((v) => v.id));
+    const gone = untouched.filter((v) => !alive.has(v.video_id));
+    if (gone.length === 0) return 0;
+
+    const total = await this.prisma.youtube_videos.count();
+    if (!this.pruneLooksSane('videos', gone.length, total)) return 0;
+
+    // youtube_playlist_items rows cascade.
+    const { count } = await this.prisma.youtube_videos.deleteMany({
+      where: { id: { in: gone.map((v) => v.id) } },
+    });
+    return count;
+  }
+
+  private async pruneVanishedPlaylists(syncStartedAt: Date, apiKey: string): Promise<number> {
+    const untouched = await this.prisma.youtube_playlists.findMany({
+      where: { last_synced_at: { lt: syncStartedAt } },
+      select: { id: true, playlist_id: true },
+      take: MAX_PRUNE_CHECKS_PER_SYNC,
+    });
+    if (untouched.length === 0) return 0;
+
+    const alive = await this.fetchExistingPlaylistIds(untouched.map((p) => p.playlist_id), apiKey);
+    const gone = untouched.filter((p) => !alive.has(p.playlist_id));
+    if (gone.length === 0) return 0;
+
+    const total = await this.prisma.youtube_playlists.count();
+    if (!this.pruneLooksSane('playlists', gone.length, total)) return 0;
+
+    const { count } = await this.prisma.youtube_playlists.deleteMany({
+      where: { id: { in: gone.map((p) => p.id) } },
+    });
+    return count;
+  }
+
+  /** Which of these playlist ids still resolve publicly (1 quota unit per 50). */
+  private async fetchExistingPlaylistIds(playlistIds: string[], apiKey: string): Promise<Set<string>> {
+    const found = new Set<string>();
+    for (let i = 0; i < playlistIds.length; i += 50) {
+      const batch = playlistIds.slice(i, i + 50);
+      const url =
+        `${YOUTUBE_API_BASE}/playlists?part=id&maxResults=50` +
+        `&id=${batch.map(encodeURIComponent).join(',')}`;
+      const data = await this.fetchJson(url, apiKey);
+      for (const item of (data.items ?? []) as Array<{ id: string }>) found.add(item.id);
+    }
+    return found;
+  }
+
   // ── HTTP helper ────────────────────────────────────────────────────────
 
-  private async fetchJson(url: string): Promise<any> {
+  private async fetchJson(url: string, apiKey: string): Promise<any> {
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), SYNC_TIMEOUT_MS);
 
     try {
-      const res = await fetch(url, { signal: controller.signal });
+      const res = await fetch(url, { signal: controller.signal, headers: { [YOUTUBE_API_KEY_HEADER]: apiKey } });
       if (!res.ok) {
         const body = await res.text().catch(() => '');
         throw new Error(`YouTube API ${res.status}: ${body.slice(0, 200)}`);

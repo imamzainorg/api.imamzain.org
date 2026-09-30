@@ -1,6 +1,7 @@
 import { ApiProperty, ApiPropertyOptional } from "@nestjs/swagger";
 import { Transform, Type } from "class-transformer";
 import {
+  ArrayMaxSize,
   ArrayMinSize,
   IsArray,
   IsBoolean,
@@ -16,7 +17,9 @@ import {
   ValidateNested,
 } from "class-validator";
 import { PaginationDto } from "../../common/dto/pagination.dto";
+import { DTO_LIMITS } from "../../common/validators/dto-limits";
 import { MaxBytes } from "../../common/validators/max-bytes.validator";
+import { toQueryBoolean } from "../../common/validators/query-boolean";
 
 export class StaticPageTranslationDto {
   @ApiProperty({ example: "ar", minLength: 2, maxLength: 2 })
@@ -77,11 +80,12 @@ export class CreateStaticPageDto {
   @MaxLength(200)
   slug!: string;
 
-  @ApiProperty({ type: [StaticPageTranslationDto] })
+  @ApiProperty({ type: [StaticPageTranslationDto], maxItems: DTO_LIMITS.listItems })
   @IsArray()
   @ValidateNested({ each: true })
   @Type(() => StaticPageTranslationDto)
   @ArrayMinSize(1)
+  @ArrayMaxSize(DTO_LIMITS.listItems)
   translations!: StaticPageTranslationDto[];
 
   @ApiPropertyOptional({ example: 0, minimum: 0 })
@@ -104,11 +108,12 @@ export class UpdateStaticPageDto {
   @MaxLength(200)
   slug?: string;
 
-  @ApiPropertyOptional({ type: [StaticPageTranslationDto] })
+  @ApiPropertyOptional({ type: [StaticPageTranslationDto], maxItems: DTO_LIMITS.listItems })
   @IsOptional()
   @IsArray()
   @ValidateNested({ each: true })
   @Type(() => StaticPageTranslationDto)
+  @ArrayMaxSize(DTO_LIMITS.listItems)
   translations?: StaticPageTranslationDto[];
 
   @ApiPropertyOptional({ example: 0, minimum: 0 })
@@ -132,10 +137,10 @@ export class TogglePublishStaticPageDto {
 export class StaticPageQueryDto extends PaginationDto {
   @ApiPropertyOptional({
     example: true,
-    description: "Filter by published state. Omit on the admin route to include both.",
+    description: "Filter by published state. Omit on the admin route to include both. Only `true` / `false` are accepted.",
   })
   @IsOptional()
-  @Transform(({ value }) => value === "true" || value === true)
+  @Transform(toQueryBoolean)
   @IsBoolean()
   is_published?: boolean;
 }

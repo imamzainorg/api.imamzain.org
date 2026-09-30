@@ -74,7 +74,11 @@ class AudioListItemDto {
   @ApiPropertyOptional({ type: AudioTranslationViewDto, nullable: true, description: 'Translation resolved for the request language.' })
   translation: AudioTranslationViewDto | null;
 
-  @ApiPropertyOptional({ type: AudioSpeakerDto, nullable: true })
+  @ApiPropertyOptional({
+    type: AudioSpeakerDto,
+    nullable: true,
+    description: 'The lecturer. Null when the audio has none — and, on public reads only, when the speaker is in the trash (`speaker_id` still carries the id). Admin reads always resolve it.',
+  })
   speaker: AudioSpeakerDto | null;
 }
 

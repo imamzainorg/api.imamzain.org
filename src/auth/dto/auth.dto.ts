@@ -1,9 +1,9 @@
 import { ApiProperty, ApiPropertyOptional } from "@nestjs/swagger";
 import { IsOptional, IsString, MaxLength, MinLength } from "class-validator";
+import { PASSWORD_MAX_LENGTH, PASSWORD_MIN_LENGTH } from "../../common/validators/password-policy";
 
-const PASSWORD_MIN = 6;
-// Bcrypt truncates to 72 bytes; cap well below to bound work and stop large-input DoS.
-const PASSWORD_MAX = 128;
+const PASSWORD_MIN = PASSWORD_MIN_LENGTH;
+const PASSWORD_MAX = PASSWORD_MAX_LENGTH;
 
 export class LoginDto {
   @ApiProperty({ example: "admin", minLength: 3, maxLength: 50 })
@@ -12,9 +12,12 @@ export class LoginDto {
   @MaxLength(50)
   username!: string;
 
-  @ApiProperty({ example: "secret123", minLength: PASSWORD_MIN, maxLength: PASSWORD_MAX })
+  // No policy minimum here — only a non-empty check. The length floor applies
+  // to passwords being SET; enforcing it at login would lock out every account
+  // created before the floor was raised.
+  @ApiProperty({ example: "correct-horse-battery", maxLength: PASSWORD_MAX })
   @IsString()
-  @MinLength(PASSWORD_MIN)
+  @MinLength(1)
   @MaxLength(PASSWORD_MAX)
   password!: string;
 }

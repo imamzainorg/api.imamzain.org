@@ -110,6 +110,9 @@ class AcademicPaperDto {
   @ApiProperty({ example: '2024-01-01T00:00:00.000Z' })
   updated_at: string;
 
+  @ApiPropertyOptional({ example: 'uuid-...', nullable: true, description: 'Staff user who uploaded the paper. Admin routes only — never present on public reads.' })
+  uploaded_by?: string | null;
+
   @ApiProperty({ type: [AcademicPaperTranslationItemDto], description: 'All stored translations' })
   academic_paper_translations: AcademicPaperTranslationItemDto[];
 
@@ -150,6 +153,9 @@ class AcademicPaperListItemDto {
 
   @ApiProperty({ example: '2024-01-01T00:00:00.000Z' })
   updated_at: string;
+
+  @ApiPropertyOptional({ example: 'uuid-...', nullable: true, description: 'Staff user who uploaded the paper. Admin list and trash only — never present on the public list.' })
+  uploaded_by?: string | null;
 
   @ApiProperty({
     type: [AcademicPaperListTranslationItemDto],

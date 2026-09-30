@@ -51,6 +51,7 @@ export class DashboardService {
       usersTotal,
       subscribersActive,
       subscribersInactive,
+      subscribersPending,
       subscribersRecent,
       contactNew,
       contactRecent,
@@ -86,9 +87,19 @@ export class DashboardService {
       this.prisma.media.count(),
       this.prisma.users.count({ where: { deleted_at: null } }),
       this.prisma.newsletter_subscribers.count({ where: { deleted_at: null, is_active: true } }),
-      this.prisma.newsletter_subscribers.count({ where: { deleted_at: null, is_active: false } }),
+      // Inactive = opted out. A sign-up still waiting for its confirmation click
+      // is inactive too (confirmed_at NULL) but is counted separately below, so it
+      // is not mistaken for an unsubscribe.
       this.prisma.newsletter_subscribers.count({
-        where: { deleted_at: null, subscribed_at: { gte: recentSince } },
+        where: { deleted_at: null, is_active: false, confirmed_at: { not: null } },
+      }),
+      this.prisma.newsletter_subscribers.count({
+        where: { deleted_at: null, is_active: false, confirmed_at: null },
+      }),
+      // New consents in the window — confirmations and admin re-subscribes — not
+      // raw sign-up attempts, which the confirmation e-mail has not yet vouched for.
+      this.prisma.newsletter_subscribers.count({
+        where: { deleted_at: null, confirmed_at: { gte: recentSince } },
       }),
       this.prisma.contact_submissions.count({ where: { deleted_at: null, status: 'NEW' } }),
       this.prisma.contact_submissions.count({
@@ -98,11 +109,16 @@ export class DashboardService {
       this.prisma.proxy_visit_requests.count({
         where: { deleted_at: null, submitted_at: { gte: recentSince } },
       }),
+      // Notifications that are STILL waiting and whose last send failed — i.e.
+      // stuck right now (SMTP down or misconfigured), retried automatically by the
+      // digest cron. notified_at IS NULL keeps historical failures out: rows from
+      // before the outbox existed were stamped notified_at by the migration and are
+      // never retried, so they must not hold this counter above zero forever.
       this.prisma.contact_submissions.count({
-        where: { deleted_at: null, notification_failed_at: { not: null } },
+        where: { deleted_at: null, notified_at: null, notification_failed_at: { not: null } },
       }),
       this.prisma.proxy_visit_requests.count({
-        where: { deleted_at: null, notification_failed_at: { not: null } },
+        where: { deleted_at: null, notified_at: null, notification_failed_at: { not: null } },
       }),
       this.prisma.qutuf_sajjadiya_contest_attempts.count({
         where: { started_at: { gte: recentSince } },
@@ -139,6 +155,7 @@ export class DashboardService {
         newsletter: {
           active_subscribers: subscribersActive,
           inactive_subscribers: subscribersInactive,
+          pending_subscribers: subscribersPending,
           recent_subscribers: subscribersRecent,
         },
         forms: {

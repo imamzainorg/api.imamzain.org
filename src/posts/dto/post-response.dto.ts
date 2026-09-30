@@ -88,15 +88,76 @@ class PostListTranslationItemDto {
   reading_time_minutes: number;
 }
 
+class PostMediaVariantRefDto {
+  @ApiProperty({ example: 'uuid-...' })
+  id: string;
+
+  @ApiProperty({ example: 640, description: 'Pixel width of this rendition.' })
+  width: number;
+
+  @ApiProperty({ example: 'https://cdn.imamzain.org/media/variants/uuid/640.webp' })
+  url: string;
+
+  @ApiProperty({ example: 'webp' })
+  format: string;
+}
+
+/**
+ * Embedded media record. The PUBLIC routes return exactly the fields below
+ * (no `file_size`, `uploaded_by` or `created_at`); the admin routes
+ * (`/posts/admin*` and the CMS write responses) return the full media row, so
+ * the three admin-only fields are optional here.
+ */
+class MediaRefDto {
+  @ApiProperty({ example: 'uuid-...' })
+  id: string;
+
+  @ApiProperty({ example: 'https://cdn.imamzain.org/media/originals/uuid/cover.jpg' })
+  url: string;
+
+  @ApiProperty({ example: 'cover.jpg' })
+  filename: string;
+
+  @ApiPropertyOptional({ example: 'صورة الغلاف', nullable: true })
+  alt_text: string | null;
+
+  @ApiProperty({ example: 'image/jpeg' })
+  mime_type: string;
+
+  @ApiPropertyOptional({ example: 1920, nullable: true })
+  width: number | null;
+
+  @ApiPropertyOptional({ example: 1080, nullable: true })
+  height: number | null;
+
+  @ApiPropertyOptional({
+    type: [PostMediaVariantRefDto],
+    description: 'Responsive renditions ordered by width ascending — build `srcset` from these. Present on the cover and on detail attachments; the thumbnail attachment in list items carries only id, url, mime_type and filename.',
+  })
+  media_variants?: PostMediaVariantRefDto[];
+
+  @ApiPropertyOptional({ example: 482113, description: 'Admin responses only — omitted from the public routes.' })
+  file_size?: number;
+
+  @ApiPropertyOptional({ format: 'uuid', nullable: true, description: 'Staff user who uploaded the file. Admin responses only — omitted from the public routes.' })
+  uploaded_by?: string | null;
+
+  @ApiPropertyOptional({ example: '2024-01-01T00:00:00.000Z', description: 'Admin responses only — omitted from the public routes.' })
+  created_at?: string;
+}
+
 class PostAttachmentDto {
+  @ApiPropertyOptional({ example: 'uuid-...' })
+  post_id?: string;
+
   @ApiProperty({ example: 'uuid-...' })
   media_id: string;
 
   @ApiProperty({ example: 0 })
   display_order: number;
 
-  @ApiPropertyOptional({ example: { id: 'uuid-...', url: 'https://cdn.example.com/file.pdf', mime_type: 'application/pdf' } })
-  media?: Record<string, any>;
+  @ApiPropertyOptional({ type: MediaRefDto, description: 'The attached media record (public routes: id, url, filename, alt_text, mime_type, width, height, media_variants on detail).' })
+  media?: MediaRefDto;
 }
 
 class PostCategoryTranslationRefDto {
@@ -122,29 +183,6 @@ class PostCategoryRefDto {
 
   @ApiProperty({ type: [PostCategoryTranslationRefDto], description: 'All translations of the parent category — resolve client-side or rely on Accept-Language during a subsequent /post-categories fetch.' })
   post_category_translations: PostCategoryTranslationRefDto[];
-}
-
-class MediaRefDto {
-  @ApiProperty({ example: 'uuid-...' })
-  id: string;
-
-  @ApiProperty({ example: 'https://cdn.imamzain.org/media/originals/uuid/cover.jpg' })
-  url: string;
-
-  @ApiProperty({ example: 'cover.jpg' })
-  filename: string;
-
-  @ApiPropertyOptional({ example: 'صورة الغلاف', nullable: true })
-  alt_text: string | null;
-
-  @ApiProperty({ example: 'image/jpeg' })
-  mime_type: string;
-
-  @ApiPropertyOptional({ example: 1920, nullable: true })
-  width: number | null;
-
-  @ApiPropertyOptional({ example: 1080, nullable: true })
-  height: number | null;
 }
 
 /**
@@ -242,6 +280,13 @@ class PostDetailDto {
 
   @ApiProperty({ example: '2024-01-01T00:00:00.000Z' })
   updated_at: string;
+
+  @ApiPropertyOptional({
+    format: 'uuid',
+    nullable: true,
+    description: 'Staff user who created the post. Present on admin responses only (`GET /posts/admin/:id` and the create / update / publish bodies); omitted from the public detail routes.',
+  })
+  created_by?: string | null;
 
   @ApiProperty({ type: [PostTranslationItemDto], description: 'All stored translations, full shape including `body`.' })
   post_translations: PostTranslationItemDto[];

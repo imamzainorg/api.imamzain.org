@@ -64,7 +64,7 @@ class HadithPickDto {
 const TODAY_SOURCE = ['scheduled', 'random', 'empty'] as const;
 
 class TodayHadithMetaDto {
-  @ApiProperty({ example: '2026-05-12', description: 'UTC calendar date this pick is for (YYYY-MM-DD).' })
+  @ApiProperty({ example: '2026-05-12', description: 'Calendar date this pick is for (YYYY-MM-DD), in the site time zone (`SITE_TIMEZONE`, default Asia/Baghdad).' })
   date!: string;
 
   @ApiProperty({
@@ -110,3 +110,25 @@ class PublicHadithListDataDto extends ApiPaginatedData(PublicHadithItemDto) {}
 export class PublicHadithListResponseDto extends ApiEnvelope(PublicHadithListDataDto, 'Hadiths fetched') {}
 
 export class DailyHadithMessageResponseDto extends ApiEnvelope(null, 'Hadith deleted') {}
+
+class RestoreHadithMetaDto {
+  @ApiProperty({
+    example: false,
+    description:
+      "True when the hadith's old `display_date` had been claimed by another hadith while it was trashed, so it came back with no date.",
+  })
+  unscheduled!: boolean;
+
+  @ApiProperty({
+    example: null,
+    nullable: true,
+    type: String,
+    description: 'The date the hadith lost (YYYY-MM-DD) when `unscheduled` is true; otherwise null.',
+  })
+  previous_display_date!: string | null;
+}
+
+export class DailyHadithRestoreResponseDto extends ApiEnvelope(null, 'Hadith restored') {
+  @ApiProperty({ type: RestoreHadithMetaDto })
+  meta!: RestoreHadithMetaDto;
+}

@@ -2,7 +2,7 @@ import { MiddlewareConsumer, Module, NestModule } from "@nestjs/common";
 import { APP_GUARD } from "@nestjs/core";
 import { ConfigModule } from "@nestjs/config";
 import { ScheduleModule } from "@nestjs/schedule";
-import { ThrottlerGuard, ThrottlerModule } from "@nestjs/throttler";
+import { ThrottlerModule, ThrottlerOptions } from "@nestjs/throttler";
 import { ThrottlerStorageRedisService } from "@nest-lab/throttler-storage-redis";
 import { Redis } from "ioredis";
 import { LoggerModule } from "nestjs-pino";
@@ -43,6 +43,12 @@ import { SpeakersModule } from "./speakers/speakers.module";
 import { HealthController } from "./health/health.controller";
 import { LanguageMiddleware } from "./common/middleware/language.middleware";
 import { REDIS_CLIENT } from "./common/redis/redis.service";
+import {
+  GLOBAL_THROTTLER,
+  GlobalThrottlerGuard,
+  resolveGlobalThrottleLimit,
+  THROTTLE_WINDOW_MS,
+} from "./common/guards/global-throttler.guard";
 import { SentryModule } from "@sentry/nestjs/setup";
 
 @Module({
@@ -69,20 +75,32 @@ import { SentryModule } from "@sentry/nestjs/setup";
           userId: req.user?.id ?? null,
         }),
         serializers: {
+          // `req.raw.ip` is Express's proxy-aware client address (honours
+          // `trust proxy`); `remoteAddress` is only ever the socket peer, i.e.
+          // the load balancer, which made request logs useless for "who did
+          // this" questions.
           req: (req: any) => ({
             id: req.id,
             method: req.method,
             url: req.url,
-            ip: req.remoteAddress,
+            ip: req.raw?.ip ?? req.remoteAddress,
           }),
           res: (res: any) => ({ statusCode: res.statusCode }),
         },
       },
     }),
-    // Throttler counters live in Redis when REDIS_URL is set so a multi-
-    // instance deployment shares one counter per IP instead of N copies.
-    // Without REDIS_URL the throttler keeps its in-memory map (current
-    // behaviour) — fine for single-instance prod and dev.
+    // Two throttlers:
+    //   • `default` — 1000 / 15 min per IP *per route handler* (the library's
+    //     native keying). Routes tighten it with `@Throttle({ default: … })`
+    //     (login 10, forms 300/h, contest 20 …).
+    //   • `global`  — one bucket per IP across the whole API, keyed by
+    //     GlobalThrottlerGuard. This is the ceiling the docs always described;
+    //     without it a client could make ~1000 × (number of routes) requests.
+    //     THROTTLE_GLOBAL_LIMIT tunes it (0 disables).
+    // Counters live in Redis when REDIS_URL is set so a multi-instance
+    // deployment shares one counter per IP instead of N copies. Without
+    // REDIS_URL the throttler keeps its in-memory map — fine for
+    // single-instance prod and dev.
     ThrottlerModule.forRootAsync({
       // Reuse the RedisModule command client (REDIS_CLIENT) rather than opening
       // a second, unmanaged connection. That client already has an 'error'
@@ -93,7 +111,12 @@ import { SentryModule } from "@sentry/nestjs/setup";
       // handed, so RedisService stays the sole owner.
       inject: [REDIS_CLIENT],
       useFactory: (client: Redis | null) => {
-        const base = { throttlers: [{ ttl: 900_000, limit: 1_000 }] };
+        const throttlers: ThrottlerOptions[] = [{ name: "default", ttl: THROTTLE_WINDOW_MS, limit: 1_000 }];
+        const globalLimit = resolveGlobalThrottleLimit();
+        if (globalLimit > 0) {
+          throttlers.push({ name: GLOBAL_THROTTLER, ttl: THROTTLE_WINDOW_MS, limit: globalLimit });
+        }
+        const base = { throttlers };
         if (!client) return base;
         return { ...base, storage: new ThrottlerStorageRedisService(client) };
       },
@@ -133,7 +156,7 @@ import { SentryModule } from "@sentry/nestjs/setup";
     SpeakersModule,
   ],
   controllers: [HealthController],
-  providers: [{ provide: APP_GUARD, useClass: ThrottlerGuard }],
+  providers: [{ provide: APP_GUARD, useClass: GlobalThrottlerGuard }],
 })
 export class AppModule implements NestModule {
   configure(consumer: MiddlewareConsumer) {

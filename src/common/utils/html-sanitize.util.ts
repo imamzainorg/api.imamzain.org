@@ -15,9 +15,11 @@ import sanitizeHtml from 'sanitize-html';
  * The allowlist mirrors the Tiptap StarterKit schema (paragraph, heading,
  * lists, code, blockquote, link, image, table, basic marks). Everything
  * else is dropped silently. URL schemes are restricted; `style` is not
- * allowed (background:url(javascript:...) is a real vector); `class` and
- * `id` are allowed because Tiptap emits them for syntax highlighting and
- * heading anchors.
+ * allowed (background:url(javascript:...) is a real vector); `class` is
+ * allowed because Tiptap emits it for syntax highlighting. `id` is allowed
+ * only in a namespaced form (see USER_CONTENT_ID_PREFIX): a raw id lets
+ * authored HTML shadow host-page elements and `window.*` globals (DOM
+ * clobbering).
  */
 const TIPTAP_ALLOWED_TAGS = [
   'p',
@@ -73,6 +75,22 @@ const ALLOWED_DATA_IMG_MIMES = new Set([
 const DATA_URL_MIME_RE = /^data:([^;,]+)[;,]/i;
 
 /**
+ * Every kept `id` gets this prefix so authored ids can never collide with (or
+ * clobber) an element or global of the page that renders the body. The
+ * sanitiser runs again each time the CMS re-saves a body it fetched from us,
+ * so an id that already carries the prefix is left alone — otherwise it would
+ * grow one prefix per save.
+ */
+const USER_CONTENT_ID_PREFIX = 'user-content-';
+const SAFE_ID_RE = /^[A-Za-z][A-Za-z0-9_-]{0,63}$/;
+
+/** The namespaced form of an authored id, or null when the id is not acceptable. */
+function namespacedId(raw: string): string | null {
+  const bare = raw.startsWith(USER_CONTENT_ID_PREFIX) ? raw.slice(USER_CONTENT_ID_PREFIX.length) : raw;
+  return SAFE_ID_RE.test(bare) ? USER_CONTENT_ID_PREFIX + bare : null;
+}
+
+/**
  * Sanitise HTML produced by the rich-text editor.
  * Returns the cleaned HTML; never throws on malformed input.
  */
@@ -113,13 +131,36 @@ export function sanitizeEditorHtml(html: string | null | undefined): string {
       return false;
     },
     transformTags: {
-      // Pair target=_blank with rel=noopener noreferrer to block reverse
-      // tab-nabbing on whatever surface renders the body.
       a: (tagName, attribs) => {
         const next = { ...attribs };
-        if (next.target === '_blank') {
-          next.rel = 'noopener noreferrer';
+        if (next.target !== undefined) {
+          // Browsers match the `_blank` keyword case-insensitively, and ANY
+          // other target names a fresh browsing context too — so every
+          // non-_blank target is dropped, and the surviving one is rewritten
+          // to the exact keyword with rel pinned. An authored rel is
+          // overwritten on purpose (rel="opener" would defeat it).
+          if (next.target.trim().toLowerCase() === '_blank') {
+            next.target = '_blank';
+            next.rel = 'noopener noreferrer';
+          } else {
+            delete next.target;
+          }
         }
+        // Same-page anchors follow the id rewrite below; without this an
+        // editor-authored in-page link would stop reaching its heading.
+        const href = next.href?.trim();
+        if (href?.startsWith('#') && href.length > 1) {
+          const id = namespacedId(href.slice(1));
+          if (id) next.href = `#${id}`;
+        }
+        return { tagName, attribs: next };
+      },
+      '*': (tagName, attribs) => {
+        if (attribs.id === undefined) return { tagName, attribs };
+        const next = { ...attribs };
+        const id = namespacedId(next.id);
+        if (id) next.id = id;
+        else delete next.id;
         return { tagName, attribs: next };
       },
     },

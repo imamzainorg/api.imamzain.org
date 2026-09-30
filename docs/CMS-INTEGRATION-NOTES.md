@@ -46,6 +46,14 @@ idempotent — re-running is a no-op.
 
 ## 2. Media variants — public-site impact
 
+> **Superseded.** Generation moved off the request path in Round 10
+> (§15.4) — it no longer runs synchronously during `/media/confirm` as
+> described just below — and the contract for knowing when variants are
+> ready changed again in Round 23 (§29.4): poll `variants_status`, never
+> `variants.length`. Read §29.4 for the current rules; this section is
+> kept for the response-shape example and the public-site fallback
+> pattern, both still accurate.
+
 ### What changed
 
 `POST /media/confirm` now triggers a synchronous sharp pipeline that:
@@ -116,11 +124,14 @@ function ResponsiveImage({ media, sizes = "100vw", className }: Props) {
 
 ### CMS — recommended usage
 
-- After `POST /media/confirm`, the response already contains `variants`.
-  No follow-up call needed.
-- If `variants` is empty (sharp failed mid-upload — e.g. corrupt image,
-  timeout), surface a "Regenerate variants" button on the media detail
-  page that calls `POST /media/:id/regenerate-variants`.
+- ~~After `POST /media/confirm`, the response already contains
+  `variants`. No follow-up call needed.~~ Superseded — generation is
+  background (§15.4); poll `variants_status` (§29.4).
+- ~~If `variants` is empty (sharp failed mid-upload — e.g. corrupt image,
+  timeout), surface a "Regenerate variants" button~~ Superseded — an
+  empty `variants` array is often just a small original or an animated
+  GIF, not a failure. Surface "Regenerate variants" only when
+  `variants_status === "partial"` — see §29.4.
 - Don't show the per-variant sizes in the editor UI — they're an
   implementation detail. Only show the original.
 
@@ -649,6 +660,15 @@ in to break ties when multiple translations match. This way an Arabic
 search that surfaces an English summary returns the English row, not
 the Arabic default whose text doesn't contain the query.
 
+**`total` is `items.length`, not a match count.** Each bucket's `total`
+counts what's actually in that bucket's `items` array, so it's capped
+at `limit` (10 by default) same as `items` is. It is not the number of
+rows in the database that matched the query — there's no separate
+`COUNT(*)` query backing it. If a bucket's `total` equals `limit`,
+treat that as "there may be more" rather than "exactly this many
+results exist"; raise `limit` (max 50) and re-query to see further
+hits, there's no offset/page param for this endpoint.
+
 ### b. Public sitemap — `GET /sitemap.xml`
 
 Returns an `application/xml` urlset of every published post, with
@@ -770,8 +790,13 @@ The CMS, the public site, and the integration handbook all describe
 what to do with these headers — see
 [integration.md#caching-strategy--cost-notes-for-consumer-apps](integration.md#caching-strategy--cost-notes-for-consumer-apps).
 
-NestJS / Express already emits a weak `ETag` on every JSON response;
-the CDN turns `If-None-Match` into 304 responses automatically.
+> **Correction (Round 23, 2026-09-27).** This paragraph originally said
+> Express's default weak ETag already made this work. It didn't: the
+> envelope's `timestamp` changed the body hash on every single response,
+> and the compression middleware dropped the ETag entirely on any
+> response over 1 KB — so no 304 was ever actually served. Round 23
+> fixed both: the ETag is now a weak hash of the body **without** the
+> envelope `timestamp`, and it's kept on compressed responses. See §29.1.
 
 ### c. `GET /homepage` — composite aggregator
 
@@ -1262,7 +1287,10 @@ key without invalidating JWTs.
 are set (all optional; missing values still boot in dev):
 
 - `BCRYPT_ROUNDS` — must be integer 4–15 if set
-- `R2_UPLOAD_URL_TTL_SECONDS` — must be integer 60–86400 if set
+- `R2_UPLOAD_URL_TTL_SECONDS` — must be integer 60–86400 if set. As of
+  Round 23 (§29.4) this only governs audio/PDF upload URLs; image upload
+  URLs (`POST /media/upload-url`) are separately capped at `min(this,
+  900)` seconds regardless of this value.
 - `SENTRY_DSN`, `LOG_LEVEL`, `NEWSLETTER_UNSUBSCRIBE_URL_BASE`,
   `EMAIL_FROM`, `EMAIL_TO`, `PUBLIC_SITE_URL`, `PUBLIC_SITE_NAME`,
   `SMTP_HOST/PORT/USER/PASS/SECURE`, `TWILIO_ACCOUNT_SID/AUTH_TOKEN/
@@ -1759,9 +1787,13 @@ array**. Generation runs on the next event-loop tick, gated by the same
 
 CMS action:
 
-- If the CMS shows the variants in the upload UI, **poll `GET /media/:id`**
-  (every ~500 ms is fine) until `variants.length === 4` — typically
-  1–3 seconds after confirm.
+- If the CMS shows the variants in the upload UI, **poll `GET
+  /media/:id`** (every ~500 ms is fine). **Superseded in Round 23
+  (§29.4): poll until `variants_status !== "processing"`, never compare
+  `variants.length` to a fixed count** — a narrow original legitimately
+  gets fewer than four variants, and an animated GIF gets none, so
+  `=== 4` never arrives for most uploads and `> 0` stops after the first
+  one lands. See §29.4 for the full contract.
 - If the CMS just stages the original and lets the public site render
   it, no change — the original `url` is fully usable; variants
   populate transparently.
@@ -2573,15 +2605,15 @@ exists on translation tabs. This is materially more CMS work than a
 route-path fix — track it before this ships.
 
 **`GET /daily-hadiths/today`.** Looks up the hadith scheduled to today's
-UTC date. If none is scheduled, falls back to a hadith drawn uniformly
-at random from every *unscheduled* hadith (never one already scheduled
-elsewhere) — genuinely random on each call, nothing is written back. Two
-requests on the same day with nothing scheduled can return different
-hadiths; that's intentional. `meta.source` is `'scheduled'`, `'random'`,
-or `'empty'` (table empty, or everything is scheduled to some other
-date). Cache: `public, max-age=900, s-maxage=3600` — note that within an
-edge PoP's cache window, a random-fallback day will keep serving
-whichever pick that PoP happened to cache first.
+date in the site time zone (`SITE_TIMEZONE`, default Asia/Baghdad;
+described in the hadith day-boundary section, §29.2). If none is
+scheduled, falls back to a hadith drawn uniformly at random from every
+*unscheduled* hadith (never one already scheduled elsewhere) — drawn
+once per site day and locked, so every visitor sees the same one
+(section 24). `meta.source` is `'scheduled'`, `'random'`, or `'empty'`
+(table empty, or everything is scheduled to some other date). Cache:
+`public, max-age=900, s-maxage=3600`, both cut short so the response
+never outlives site midnight (see §29.2).
 
 **`GET /daily-hadiths` (public).** A pure lookup, never a random
 fallback — that's `/today`'s job alone. Query params:
@@ -2604,7 +2636,9 @@ daily fallback); set it to schedule; on update, set it to `null` to
 unschedule. Two hadiths can't share a date — creating or updating into an
 already-claimed date returns 409. Soft-deleting a scheduled hadith frees
 its date immediately for another hadith to claim; restoring one whose
-date was claimed in the meantime also returns 409.
+date was claimed in the meantime succeeds and returns it **unscheduled**
+(`display_date` cleared, back in the random pool) instead of 409ing —
+see §29.2.
 
 **Translations lost `is_default`.** A hadith's translations no longer
 mark one as the default; the language fallback is a plain
@@ -2645,11 +2679,12 @@ each origin hit (and each CDN edge's first cache fill) drew independently.
 That's not what "hadith of the day" should mean, so the draw is now
 locked the first time it happens each day.
 
-**Mechanism.** A new table, `daily_hadith_random_picks`, one row per UTC
-date, written once: the first `/today` request that finds nothing
-scheduled draws a hadith at random from the unscheduled pool and records
-the winner. Every later request that day reads this row instead of
-drawing again. The next calendar day has no row yet and draws fresh.
+**Mechanism.** A new table, `daily_hadith_random_picks`, one row per
+site-timezone calendar date (Asia/Baghdad by default — see §29.2),
+written once: the first `/today` request that finds nothing scheduled
+draws a hadith at random from the unscheduled pool and records the
+winner. Every later request that day reads this row instead of drawing
+again. The next calendar day has no row yet and draws fresh.
 
 **Still never touches `display_date`.** The lock only ever writes to
 `daily_hadith_random_picks`, never to the hadith's own `display_date` —
@@ -2658,10 +2693,15 @@ for a date *after* that date already has a lock still wins unconditionally,
 every request checks "is anything scheduled today" first, before ever
 looking at the lock table.
 
-**Empty days are locked too.** If nothing is scheduled and the
-unscheduled pool is also empty, that "empty" outcome is locked in the
-same way (`hadith_id: null`), so a hadith added later that same day
-doesn't retroactively give the day content it didn't show earlier.
+**Empty days are locked, until a hadith becomes eligible.** If nothing
+is scheduled and the unscheduled pool is also empty, that "empty"
+outcome is locked (`hadith_id: null`). Unlike a real pick, this lock
+doesn't survive a change to the pool: as of Round 23 (§29.2), creating an
+unscheduled hadith, restoring one into the unscheduled pool, or
+unscheduling one (`display_date: null`) deletes that day's empty lock, so
+the very next request draws again — a hadith added later that same day no
+longer has to wait for midnight. A lock holding an actual pick is never
+touched by this.
 
 **Once locked, a later soft-delete doesn't unpick it** — same precedent
 as `display_date` lookups already followed. `/today` keeps returning that
@@ -2671,8 +2711,8 @@ later.
 **Concurrency.** Two simultaneous first-requests for the same day both
 try to create the lock row; the loser's `create` hits a P2002 (the
 `pick_date` primary key), and the loser re-reads and returns the winner's
-row instead of its own draw — so a burst of traffic right at UTC midnight
-still converges on one answer.
+row instead of its own draw — so a burst of traffic right at site
+midnight (21:00 UTC for Asia/Baghdad) still converges on one answer.
 
 **Migration:** `20260906140000_hadith_random_pick_lock`, additive only
 (one new table). Applied to production before this round's code deployed
@@ -2793,7 +2833,309 @@ filter, `parts_count`/`parts[]`/`parent` on the detail response, the
 `is_publication` query filter, and the create/update validation (self-parent,
 nested-parent, already-has-parts) paths.
 
-## 26. Open follow-ups (still not in this push)
+## 26. Round 21 — Tier-0 audit fixes (security + business logic)
+
+The September 2026 audit's "fix this week" list. Everything here changes
+an observable API behaviour the CMS may need to handle.
+
+**RBAC — privilege envelope + last-administrator guard.**
+- `PATCH /users/:id`, `DELETE /users/:id` and `POST /users/:id/reset-password`
+  now return **403** when the target user holds any permission the caller
+  does not (previously a seeded `admin` could reset a `super-admin`'s
+  password and log in as them). `DELETE /users/:id` also returns 403 for
+  the caller's own account.
+- `POST /roles/:id/permissions` and `DELETE /roles/:id/permissions/:permissionId`
+  return **403** when the caller does not hold the permission being
+  granted / revoked; a non-existent `permissionId` is now a **404** (was a
+  400 `FK_CONSTRAINT_VIOLATION`).
+- `DELETE /users/:id`, `DELETE /users/:id/roles/:roleId` and
+  `DELETE /roles/:id/permissions/:permissionId` return **409** when the
+  change would leave no active user holding every permission. Show the
+  `error` text; it tells the admin to grant another account the full set
+  first. Full rules in `docs/permissions.md`.
+
+**Posts — unpublish now clears `published_at`.** `PATCH /posts/:id/publish
+{ is_published:false }`, `PATCH /posts/:id { is_published:false }` (without
+an explicit `published_at`) and `POST /posts/bulk/publish
+{ is_published:false }` all set `published_at = null`. Before, the past
+timestamp stayed and the minute-cron re-published the post within 60 s
+(`is_published = false AND published_at <= now` is the "scheduled and
+due" condition). Re-publishing stamps a fresh `published_at`. Sending
+`is_published:false` **with** a future `published_at` still schedules.
+
+**Books / academic papers / gallery — drafts no longer 404 after a
+write.** `POST` and `PATCH` on those three resources with
+`is_published:false` returned 404 *after* committing the row (the
+post-write hydrate used the public reader). They now return the row like
+posts, audios and static pages already did.
+
+**Media confirm — real image checks.** `POST /media/confirm` now rejects
+with **400** when the stored object's Content-Type is not one of
+jpeg/png/gif/webp, or when the first bytes are not a JPEG/PNG/GIF/WebP
+signature (an HTML/SVG file labelled `image/png`, for instance). The
+object and the pending row are deleted, exactly like the 413 path. Every
+presigned PUT (media, audio, book/paper PDF) now **signs the
+Content-Type**: the PUT must carry exactly the `mime_type` / content type
+passed to the `upload-url` call — the CMS already does this on all three
+paths, so no change is needed there, but a PUT without the header (or
+with a different one) is now a 403 from R2.
+
+**Logout everywhere ends access tokens too.** `POST /auth/logout` with no
+body now bumps `token_version`, so every outstanding access token — on
+every device, including the one calling — fails with
+`401 Token has been invalidated` on its next request. Before, only
+refresh tokens were revoked and access tokens kept working for up to 24 h.
+Single-token logout (`{ refresh_token }`) is unchanged.
+
+**Oversized bodies are a 413, not a 500.** Requests above the JSON limit
+now return `413 PAYLOAD_TOO_LARGE` in the standard error envelope. The
+limit is 1 MB per request (the 200 KB cap per translation body is
+unchanged); Express's silent 100 KB default is gone.
+
+**Rate limiting is now really global.** In addition to the per-route
+buckets, one API-wide bucket of **3000 requests / 15 min per client IP**
+applies (`THROTTLE_GLOBAL_LIMIT`, 0 disables). A 429 from it carries
+`X-RateLimit-*-global` headers; the response shape is unchanged. Bulk
+media work stays well under it (a 50-image upload is ~1,300 requests).
+
+**Ops (Render):** set `TRUST_PROXY_HOPS=2` — production traffic is
+client → Cloudflare (project zone) → Render, and with the old fixed value
+of 1 every throttle and audit IP was a Cloudflare edge address. Until the
+variable is set, behaviour is unchanged (default 1).
+
+## 27. Round 22 — Tier-1 audit fixes (delivery, double opt-in, integrity)
+
+The second tier of the September 2026 audit. Like round 21 this changes
+observable behaviour; every item below says what the CMS (or the public
+site) has to do about it. The full mechanics live in
+[integration.md](integration.md); this is the checklist.
+
+### 27.1 Sign-in and passwords
+
+- **Passwords must be at least 10 characters** on `POST /users`,
+  `POST /users/:id/reset-password` and `PATCH /auth/me/password`
+  (`newPassword`). Update the forms' client-side rule and hint. **Login is
+  unchanged** — an existing 6-character password still signs in.
+- **Login lockout per username.** 5 failed attempts for one username within
+  15 minutes → `429` with `code: AUTH_LOGIN_LOCKED` and a `Retry-After`
+  header (seconds); the wait starts at 60 s and doubles to a 15-minute cap.
+  Even the right password is refused while locked. The login screen should
+  read `Retry-After` and say "try again in N minutes" instead of showing the
+  generic "too many requests". A successful login clears the count.
+- **New audit action `USER_LOGIN_FAILED`** (no `user_id`; `resource_id` is
+  the account when the username exists; `changes.reason` is `bad_password`,
+  `unknown_username` or `locked`). Add it to the audit-log filter and labels.
+- **`400 CHECK_CONSTRAINT_VIOLATION`** is the new code for a value that broke
+  a database rule no DTO caught (it used to be a 500). Show the `error` text.
+- Ops: `JWT_SECRET` must be ≥ 32 characters and the `.env.example`
+  placeholder is refused in production (the API won't boot otherwise).
+
+### 27.2 Publishing and slugs
+
+- **A published slug can't be renamed.** `PATCH` of a published **post,
+  static page or book** with a different `slug` → `409`,
+  `code: SLUG_LOCKED_WHILE_PUBLISHED`. Unpublish first, or send
+  `is_published: false` in the same request. Setting a slug where there was
+  none, and re-sending the unchanged slug (the post form always does),
+  still work. Disable the slug field on published items, or surface the 409.
+- **`published_at` can no longer sit in the future on a live post.**
+  `is_published: true` with a future `published_at` (or with none) publishes
+  *now* and stamps `published_at = now` — read it back from the response. A
+  future `published_at` together with `is_published: false` is still a
+  schedule. Conversely a **past** `published_at` on an unpublished post is
+  dropped (`null`), because the minute-cron would otherwise publish it
+  within 60 s — except when it is the already-stored due schedule sent back
+  unchanged. `POST /posts/bulk/publish` and `PATCH …/publish` follow the same rule.
+
+### 27.3 Book series
+
+- `part_number` and `parts` must be sent **together**, and
+  `part_number ≤ parts` (`400`).
+- **A part number is unique within its series** (`409`, message names the
+  number). This is also enforced by a partial unique index.
+- **A series with live parts can't be deleted** (`409` — delete or detach
+  the parts first). **Restoring a part** needs its parent to be live and
+  top-level (`409` otherwise) and its part number to be free.
+- A new part defaults `is_published` to its parent's value when the body
+  doesn't say. An unpublished parent hides its parts from the public reader
+  (`GET /books/:id` for a part → 404; view counts too).
+- `parts[]` is ordered by `part_number`, then creation time.
+- The production `chk_books_parts` CHECK constraint now exists in a
+  migration, so dev and CI databases have it too.
+
+### 27.4 Forms
+
+- **Proxy-visit status changes follow a table** — `PENDING → APPROVED |
+  REJECTED | COMPLETED`, `APPROVED → COMPLETED | REJECTED | PENDING`,
+  `REJECTED → PENDING | APPROVED`, `COMPLETED` final — anything else is a
+  `400`. The UI you have (`PENDING → APPROVED/REJECTED`, `APPROVED →
+  COMPLETED`) is unaffected. Going back to `PENDING` clears `processed_by` /
+  `processed_at`.
+- **Both form `PATCH` endpoints answer `409` on a stale write** (another
+  admin changed the row first): reload and retry. The WhatsApp message on
+  `COMPLETED` now goes out exactly once even when two admins click together.
+- **Admin notification e-mails are digests** sent by a cron — one per burst,
+  at most every 5 minutes (`FORM_NOTIFY_MIN_INTERVAL_SECONDS`). Submitting a
+  form no longer e-mails anyone inline. `GET /dashboard/stats` →
+  `forms.unsent_notifications` now counts notifications **stuck right now**
+  and returns to 0 by itself when mail flows; historical failures are not
+  counted.
+- **Old notifications are not re-sent.** Production check on 2026-09-17: 20 of
+  20 contact submissions and 87 of 91 proxy-visit requests had never produced
+  a delivered e-mail (SMTP was failing). The migration marks everything that
+  exists as handled so the first digest doesn't mail the whole history —
+  **review the existing inbox in the CMS**, and check the SMTP settings on
+  Render.
+
+### 27.5 Newsletter
+
+**Subscribers (double opt-in).**
+
+- `POST /newsletter/subscribe` no longer subscribes anyone and no longer
+  returns the row or an `unsubscribe_token`; it answers the same
+  `200 { data: null }` for every address and sends a confirmation e-mail.
+  The public site needs a **confirm page** (below).
+- Subscribers have `confirmed_at` and `confirmation_sent_at`. **A sign-up
+  that hasn't been confirmed is `is_active: false`, `confirmed_at: null`,
+  `unsubscribed_at: null`** — label it "pending", not "unsubscribed". Old
+  subscribers were grandfathered as confirmed. `GET /dashboard/stats` →
+  `newsletter.pending_subscribers` is new; `inactive_subscribers` is now
+  opted-out only; `recent_subscribers` counts confirmations.
+- **Restore** from the trash keeps an explicit opt-out (returns inactive)
+  and leaves a never-confirmed sign-up pending; previously it forced
+  everyone active. **Admin resubscribe** skips the e-mail and stamps
+  `confirmed_at`. The `NEWSLETTER_SUBSCRIBED` audit action now fires on the
+  confirmation click; `NEWSLETTER_SUBSCRIBE_REQUESTED` is new (the request).
+
+**Campaigns.**
+
+- **Delivery is paced** (default 300 messages an hour across all campaigns —
+  Hostinger's published per-mailbox limit is 500/h, see integration.md),
+  so a 1,300-subscriber list takes a bit over 4 hours. The progress bar should
+  show an ETA, not a spinner.
+- **New status behaviour.** `failed` = nothing was delivered; it now has a
+  way out: **`POST /newsletter/campaigns/:id/retry`** (`newsletter:update`;
+  409 unless `failed`) — add a **Retry** button. `DELETE` also works on
+  `failed` campaigns.
+- **Paused banner.** Campaigns gain `paused_until` and `last_error`. While
+  `paused_until` is in the future show "paused — will resume automatically"
+  with `last_error`; they clear themselves once mail flows.
+- **`scheduled_at` must include a UTC offset and be in the future** (`400`
+  otherwise). A `datetime-local` input yields an offset-less string — convert
+  with `new Date(value).toISOString()` before sending. Re-sending the stored
+  value on save is fine even if it has since passed.
+- **`send` / `retry` can answer `503 SMTP_NOT_CONFIGURED`** and `send` a `400`
+  with nobody to send to; in both cases the campaign is left as it was (it
+  used to be marked `sent`). Show the `error` text.
+- New audit actions: `NEWSLETTER_CAMPAIGN_RETRIED`; `NEWSLETTER_CAMPAIGN_COMPLETED`
+  (already existed, now documented).
+
+### 27.6 Contest
+
+- **The Qutuf Sajjadiya contest is closed.** It ran 2026-05-27 to 2026-09-03
+  (286 attempts, 120 submitted, top score 50/50 held by 10 participants; no
+  activity since 09-03). `POST …/start` and `POST …/submit` now check a new
+  `contest_open` site setting (boolean, seeded `false`) and answer
+  **403 `CONTEST_CLOSED`** — with an Arabic message — while it is anything
+  other than the literal string `"true"`, including when the row is missing
+  entirely (fail closed, not open). `GET …/questions` and the admin
+  `GET …/attempts` are unaffected — the closed contest's data stays readable.
+  **CMS TODO:** add a toggle for `contest_open` to the settings screen (it's
+  an ordinary setting — `PUT /settings/contest_open` with
+  `{ "value": "true" }` reopens it, `"false"` closes it again — no new
+  endpoint needed) so the next contest can be turned on without a backend
+  deploy, and show its current state somewhere the committee will see it
+  before the next event.
+- **`POST …/start` is idempotent** for an unsubmitted attempt — the same
+  `attempt_id` and `attempt_token` come back with `resumed: true` — so a lost
+  response no longer locks a participant out. Only a submitted attempt is a
+  `409`. `00964…` and `+964…` are now one identity. (Applies whenever the
+  contest is reopened; while closed, `/start` never gets this far.)
+- **`final_score` can be `null`** in the `/submit` response
+  (`score_revealed: false`) when the server runs with
+  `CONTEST_REVEAL_SCORE=false`. Default is unchanged (score shown). Turn it
+  off for a contest with a prize; the committee reads scores from
+  `GET …/attempts`. The contest page must handle `null`.
+- The per-IP limit on `/start` and `/submit` is now **60 / 15 min** (it was
+  20, which contradicted the documented "classrooms share a NAT" rationale);
+  `CONTEST_THROTTLE_PER_IP` tunes it. Only matters once the contest reopens.
+
+### 27.7 Everything else
+
+- **Role seed is create-only** — re-running it no longer re-grants
+  permissions an admin removed (`SEED_RESET_ROLE_GRANTS=true` restores the old
+  behaviour for a deliberate reset). See `docs/permissions.md`.
+- **YouTube mirror prunes** videos and playlists that vanished from the
+  channel, with a safety cap (skips pruning if it would delete more than
+  `max(10, 25 %)` of the mirror).
+- **`GET /homepage`, `/sitemap.xml`, `/rss/posts.xml`** now have their own
+  per-IP limits (120 / 20 / 20 per minute) — far above what the site or a
+  crawler needs.
+
+### 27.8 Public-site (imamzain.org) work this needs
+
+1. **Confirm page** at `NEWSLETTER_CONFIRM_URL_BASE` (default
+   `https://imamzain.org/newsletter/confirm`): read `email` and `token` from
+   the query string and `POST /newsletter/confirm` on a **button press**
+   (so link-scanning mail filters don't confirm by accident); show success
+   on `200`, "link invalid or expired" on `401`.
+2. **Subscribe form:** stop reading `data` from the response — say "check
+   your inbox to confirm".
+3. **Unsubscribe page/proxy is broken today:** the proxy posts
+   `{ subscriberEmail }` with no token; the API needs `{ email, token }` from
+   the link's `?email=&token=` query parameters.
+4. **Contest page:** the contest is closed (see §27.6) — `/start` and
+   `/submit` now 403 with `code: CONTEST_CLOSED`. Read the public
+   `contest_open` setting (`GET /settings/public`) and hide the "take the
+   contest" entry point while it's not `true`, rather than showing the form
+   and letting every submit fail. When it does reopen: handle
+   `final_score: null`; forward `attempt_token` from `/start` to `/submit`
+   (the submit proxy drops it today, which is why the API still has to
+   accept a missing token).
+
+### 27.9 Ops checklist (Render)
+
+- **SMTP is intermittently failing, not fully down — worth root-causing before
+  relying on the retry logic to paper over it forever.** A production
+  re-check on 2026-09-22 (all times below converted to Asia/Baghdad, the
+  operator's zone) found only **4 successful proxy-visit notification sends
+  in the last 30 days out of ~120 submissions** (~3%): two on 09-12, one at
+  09-20 03:58 local, one at 09-21 00:09 local — that last one is the email
+  the operator confirmed receiving "yesterday", which is genuine and
+  consistent with the data once the day boundary is read in local time
+  rather than UTC. Every other attempt in the same window failed, most with
+  `notification_failed_at` landing ~10.1s after `submitted_at` — i.e. right
+  at `email.service.ts`'s 10s `connectionTimeout` — consistent with an
+  intermittent connectivity problem (occasional DNS/route failure, or a
+  flaky outbound path from Render to Hostinger) rather than a rejected
+  login, which normally fails faster and every time, not ~97% of the time.
+  Check Render's actual log line for one of the failed timestamps —
+  `EmailService` logs `Email send failed (<kind>): <error>` with the real
+  error, which isn't stored in the database — to find the actual cause.
+  **The good news:** this round's digest/retry rewrite (a failed send stays
+  pending and is retried on the very next minute's cron tick) should recover
+  most notifications on its own even without a root-cause fix — at a ~3%
+  per-attempt success rate a digest keeps trying every minute, so it
+  succeeds within roughly half an hour on average — but the newsletter
+  sender's SMTP budget math (this section, `NEWSLETTER_SEND_PER_HOUR`)
+  assumes attempts mostly succeed, so a campaign will take meaningfully
+  longer than advertised until the underlying connectivity is fixed.
+  Optionally add `CAMPAIGN_SMTP_USER` / `_PASS` for a dedicated newsletter
+  mailbox once the connection issue is understood.
+- Set `TRUST_PROXY_HOPS=2` (still open from round 21).
+- New optional variables are listed in `.env.example`:
+  `NEWSLETTER_CONFIRM_URL_BASE`, `NEWSLETTER_CONFIRM_MAX_PER_HOUR`,
+  `NEWSLETTER_SEND_PER_HOUR`, `NEWSLETTER_BATCH_SIZE`,
+  `FORM_NOTIFY_MIN_INTERVAL_SECONDS`, `CONTEST_REVEAL_SCORE`,
+  `CONTEST_THROTTLE_PER_IP`, `SEED_RESET_ROLE_GRANTS`.
+- Four migrations ship with this round (`login_attempts`,
+  `books_series_integrity`, `form_notification_outbox`,
+  `newsletter_delivery_and_double_opt_in`); all are additive except that the
+  last one **replaces** the untracked production CHECK `chk_subscriber_state`
+  with a looser one — see its header. Nothing is dropped except that
+  constraint.
+
+## 28. Open follow-ups (still not in this push)
 
 - Self-service password reset flow (would need an `email` column on
   `users` plus the `password_reset_tokens` table described in the
@@ -2820,6 +3162,798 @@ nested-parent, already-has-parts) paths.
   wiring regressions (a missing `@Auth`, a DTO that rejects a valid
   body) would not be caught by CI.
 
+- The September 2026 audit's "Tier 2 — hardening & drift" list (token
+  families, key derivation, Sentry scrubbing, EXIF stripping, `MaxLength`
+  sweep, view de-duplication, cache headers, media / RBAC / hadith fixes)
+  **shipped in Round 23 (§29)** — rounds 21, 22 and 23 were its Tier 0,
+  Tier 1 and Tier 2. A few items from that list were deliberately deferred
+  rather than shipped; see "Skipped / deferred" at the end of §29 (the
+  `B-RBAC3` case-insensitive-username unique index, the `pdf_url` /
+  `audio_url` orphan-object sweep, the sanitiser backfill for HTML already
+  stored, and `SearchService.searchAudios` still matching a trashed
+  speaker's name). Notable leftovers from Round 22, still open: the sender
+  still has no shared email shell (Arabic campaigns go out as an unstyled
+  LTR fragment with an English footer), `GET /newsletter/subscribers`
+  still defaults to active-only, and a campaign paused on a permanent SMTP
+  fault stays `sending` until an admin cancels it.
+
 **Closed since the last round:** content-slug consolidation Phase C part
 2 shipped in PR #12 — the drop-old-columns migration is applied in
-production and `prisma migrate status` reports no drift.
+production and `prisma migrate status` reports no drift. The Sentry
+request-data leak (headers, cookies, body, IP, tokens in query strings)
+noted as open in earlier drafts of this section is also closed — see
+§29.1.
+
+## 29. Round 23 — Tier 2 hardening (2026-09-27)
+
+The September 2026 audit's Tier 2 list — the "hardening & drift" items
+rounds 21 and 22 deferred. One migration ships with this round,
+`20260924100000_session_families_and_password_reset_flag` (additive:
+adds `refresh_tokens.family_id` / `.replaced_by_id` and
+`users.must_change_password`, all with safe defaults). Every other
+change below is code-only.
+
+### 29.1 Platform: caching, conditional GETs, malformed ids, `/docs`
+
+- **Error responses are never cached.** Every error the API returns now
+  carries `Cache-Control: no-store`, including a 404 from a route that's
+  otherwise CDN-cacheable, a validation 400, or a throttler 429. Before
+  this, a `@PublicCache` route that threw kept its `public,
+  max-age=60, s-maxage=300` (or longer) header, so the CDN could hold a
+  404 for a slug that hadn't published yet and keep serving it for up to
+  `s-maxage` after publishing. No client change needed; anything already
+  cached expires on its own.
+- **Conditional GETs actually work now.** Public and admin GET responses
+  carry a weak `ETag` that no longer changes when only the envelope
+  `timestamp` does, and it's kept on compressed responses. A matching
+  `If-None-Match` gets `304 Not Modified` with no body. This was
+  previously broken (see the correction under §10.b above) — the
+  envelope `timestamp` changed the body hash on every response, and
+  compression dropped the ETag on anything over 1 KB, so no 304 was ever
+  actually served. Browsers revalidate on their own past `max-age`; a
+  304 saves bandwidth, not server work. A CDN that only revalidates
+  *strong* ETags will keep fetching full bodies regardless — worth a
+  one-time check of the zone's ETag handling.
+- **Malformed `:id` on audit-logs, newsletter and campaign routes.**
+  `GET /audit-logs/:id`, `POST|DELETE /newsletter/subscribers/:id...` and
+  every `/newsletter/campaigns/:id...` route now answer a malformed id
+  with the standard `400 { code: "INVALID_IDENTIFIER", error: "Invalid
+  identifier format" }` instead of `{ code: "BAD_REQUEST", error:
+  "Validation failed (uuid is expected)" }` — the same shape every other
+  resource route already used. Anything branching on
+  `code === "BAD_REQUEST"` for these routes must also accept
+  `INVALID_IDENTIFIER`. Media's malformed-id routes are covered under
+  §29.4.
+- **`/docs` now pins its Scalar release.** The interactive docs page is
+  unchanged for users; it loads a pinned `@scalar/api-reference@1.71.0`
+  with a subresource-integrity hash instead of whatever jsdelivr's
+  `latest` currently resolves to. No CMS action.
+
+**Ops — Sentry no longer receives request data.** Active only when
+`NODE_ENV=production` and `SENTRY_DSN` is set; no new environment
+variables. Headers are now allow-listed (everything else is
+`[Filtered]`), request bodies and cookies are excluded entirely,
+sensitive query-string values (token/password/key/signature/session/
+email/phone-shaped) and e-mail addresses/opaque tokens in exception text
+are redacted, `user` keeps only its id, and console breadcrumbs are
+dropped. Verified end to end: with the previous default configuration a
+test request leaked all eight planted secrets (password, Authorization
+JWT, cookie, `x-api-key`, client IP, e-mail, an inbound `?token=`, an
+outbound `?key=`) across the error event and its transactions; none
+reached the transport with the new configuration. **Ops follow-ups:**
+events stored before this deploy may still contain plaintext bodies /
+headers — sweep and delete them, and turn on Sentry's own "Data
+Scrubber" and "Prevent Storing of IP Addresses" as a second net; rotate
+`YOUTUBE_API_KEY` if a stored breadcrumb shows the old `?key=` form
+(§29.7 moved it to a header for new syncs); trigger one handled 500 in
+production afterward and confirm the request block shows `[Filtered]`.
+
+### 29.2 Hadith of the day: site time zone, empty-day release, restore, duplicate languages
+
+**"Today" is now the site-timezone calendar day**, not UTC.
+`display_date` means that day in `SITE_TIMEZONE` (an IANA name, default
+`Asia/Baghdad`, UTC+3, no DST) — the day editors are already scheduling
+in. Before, the API used the UTC day: a hadith scheduled for a date went
+live at 03:00 Baghdad time and stayed up until 03:00 the next morning;
+now it goes live at 00:00 and ends at 24:00 Baghdad time. Nothing to
+migrate; existing schedules and per-day random picks keep their meaning.
+Anywhere the CMS computes "today" (a "scheduled for today" badge, a
+date-picker default, past/future styling) must compute it in
+`SITE_TIMEZONE`, or it will disagree with `meta.date` from `GET
+/daily-hadiths/today` for a few hours a day. New optional env var
+`SITE_TIMEZONE` — unset, blank or invalid falls back to `Asia/Baghdad`
+with a one-time boot warning; set `UTC` to restore the old behaviour.
+The `Cache-Control` on `GET /daily-hadiths/today` and `GET /homepage` is
+now clamped to the seconds left until site midnight (never below 1) so
+neither can outlive the day boundary — see
+[integration.md](integration.md#site-time-zone-and-the-daily-hadith-day-boundary)
+for the exact formula.
+
+**Adding the first hadith to an empty day now takes effect immediately.**
+Previously, if `/today` had already answered "nothing" that day, the
+empty answer was locked until midnight even if a hadith was added
+afterwards. Now creating an unscheduled hadith, restoring one into the
+unscheduled pool, or unscheduling one (`PATCH` with `display_date:
+null`) deletes that day's empty lock, so the next request draws again. A
+day that already has an actual pick keeps it all day (unchanged); a
+hadith scheduled to today always wins over any lock (unchanged). No CMS
+change needed, though editors may want to know the public site can still
+take up to an hour to show it because of CDN caching.
+
+**Restore no longer 409s when the date was reused.**
+`POST /daily-hadiths/:id/restore` used to 409 if the trashed hadith's
+`display_date` had since gone to another live hadith, and the trashed
+row couldn't be edited to clear it — permanently stuck in the trash. Now
+the restore succeeds and comes back **unscheduled**:
+
+```jsonc
+{
+  "success": true,
+  "message": "Hadith restored without its schedule: 2026-05-15 is now taken by another hadith",
+  "data": null,
+  "meta": { "unscheduled": true, "previous_display_date": "2026-05-15" }
+}
+```
+
+A normal restore returns the same shape with `message: "Hadith
+restored"`, `meta: { unscheduled: false, previous_display_date: null }`.
+`data` stays `null` either way, so existing clients keep working; `meta`
+is new and always present. When `meta.unscheduled` is true, show a
+notice and refetch the hadith (its `display_date` is now `null`). Any
+409 handling written for this route can be removed. The restore's audit
+row carries `unscheduled` and `previous_display_date` in `changes` when
+this happens.
+
+**Duplicate language in `translations` is now a clear 400.**
+`POST /daily-hadiths` and `PATCH /daily-hadiths/:id` with the same
+language twice (e.g. two `ar` entries, compared case-insensitively) now
+answer `400 { code: "DUPLICATE_TRANSLATION_LANG", error: "translations
+lists the same language more than once (ar); send one entry per
+language" }`. Before, create returned a misleading 409 "Another hadith
+is already scheduled to that date" and update silently kept the last
+entry. Branch on `code`, not the English text.
+
+### 29.3 Sessions, passwords, RBAC hygiene
+
+**Login and `/auth/me` now carry `must_change_password`.**
+`POST /auth/login` → `data.user.must_change_password`; `GET /auth/me` →
+`data.must_change_password` (boolean, `false` for everyone today). It
+becomes `true` when an admin resets the account's password
+(`POST /users/:id/reset-password`) and back to `false` only when the
+user changes their own password (`PATCH /auth/me/password`, which still
+ends all of the user's sessions). Send a flagged user straight to a
+change-password screen after login. New `400 PASSWORD_MUST_DIFFER` when
+the account is flagged and `newPassword` equals `currentPassword`.
+**Server-side enforcement is off by default** — ship the change-password
+screen first, then ask Ops to set
+`ENFORCE_PASSWORD_CHANGE_AFTER_RESET=true`; from then on a flagged
+account gets `403 PASSWORD_CHANGE_REQUIRED` on every authenticated route
+except `GET /auth/me`, `PATCH /auth/me/password`, `POST /auth/logout`
+and `POST /auth/refresh`. Full rollout note in
+[permissions.md](permissions.md#forced-password-change-must_change_password).
+
+**Refresh tokens are now session families; reuse no longer signs
+everyone out.** Response shapes are unchanged; behaviour is not:
+
+| Situation | Before | Now |
+| --- | --- | --- |
+| Two tabs / a retried request refresh the same token within `REFRESH_REUSE_GRACE_SECONDS` (default 10 s) | second got `401 AUTH_TOKEN_REUSED`, **every session revoked** | both succeed; the second caller gets its own fresh token in the same session |
+| An already-rotated token presented after the grace window | all sessions revoked, `token_version` bumped | only that session (its token family) is revoked; `401 AUTH_TOKEN_REUSED`; other devices keep working; an audit row is written |
+| A token revoked by logout / logout-all / password change | treated as theft: everything revoked | plain `401 AUTH_REFRESH_INVALID`; nothing else touched |
+
+Treat **any** 401 from `/auth/refresh` as "session over → login form".
+Single-flight the refresh call and keep the refresh token in one shared
+place, not per-tab memory — the grace window covers races and retries,
+not an idle tab holding a stale token (that tab is signed out, on that
+device only). `POST /auth/logout` with `refresh_token` now ends the
+whole session that token belongs to (every token in its family); without
+a body it is still "log out everywhere". Website impact: none — contest
+`attempt_token` and newsletter unsubscribe/confirm tokens keep their
+format and endpoints; only the key used to *mint new* tokens changed
+(HKDF-derived from `JWT_SECRET`, see Ops below), and links already in
+the wild keep working.
+
+**Usernames and role names.** Both are trimmed on create/rename and can
+no longer differ only by letter case — creating or renaming to a name a
+live account/role already has in any case returns the same `409` as an
+exact clash. Soft-deleted users don't count; restoring one whose
+original name was reclaimed in another case is also a `409`. Login still
+trims and then matches **exactly** (case-sensitive) — an existing
+account that differs only by case keeps working, it just can't be
+created again. New length limits: role translation `title` ≤ 200,
+`description` ≤ 1000 (usernames ≤ 50, role names ≤ 50, passwords ≤ 128
+were already enforced and are tighter than the audit's ask).
+
+**Audit log: new / richer rows.** New `action` values `USER_LOGOUT`,
+`USER_LOGOUT_ALL` and `REFRESH_TOKEN_REUSE_DETECTED` (see
+[permissions.md](permissions.md#audit-action-vocabulary) for their
+`changes` shape). Renames reuse the existing rows: `USER_UPDATED` gets
+`changes.username = { before, after }` and `ROLE_UPDATED` gets
+`changes.name = { before, after }`, only when the name actually changed.
+No token, hash or password is ever written to `changes`.
+
+**Ops.**
+
+- New env vars: `REFRESH_REUSE_GRACE_SECONDS` (default `10`, clamped
+  0–60; `0` disables the grace) and `ENFORCE_PASSWORD_CHANGE_AFTER_RESET`
+  (unset/off by default; only the literal `true` turns it on). See
+  README.md / `.env.example` for the full description.
+- `JWT_SECRET` no longer doubles as the raw MAC key for the contest and
+  newsletter HMAC tokens. With `CONTEST_ATTEMPT_SECRET` /
+  `NEWSLETTER_UNSUBSCRIBE_SECRET` unset, new tokens are minted with
+  `HKDF-SHA256(JWT_SECRET, salt, info)` keys, one per purpose.
+  Verification tries the derived key first, then the raw `JWT_SECRET`
+  (a verify-only legacy path, kept for links minted before this
+  shipped). With a dedicated secret set, behaviour is unchanged (raw
+  key, no fallback) — but setting one **after** this deploy invalidates
+  tokens already minted from the derived key.
+- Pre-flight (read-only, run before enabling anything): check for
+  usernames the new trim-on-login won't match
+  (`username <> btrim(username)`) and for live accounts/roles that
+  differ only by letter case — see the migration's own header for the
+  exact queries. A row from the first query can't log in after deploy;
+  rename it first.
+- Deployment is mixed-version safe: the previous app version ignores the
+  new columns and keeps working; a token it rotates while a new instance
+  is live simply won't get reuse-grace (worst case, one extra login).
+
+**Skipped: `B-RBAC3`** (soft-deleted username rewritten to
+`name__del_<ms>`). Replacing the suffix scheme needs a partial unique
+index (`UNIQUE (username) WHERE deleted_at IS NULL`), which touches
+every `findUnique({ where: { username } })` call site and needs its own
+pre-flight for existing suffixed rows and case/whitespace duplicates.
+Deferred to its own reviewed migration.
+
+### 29.4 Media pipeline
+
+**The variant contract changed: poll `variants_status`, never
+`variants.length`.** The documented rule "poll until `variants.length
+=== 4`" was unsatisfiable for most uploads — the pipeline never
+up-scales, so a 1200 px cover legitimately has 2 variants, and any
+client following the old docs literally timed out into "Regenerate" for
+an ordinary photo. New fields on the media object, on `POST
+/media/confirm`, `GET /media`, `GET /media/:id` and `POST
+/media/:id/regenerate-variants` (not on `PATCH /media/:id`, which still
+returns the bare row):
+
+```jsonc
+{
+  "id": "...", "width": 1200, "height": 800, "url": "...",
+  "variants": [ { "width": 320, "...": "..." }, { "width": 768, "...": "..." } ],
+  "planned_widths": [320, 768],
+  "variants_status": "ready"
+}
+```
+
+- `planned_widths` — the variant widths generated for this original
+  (320 / 768 / 1280 / 1920, each only if strictly narrower than the
+  original); `[]` when none apply.
+- `variants_status` — `ready` (every planned width has a variant, render
+  `variants` in a `srcset`), `processing` (some missing, upload under 2
+  minutes old — keep polling), `partial` (still missing after 2 minutes
+  — generation failed, or the original isn't in storage; offer
+  "Regenerate"), `unavailable` (no variants can ever be produced — use
+  the original `url`; see `variants_status_reason`), `not_applicable`
+  (animated or non-raster — use the original `url`).
+- `variants_status_reason` (present when it needs explaining):
+  `TOO_SMALL` (≤ 320 px wide), `ORIGINAL_MISSING` (not in storage —
+  typical of legacy rows, only reported by `regenerate-variants`),
+  `UNREADABLE`, `ANIMATED`, `NON_RASTER`, `GENERATION_INCOMPLETE`.
+
+**The new rule: poll until `variants_status !== "processing"`; never
+compare `variants.length` to 4.** After that, use `variants` when
+`ready` or `partial`, the original `url` otherwise. In the CMS repo:
+`pollForVariants` currently stops at the first non-empty `variants` —
+change it to stop on `variants_status !== "processing"`; the media page
+should show "Regenerate variants" only when `variants_status ===
+"partial"`; `MediaRecord` needs `planned_widths`, `variants_status`,
+`variants_status_reason?`. Whether a GIF is animated isn't stored, so it
+reads `processing` for the full 2-minute window and then `not_applicable
++ ANIMATED`; `regenerate-variants` reports it immediately. Animated GIFs
+no longer get a first-frame WebP variant — the original is the only
+rendition, so the site must use `url` for them.
+
+**`POST /media/:id/regenerate-variants`** still answers 200 when nothing
+can be made, but now says why (`variants_status_reason`, as above).
+`variants` in the response is now every row in the database, not only
+what this run wrote. Rate-limited to 10/min/IP and shares the upload
+pipeline's concurrency gate — don't fire it across a whole library at
+once.
+
+**`width` / `height` are the file's real, EXIF-oriented size.** Confirm
+reads the image header for the true, orientation-aware size (the
+client-declared size is only a fallback); a phone photo shot landscape
+with an EXIF rotation now reports its displayed (portrait) size.
+`regenerate-variants` also corrects legacy rows with a wrong declared
+size.
+
+**Originals lose their EXIF / GPS metadata.** Shortly after confirm, the
+background pass rewrites the original (JPEG/PNG/WebP) without
+EXIF/XMP/IPTC when it carries any — same format, orientation baked into
+the pixels, ICC profile kept, same URL/Content-Type/Cache-Control.
+`file_size` can therefore change a moment after confirm, and the bytes
+behind the URL change once, seconds after upload — don't cache a hash of
+the original. Not touched: GIFs, animated images, CMYK images, anything
+without metadata. `POST /media/:id/regenerate-variants` strips an
+existing row's original too — the way to clean a legacy library (see
+Ops).
+
+**Deleting media.** `DELETE /media/:id` deletes the row first — inside a
+transaction that re-checks references at the last moment, so a reference
+added right before the delete always wins and the row survives (`409
+MEDIA_IN_USE`) instead of a race being able to destroy files a live
+resource still points at. The stored files (variants, then the original —
+an already-gone file counts as deleted) are removed only afterwards, on a
+best-effort basis: a storage failure at that point just orphans a blob
+(logged server-side, no functional impact) rather than failing the
+request — the record you asked to delete is already gone. There's no
+"retry the delete" case any more; a second call on the same id just 404s.
+The `409`
+for a still-referenced media now has `code: "MEDIA_IN_USE"` (was the
+generic `CONFLICT`) and names what holds it, including references held
+by trashed records (which keep the reference until the image is changed
+on the record itself — a gallery item's own id *is* its media id, so a
+`gallery_image` reference to the media's own id means the file *is*
+that gallery item: delete the gallery item first). New `GET
+/media/:id/references` (permission `media:read`, no new permission)
+returns `{ media_id, total, shown, truncated, items: [ { type, id,
+field, lang?, trashed } ] }` — `type` is `post` / `book` / `static_page`
+/ `gallery_image`; at most 20 items are shown, `total` is the real
+count. Use it for a "where is this used" panel.
+
+**Malformed `:id`.** `GET|PATCH|DELETE /media/:id`, `GET
+/media/:id/references` and `POST /media/:id/regenerate-variants` now
+answer `400 INVALID_IDENTIFIER` like every other resource route.
+
+**Upload URLs.** The presigned upload URL for images now lives at most
+15 minutes — the same lifetime as the pending-upload row it belongs to.
+`R2_UPLOAD_URL_TTL_SECONDS` can only *shorten* that for images; audio/PDF
+uploads (which have no pending row) still use the configured value
+directly. A rejected upload (over the size cap, wrong type, not a real
+image) now deletes its R2 object at once but keeps the pending row until
+it expires, so re-confirming the same key answers `400 File not found in
+storage` rather than `404 No pending upload` — retrying still means
+requesting a new upload URL.
+
+**Website team.** Nothing breaks: public reads embed `media_variants`
+exactly as before; `planned_widths` / `variants_status` exist only on
+the admin `/media` routes. Fewer than four variants has always been
+legitimate; keep falling back to the original `url` when `variants` is
+empty. Newly uploaded originals no longer carry EXIF orientation or GPS
+— code relying on `image-orientation: from-image` or reading EXIF from
+the original will see nothing on new uploads (existing images keep
+theirs until regenerated).
+
+**Ops.** No migration, no schema change, no new required env var; all
+response changes are additive. `R2_UPLOAD_URL_TTL_SECONDS` semantics
+changed for images only (see above and README.md). Cleaning the
+existing library of EXIF: `prisma/backfill-media-variants.ts`
+deliberately never rewrites originals — call
+`POST /media/:id/regenerate-variants` per row (10/min/IP) to strip a
+legacy original; it can't be undone (a fresh quality-92 JPEG re-encode),
+so spot-check a few rows first. `variants_status` is derived, not
+stored — no schema change was needed for it.
+
+### 29.5 Posts, static pages, and the HTML sanitiser
+
+**Rich-text bodies: what the server does to `id` and `target`.** Applies
+to every body through `sanitizeEditorHtml` — post bodies, static-page
+bodies, newsletter campaign bodies — at **write** time, so it takes
+effect the next time a body is saved:
+
+| Input | Stored as |
+| --- | --- |
+| `<a target="_blank">` (any case/padding) | `target="_blank"` + `rel="noopener noreferrer"` (an authored `rel` is overwritten) |
+| Any other `target` (`_top`, `_self`, `_parent`, `popup`, empty, …) | `target` dropped — opens in the same tab |
+| `<h2 id="intro">` | `<h2 id="user-content-intro">` |
+| `<a href="#intro">` | `<a href="#user-content-intro">` (rewritten in the same pass, so in-page links keep working) |
+| An `id` not matching `^[A-Za-z][A-Za-z0-9_-]{0,63}$` | `id` dropped |
+| `id="user-content-x"` (already prefixed) | unchanged — idempotent, re-saving doesn't stack prefixes |
+
+Nothing to change in the CMS — the Tiptap `Link` config already produces
+what the server keeps, and Tiptap StarterKit doesn't author heading
+`id`s. Existing rows aren't rewritten by this change (see Ops for the
+optional backfill).
+
+**`PATCH /posts/:id/publish` is now idempotent.** A call that asks for
+the state the post is already in writes nothing (no audit row,
+`updated_at` untouched) and returns 200 with `message: "Post already in
+requested state"` — same convention books/academic-papers/gallery/
+audios/static-pages already use, and as `POST /posts/bulk/publish`
+(reports such ids in `skipped`). A real transition is unchanged,
+including the `published_at` rules. **Watch for:** "unpublish" on a post
+that's already unpublished with a future `published_at` (a scheduled
+post) is now a no-op — it no longer clears the schedule as a side
+effect. The CMS list button sends `!post.is_published` so it never hits
+this; to cancel a schedule, `PATCH /posts/:id { "published_at": null }`.
+
+**Conflict / not-found responses that were wrong.** `POST/PATCH
+/posts` and `/static-pages`: a unique violation is no longer always
+reported as `Slug "..." is already used by another post` — only the
+slug index produces that message; a language listed twice in
+`translations` says *"The same language appears more than once in
+translations"*; a media id twice in `attachment_ids` says *"The same
+media file appears more than once in attachment_ids"*; anything else
+says *"A value in this request is already in use by another record"*.
+Status is still 409 (no new `code` for this pair — see §29.7 for the
+category/gallery equivalents, which *do* get stable codes). On `PATCH`
+without a `slug`, the message no longer contains `"undefined"`.
+`POST/PATCH /static-pages` with a bad `og_image_id` now answers **404**
+(same body posts already use) instead of **400 FK_CONSTRAINT_VIOLATION**
+— switch off any special-casing of that 400.
+
+**Admin responses are unchanged.** `GET /posts/admin/:id`, create /
+update / publish bodies, and the admin/trash lists keep `created_by` and
+the full embedded media rows. Only the two **public** detail routes were
+slimmed (next).
+
+**Website team — public post detail is slimmer.**
+`GET /posts/:id` and `GET /posts/by-slug/:slug` drop `created_by` (staff
+UUID) on the post, and `file_size` / `uploaded_by` / `created_at` on
+every embedded media row (cover `media`, `post_attachments[].media`).
+Embedded media is now exactly `id, url, filename, alt_text, mime_type,
+width, height, media_variants[]` — the same shape `GET /posts` already
+used for the cover, so one image component covers list and detail.
+`post_attachments[]` rows are `{ post_id, media_id, display_order,
+media }`. No removed field has a reader in the website repo today.
+
+**`GET /static-pages` (public list) is now a directory, not a reading
+surface.** Each item carries only the requested/fallback translation, as
+`translation`, **without `body`** — the `static_page_translations` array
+(the full HTML of every language, on every row, on every request) is
+gone from the list. `translation` is still `null` for a page with no
+translations. For the body or another language, call
+`GET /static-pages/by-slug/:slug` or `GET /static-pages/:id` (unchanged).
+`GET /static-pages/admin` is unchanged.
+
+**Anchors and ids inside HTML bodies.** See the sanitiser table above —
+if the site scrolls to headings, styles them, or builds a table of
+contents from body HTML, target `[id^="user-content-"]` or generate ids
+client-side. Bodies stored before this change keep their old markup
+until re-saved.
+
+**`POST /posts/:id/view` is de-duplicated** to one counted view per
+client IP per post per 30 minutes. A repeat inside the window still
+answers 200 `"View tracked"`, it just doesn't increment; `404` is
+unchanged. A single visitor (or script) can no longer inflate
+`?sort=views` by repeat-calling the beacon — counts will read lower than
+before for the same traffic. No client change needed.
+
+**Possible break in the website sitemap (found in passing, not part of
+this round).** `imamzain.org/src/app/sitemap.ts` still builds
+`/news/${post.translation.slug}` and `/his-life/${page.translation.slug}`.
+Since the slug consolidation (Phase C, §20) the slug lives on the
+**post/page itself** (`item.slug`) — translation rows no longer carry
+one, so those URLs read `/news/undefined`. Use `item.slug`; the
+`filter((x) => x.translation)` guards stay valid. Flagged for the
+website team, not fixed here.
+
+**Ops.** No new env vars, no migrations, no schema changes. View
+de-duplication: with `REDIS_URL` set, claims are
+`SET view-dedup:post:<postId>:<hash> 1 EX 1800 NX`; without it (or on a
+Redis error) a bounded in-process map is used (10,000 entries, per
+replica — with several replicas and no Redis, a visitor can count once
+per replica per window). Keys hold an HMAC-SHA256 digest of the client
+IP, never the IP itself, HKDF-derived from `JWT_SECRET`
+(`imamzain/view-dedup/v1`); rotating `JWT_SECRET` just starts a fresh
+dedup window. Client IP is `req.ip`, so `TRUST_PROXY_HOPS` must be
+correct (Render + Cloudflare = 2) or every visitor collapses onto the
+proxy address. The sanitiser change is write-time only — bodies already
+in `post_translations` / `static_page_translations` /
+`newsletter_campaigns` keep their old `id`/`target` markup until
+re-saved; a one-shot backfill (load each `body`, run it through
+`sanitizeEditorHtml`, update rows where it differs) is sketched here for
+whoever wants to run it against staging first — not run in this wave.
+
+### 29.6 Library — books, academic papers, audios, speakers
+
+No migrations, no new env vars, no new permissions — every change is on
+the read/validation side of existing routes.
+
+**Public responses no longer carry staff ids or the raw media record.**
+The admin routes are byte-for-byte unchanged, and so are create / update
+/ publish responses (hydrated with the admin shape).
+
+| Route | Removed from the **public** response | Unchanged |
+| --- | --- | --- |
+| `GET /books/:id`, `GET /books/by-slug/:slug` | `added_by`; on `media`: `file_size`, `created_at`, `uploaded_by` | `GET /books/admin/:id`, create/update/publish |
+| `GET /academic-papers`, `GET /academic-papers/:id` | `uploaded_by` | admin routes, create/update/publish |
+| `GET /audios*`, `GET /speakers*` | nothing — these queries already selected explicit columns | everything |
+
+The public book `media` object is now exactly `id, url, filename,
+alt_text, mime_type, width, height, media_variants` (each variant `id,
+width, url, format`) — matching what the list endpoint already used.
+
+**`parts_count` on the book lists now matches the parts you can actually
+open.** It used to count every part row including unpublished/trashed
+ones, so a series could advertise "12 parts" and open with 9. Now:
+public `GET /books` counts published, non-deleted parts (equals
+`parts.length` on `GET /books/:id`); `GET /books/admin` and
+`GET /books/trash` count every live part, drafts included. A trashed
+part never counts anywhere.
+
+**A bad `og_image_id` on a book is now a 404**, like posts and gallery —
+`{ code: "NOT_FOUND", error: "One or more og_image_id values do not
+match any media record" }` instead of `400 FK_CONSTRAINT_VIOLATION`. The
+CMS doesn't special-case the old code, so no change needed.
+
+**Restoring an audio under a trashed speaker is refused.**
+`POST /audios/:id/restore` answers `409 { code: "AUDIO_SPEAKER_DELETED",
+error: "Cannot restore: the speaker of this audio was deleted — restore
+the speaker first" }` when the audio's speaker is in the trash (reachable
+because speaker soft-delete only blocks on *live* audios). Nothing is
+written, the speaker isn't auto-restored. Suggested CMS handling: show
+the message and link to `GET /speakers/trash` /
+`POST /speakers/:id/restore`; the editor restores the speaker, then
+retries. Other 409s on this route are unchanged.
+
+**Speaker on an audio can now be `null` on public reads.** For
+`GET /audios`, `/audios/:id`, `/audios/by-slug/:slug`, an audio whose
+speaker is trashed now returns `speaker: null` (`speaker_id` still holds
+the id) — it used to keep serving the trashed speaker's name. The admin
+routes still resolve the speaker regardless of trash state. Public
+`?search=` no longer matches a trashed speaker's name; admin search
+still does.
+
+**Website team.** The website doesn't read books/papers/audios/speakers
+from this API yet (`src/data/*.json` feeds those pages today), so none
+of the above can break it. For when it does: don't depend on `added_by`
+/ `uploaded_by` (gone from public responses); use `media.media_variants`
+(ordered by width) for `srcset`; `parts_count` on a book list item
+equals `parts.length` on its detail, safe as an "N parts" badge; render
+audio without a lecturer line when `speaker` is `null` rather than
+treating it as an error.
+
+**Ops.** No migration, no env var, no permission change — a normal
+rolling release. Public routes stay `@PublicCache` (60 s / 300 s); the
+narrower shapes appear everywhere within 5 minutes of deploy, no purge
+needed.
+
+**Deferred: `B-Book5`** — `PATCH /books/:id`, `/academic-papers/:id` and
+`/audios/:id` overwriting `pdf_url` (or `audio_url`) orphans the previous
+R2 object; nothing deletes it. Recorded as a design sketch (a
+key-from-URL helper plus a periodic sweep-and-grace-period job, not an
+inline delete — a trashed row can still be restored and two rows can
+legitimately share one object). Until then, orphans are a storage-cost
+item, not a correctness one.
+
+**Follow-up for the search owner (not part of this round):**
+`SearchService.searchAudios` still matches on and returns a trashed
+speaker's name (the raw SQL join doesn't check `speakers.deleted_at`).
+The public audio routes are fixed above; search needs the same
+treatment.
+
+### 29.7 Public shapes, translations, categories, gallery, settings, feeds
+
+No schema change, no migration, no new env var.
+
+**Stable error codes on 409.** Creating/updating a category, and
+creating a gallery image, used to answer a bare `409 CONFLICT` for every
+unique-key clash. They now carry a specific message and a stable `code`:
+
+| Where | `code` | When |
+| --- | --- | --- |
+| `POST/PATCH` on the four `*-categories` resources | `SLUG_ALREADY_USED` | A `(lang, slug)` already used by another category — message names it |
+| same | `DUPLICATE_TRANSLATION_LANG` | The same `lang` twice in `translations` on create |
+| `POST /gallery` | `GALLERY_IMAGE_EXISTS` | That `media_id` is already a gallery entry |
+| `POST /gallery` | `GALLERY_IMAGE_IN_TRASH` | That `media_id` has an entry in the gallery trash — restore it instead |
+| `POST /gallery` | `DUPLICATE_TRANSLATION_LANG` | Same `lang` twice in `translations` |
+
+Any other unique violation still surfaces as the generic `409 CONFLICT`.
+
+**Retired languages disappear from the resolved `translation`.** A
+language that's inactive or soft-deleted is no longer a candidate for
+the resolved `translation` field on every module that resolves one
+(posts, books, papers, audios, speakers, static pages, stores, roles,
+gallery, categories, hadiths, homepage, search) — it can't be selected
+via `Accept-Language`, and it's never the fallback either. The raw
+arrays (`post_translations`, …) still list every stored row, so CMS edit
+forms keep working; only `translation`, search hits and the homepage
+obey the rule. If an item's only translations are in retired languages,
+`translation` is `null` — reactivating the language restores it.
+Admin reads can opt out (`{ includeInactive: true }`) — already done for
+gallery admin/trash/create/update/publish and the four category
+modules' trash/create/update; **not** possible for `GET /*-categories` /
+`/*-categories/:id` (one shared route serves both audiences). Other
+modules (posts, books, papers, audios, speakers, static pages, roles,
+stores) still filter until their owners opt in — until then the CMS
+shows a blank title for an item whose only translation is retired.
+
+**Fallback order is now deterministic.** When the requested language has
+no translation: the row flagged `is_default`, else Arabic (`ar`), else
+the lowest language code. Previously the category and gallery tables
+(no `is_default` column) returned "whichever row the database happened
+to return first" — nothing to do on the CMS side, lists just stop
+flickering between languages.
+
+**Settings.** `PUT /settings/:key` with `type = number` now accepts only
+finite decimal numbers (optional sign, digits, optional fraction,
+optional exponent) — empty, hex, `Infinity`, `NaN`, out-of-range
+exponents are `400`; surrounding whitespace is trimmed before storing.
+`type = boolean` still accepts exactly `"true"`/`"false"` (now covered
+by a spec). The `:key` path segment of `GET/PUT/DELETE /settings/:key`
+is now length-validated (1–100 chars) before it reaches the service.
+`GET /settings` / `GET /settings/:key` (admin) are unchanged, still
+include `updated_by`.
+
+**Gallery admin reads are unchanged** — `GET /gallery/admin`,
+`/gallery/admin/:id` and create/update/publish keep the whole row
+(`added_by`, full media with `file_size`/`uploaded_by`). Only the
+**public** routes below were slimmed.
+
+**Website team — public payloads no longer carry staff identity or
+storage internals.** `GET /gallery/:id`: `added_by` gone; `media` is now
+the public shape (`id, url, filename, alt_text, mime_type, width,
+height, media_variants`) instead of the whole row.
+`GET /settings/public`: `updated_by` gone — fields are exactly `key,
+value, type, description, is_public, updated_at`. `GET /gallery` (public
+list) already used the slim shape, unchanged.
+
+**Image variants on the homepage and in search.** Every embedded image
+keeps its original-URL field and gains a sibling `<field>_variants`
+array, same shape as `media.media_variants` (`{ id, width, url, format
+}`, ordered by width, possibly empty): `GET /homepage` → `data.news[]`
+(`image` → `image_variants`), `data.publications[]` (same),
+`data.gallery.slider[]` (`path` → `path_variants`); `GET /search` → hits
+of `post`/`book`/`gallery_image` (`cover_image_url` →
+`cover_image_variants`), and `audio`/`academic_paper` hits get the field
+always `[]`. Build the `srcset` from the variants when non-empty, fall
+back to the original URL otherwise — never assume four entries.
+
+**Search:** a hit whose only matching translations are in a retired
+language is dropped entirely (there's no servable title). An audio
+hit's `summary` (speaker name) is empty when the speaker is trashed, and
+a trashed speaker's name no longer makes an audio match — consistent
+with the public audios routes above. The SQL stage's `LIMIT` is applied
+before retired-language hits are dropped, so a per-type result list can
+occasionally be shorter than `limit` — acceptable at current corpus
+size.
+
+**Homepage videos.** `data.videos` is now the 7 most recent videos
+**uploaded by the foundation's own channel** — a video from another
+channel that merely sits in one of its playlists is still reachable
+under `GET /youtube/videos` / `GET /youtube/playlists/:id/videos`, just
+not on the homepage.
+
+**Category list default page size.** `GET /*-categories` documented
+"default: 100" but the shared `PaginationDto` always defaulted `limit`
+to 20 — Swagger text now says 20; runtime behaviour is unchanged (the
+CMS already sends `limit=100` explicitly).
+
+**Ops.** `YOUTUBE_CHANNEL_ID` (already set for the sync) is now also
+read by the homepage videos query; unset means unfiltered, as before.
+`LanguagesService` loads the active-language snapshot at boot, after
+every language create/update/delete, and every 60 s — until the first
+load (or if the table has no live language at all), nothing is
+filtered; a failed refresh keeps the previous snapshot. The YouTube sync
+now sends its API key as the `x-goog-api-key` header instead of `&key=`
+in the query string, so it no longer lands in URL/proxy/access logs —
+consider rotating `YOUTUBE_API_KEY` since the old form may already be in
+logs. Homepage/search payload size grows by roughly +10 KB per language
+before compression (up to 24 images × ~0.1 KB per variant object).
+
+### 29.8 Request limits and stricter query parameters
+
+Every free-text database column is unbounded `text`; a single 95 KB
+title used to be accepted and then inflated every public list, the RSS
+feed, and the trigram indexes. All free-text request fields and arrays
+now have a cap, sitting far above the longest legacy row, so PATCHing an
+existing row back unchanged always still works. **An over-limit value is
+a `400`** (e.g. `translations.0.title must be shorter than or equal to
+500 characters`), never a `500`. Lengths are counted in UTF-16 code
+units — the same unit an HTML `maxlength` attribute uses, so a matching
+CMS input is an exact mirror. HTML bodies keep their existing 200 KB
+UTF-8 byte cap (unchanged, not listed below). The canonical numbers live
+in `src/common/validators/dto-limits.ts`.
+
+**New length bounds (CMS forms should enforce the same numbers):**
+
+| Resource | Field | Limit |
+| --- | --- | --- |
+| Posts | `translations[].title` | 500 |
+| Posts | `translations[].summary` | 5 000 |
+| Posts | `slug` (create and update) | 200 |
+| Books | `translations[].title` | 500 |
+| Books | `translations[].author`, `translations[].publisher` | 300 |
+| Books | `translations[].description` | 5 000 |
+| Books | `translations[].series` | 500 |
+| Books | `isbn`, `publish_year` | 64 |
+| Academic papers | `translations[].title` | 500 |
+| Academic papers | `translations[].abstract` | 5 000 |
+| Academic papers | `translations[].publication_venue` | 500 |
+| Academic papers | each entry of `translations[].authors` | 300 |
+| Academic papers | each entry of `translations[].keywords` | 200 |
+| Academic papers | `published_year` | 64 |
+| Academic papers | `pdf_url` | 2 048 |
+| Gallery | `translations[].title` | 500 |
+| Gallery | `translations[].description` | 5 000 |
+| Gallery | `author` | 300 |
+| Gallery | each entry of `tags`, `locations` (also as `?tags=`/`?locations=` filters) | 200 |
+| Categories (post, book, gallery, academic paper) | `translations[].title` | 500 |
+| Categories | `translations[].slug` | 200 (lowercase/digits/hyphens, as before) |
+| Categories | `translations[].description` | 5 000 |
+| Languages | `name`, `native_name` | 100 |
+| Media | `filename` (upload-url, confirm, PATCH) | 255 |
+| Media | `alt_text` (confirm, PATCH) | 500 |
+| Media | `key` (confirm) | 1 024 |
+| Media | `mime_type` (upload-url, confirm, `?mime_type=` filter) | 127 |
+| Settings | `:key` path parameter | 100 |
+| Forms | `email` on the public contact form | 254 |
+
+Bounds already enforced and unchanged: audio `translations[].title` 500,
+static page `translations[].title` 300, `meta_title`/`meta_description`
+(post 120/320; book, gallery, static page 300/500), book `slug` 200 and
+`pdf_url` 2 000, audio `audio_url`/`pdf_url` 2 000, store `city_name` 200
+/ `name` 300 / `address` 500 / `phone` 50 (kept at 50, not 32 — legacy
+sale points hold two numbers in one field) / GPS URLs 2 000, speaker
+`name` 300, daily-hadith `content` 4 000 / `source` 500, setting `value`
+10 000 / `description` 500, plus everything in the contest, newsletter,
+campaign and form DTOs.
+
+**New array bounds:** `translations` on every create/update body (posts,
+books, audios, static pages, academic papers, gallery, the four category
+types, stores, store locations, daily hadiths, speakers) ≤ 50;
+`document_languages` (books, academic papers) ≤ 50;
+`translations[].authors`/`.keywords` (academic papers) ≤ 50; `tags`/
+`locations` (gallery body and query filter) ≤ 50; `attachment_ids`
+(posts), `ids` (post bulk actions) ≤ 200; `locations` in `POST /stores`
+≤ 200.
+
+**`attachment_ids` / `ids` must not contain duplicates.** A duplicate
+used to hit the join table's primary key and surface as a misleading
+slug conflict; now rejected up front with `400
+attachment_ids's elements must be unique` (same for `ids` on the post
+bulk-publish/delete routes), compared case-insensitively (Postgres
+treats mixed-case UUID text as equal). Send each id once.
+
+**Searches shorter than 2 characters are rejected.** `?search=` on
+`GET /posts`, `/posts/admin`, `/books`, `/books/admin`, `/audios`,
+`/audios/admin`, `/academic-papers`, `/academic-papers/admin`,
+`/speakers`, `/media`, `/newsletter/subscribers` and `?q=` on
+`GET /search` must be 2–200 characters **after trimming** — a
+1-character `contains` term can't use the trigram indexes and scans
+every body/abstract. A blank or whitespace-only `?search=` still means
+"no search" (full list returned); `?q=` is still required, so a blank or
+1-character value is `400`, and surrounding spaces are now trimmed
+before that length check (`?q=%20a%20` used to slip through).
+
+**Boolean query parameters accept only `true` and `false`.**
+`?featured=` (`GET /posts`, `/posts/admin`), `?is_published=`
+(`GET /audios/admin`, `GET /static-pages/admin`), `?is_publication=`
+(`GET /books`, `/books/admin`), `?is_active=`
+(`GET /newsletter/subscribers`) and `?submitted=`
+(`GET /forms/qutuf-sajjadiya-contest/attempts`) used to turn `yes`, `1`,
+an empty value and anything else into `false` and silently apply it as a
+filter. Now anything other than the exact strings `true`/`false` is a
+`400` (case-sensitive — `TRUE` is rejected). Omit the parameter to mean
+"no filter"; don't send it empty.
+
+**`published_at` must carry an explicit UTC offset.** `POST /posts` and
+`PATCH /posts/:id` previously accepted `2026-06-01T09:00:00` (no offset)
+and read it in the server's zone (UTC), so a post scheduled for 09:00
+Baghdad time went live at 12:00. It must now end in `Z` or `+hh:mm`
+(`new Date(...).toISOString()` already produces this) — a date-only
+value, no offset, lower-case `z`, `+0300`, an impossible date, or an
+out-of-range time are all `400`. `null` still clears the schedule.
+Newsletter campaigns already worked this way for `scheduled_at`; the two
+now share one validator.
+
+**Not changed:** timestamps that aren't schedules (`responded_at` on
+contacts, `processed_at` on proxy visits, the audit-log date filters,
+gallery `taken_at`) still accept an offset-less ISO string.
+
+**Ops.** No migration, no new env var. Deploy in any order — every
+resource's longest legacy value already fits under its new cap.
+
+### Skipped / deferred from this Tier-2 wave
+
+- `B-RBAC3` (case-insensitive-username partial unique index) — §29.3.
+- `B-Book5` (orphaned `pdf_url`/`audio_url` R2 objects on overwrite) — §29.6.
+- The one-shot sanitiser backfill for HTML already stored before this
+  round (id/target rewrite is write-time only) — §29.5.
+- `SearchService.searchAudios` still matching a trashed speaker's name —
+  §29.6.
+- CAPTCHA on public forms, contest timing enforcement, self-service
+  password reset, tags many-to-many, 2FA, personal access tokens,
+  content revision history, sitemap chunking — unchanged from §28,
+  still not part of any Tier.

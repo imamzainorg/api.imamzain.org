@@ -24,6 +24,11 @@
     "prisma:backfill-variants": "ts-node -P tsconfig.base.json prisma/backfill-media-variants.ts",
     "prisma:diagnose": "ts-node -P tsconfig.base.json prisma/seed-diagnose.ts",
     "type-check": "prisma generate && tsc --noEmit -p tsconfig.build.json",
+    "lint": "eslint .",
+    "lint:fix": "eslint . --fix",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "check:drift": "node scripts/check-drift.js",
     "test": "jest --config jest.config.js",
     "test:watch": "jest --watch --config jest.config.js",
     "test:cov": "jest --coverage --config jest.config.js",
@@ -71,6 +76,7 @@
     "twilio": "^6.0.0"
   },
   "devDependencies": {
+    "@eslint/js": "^10.0.1",
     "@nestjs/testing": "^11.1.19",
     "@types/bcryptjs": "^2.4.6",
     "@types/express": "^5.0.6",
@@ -79,10 +85,14 @@
     "@types/nodemailer": "^8.0.0",
     "@types/passport-jwt": "^4.0.1",
     "@types/sanitize-html": "^2.16.1",
+    "eslint": "^10.11.0",
+    "eslint-config-prettier": "^10.1.8",
     "jest": "^30.3.0",
+    "prettier": "^3.9.9",
     "prisma": "^6.0.0",
     "ts-jest": "^29.4.9",
     "ts-node-dev": "^2.0.0",
-    "typescript": "^6.0.3"
+    "typescript": "^6.0.3",
+    "typescript-eslint": "^8.70.1"
   }
 }

@@ -14,8 +14,38 @@ import { resolveBcryptRounds } from '../common/utils/bcrypt.util';
 import { invalidateJwtUserCache } from '../auth/strategies/jwt.strategy';
 import { buildPaginationMeta } from '../common/utils/pagination.util';
 import { rethrowP2002AsConflict } from '../common/utils/prisma-error.util';
+import {
+  assertNotLastAdministrator,
+  assertWithinActorEnvelope,
+  MANAGE_USER_ENVELOPE_MESSAGE,
+} from '../common/utils/rbac.util';
 import { softDeleteSuffix, stripSoftDeleteSuffix } from '../common/utils/soft-delete.util';
 import { AdminResetPasswordDto, AssignRoleDto, CreateUserDto, UpdateUserDto } from './dto/user.dto';
+
+/** Roles → permissions joins needed to compute a user's effective permission set. */
+const USER_PERMISSIONS_INCLUDE = {
+  user_roles: {
+    include: {
+      roles: {
+        include: {
+          role_permissions: { include: { permissions: true } },
+        },
+      },
+    },
+  },
+} satisfies Prisma.usersInclude;
+
+type UserWithPermissions = Prisma.usersGetPayload<{ include: typeof USER_PERMISSIONS_INCLUDE }>;
+
+function flattenPermissions(user: UserWithPermissions): string[] {
+  const permissionSet = new Set<string>();
+  for (const ur of user.user_roles) {
+    for (const rp of ur.roles.role_permissions) {
+      permissionSet.add(rp.permissions.name);
+    }
+  }
+  return Array.from(permissionSet);
+}
 
 @Injectable()
 export class UsersService {
@@ -54,27 +84,10 @@ export class UsersService {
   async findOne(id: string) {
     const user = await this.prisma.users.findFirst({
       where: { id, deleted_at: null },
-      include: {
-        user_roles: {
-          include: {
-            roles: {
-              include: {
-                role_permissions: { include: { permissions: true } },
-              },
-            },
-          },
-        },
-      },
+      include: USER_PERMISSIONS_INCLUDE,
     });
 
     if (!user) throw new NotFoundException('User not found');
-
-    const permissionSet = new Set<string>();
-    for (const ur of user.user_roles) {
-      for (const rp of ur.roles.role_permissions) {
-        permissionSet.add(rp.permissions.name);
-      }
-    }
 
     return {
       message: 'User fetched',
@@ -85,21 +98,56 @@ export class UsersService {
         updated_at: user.updated_at,
         is_active: user.deleted_at === null,
         user_roles: user.user_roles,
-        permissions: Array.from(permissionSet),
+        permissions: flattenPermissions(user),
       },
     };
   }
 
-  async create(dto: CreateUserDto, actorId: string) {
-    const existing = await this.prisma.users.findFirst({
-      where: { username: dto.username, deleted_at: null },
+  /**
+   * Load a live user together with its effective permissions and refuse (403)
+   * when the target holds any permission the actor lacks. Every route that
+   * changes another account's credentials, identity or existence goes through
+   * this so a `users:update` holder cannot take over or disable a more
+   * privileged account (e.g. the seeded `admin` role acting on `super-admin`).
+   */
+  private async loadManagedUser(id: string, actor: CurrentUserPayload): Promise<UserWithPermissions> {
+    const user = await this.prisma.users.findFirst({
+      where: { id, deleted_at: null },
+      include: USER_PERMISSIONS_INCLUDE,
     });
-    if (existing) throw new ConflictException('Username is already taken');
+    if (!user) throw new NotFoundException('User not found');
+    assertWithinActorEnvelope(actor.permissions, flattenPermissions(user), MANAGE_USER_ENVELOPE_MESSAGE);
+    return user;
+  }
+
+  /**
+   * 409 when a live account already holds this name in ANY letter case.
+   * Usernames are stored byte-exact (the unique index is case-sensitive, and
+   * login matches exactly), so without this "Admin", "admin" and "ADMIN" could
+   * all exist and be mistaken for one another in the CMS and in audit trails.
+   * `exceptId` is the row being renamed, so a case-only rename of your own
+   * account is allowed.
+   */
+  private async assertUsernameAvailable(username: string, exceptId?: string): Promise<void> {
+    const taken = await this.prisma.users.findFirst({
+      where: {
+        username: { equals: username, mode: 'insensitive' },
+        deleted_at: null,
+        ...(exceptId ? { NOT: { id: exceptId } } : {}),
+      },
+      select: { id: true },
+    });
+    if (taken) throw new ConflictException('Username is already taken');
+  }
+
+  async create(dto: CreateUserDto, actorId: string) {
+    const username = dto.username.trim();
+    await this.assertUsernameAvailable(username);
 
     const password_hash = await bcrypt.hash(dto.password, resolveBcryptRounds());
 
     const user = await this.prisma.users.create({
-      data: { username: dto.username, password_hash },
+      data: { username, password_hash },
     });
 
     await this.audit.write({
@@ -114,28 +162,28 @@ export class UsersService {
     return { message: 'User created', data };
   }
 
-  async update(id: string, dto: UpdateUserDto, actorId: string) {
-    const user = await this.prisma.users.findFirst({ where: { id, deleted_at: null } });
-    if (!user) throw new NotFoundException('User not found');
+  async update(id: string, dto: UpdateUserDto, actor: CurrentUserPayload) {
+    const user = await this.loadManagedUser(id, actor);
 
-    if (dto.username && dto.username !== user.username) {
-      const taken = await this.prisma.users.findFirst({
-        where: { username: dto.username, deleted_at: null },
-      });
-      if (taken) throw new ConflictException('Username is already taken');
-    }
+    const username = dto.username?.trim();
+    const renamed = username !== undefined && username !== user.username;
+    if (renamed) await this.assertUsernameAvailable(username, id);
 
     const updateData: Prisma.usersUpdateInput = { updated_at: new Date() };
-    if (dto.username !== undefined) updateData.username = dto.username;
+    if (username !== undefined) updateData.username = username;
 
     await this.prisma.users.update({ where: { id }, data: updateData });
 
     await this.audit.write({
-      actorId,
+      actorId: actor.id,
       action: AUDIT_ACTIONS.USER_UPDATED,
       resourceType: 'user',
       resourceId: id,
-      changes: { method: 'PATCH', path: `/api/v1/users/${id}` },
+      changes: {
+        method: 'PATCH',
+        path: `/api/v1/users/${id}`,
+        ...(renamed ? { username: { before: user.username, after: username } } : {}),
+      },
     });
 
     const { data } = await this.findOne(id);
@@ -150,13 +198,16 @@ export class UsersService {
    * token_version (invalidates outstanding access tokens), and revokes
    * every refresh token so the user is forced to re-authenticate.
    *
+   * Subject to the privilege envelope: an actor can only reset the password
+   * of an account whose permissions are all within their own — otherwise
+   * "reset, then log in as them" is a one-request takeover of super-admin.
+   *
    * The admin who triggered this MUST share the new password with the
    * user out-of-band (in person / Slack / phone). The plaintext is never
    * stored.
    */
-  async adminResetPassword(userId: string, dto: AdminResetPasswordDto, actorId: string) {
-    const user = await this.prisma.users.findFirst({ where: { id: userId, deleted_at: null } });
-    if (!user) throw new NotFoundException('User not found');
+  async adminResetPassword(userId: string, dto: AdminResetPasswordDto, actor: CurrentUserPayload) {
+    await this.loadManagedUser(userId, actor);
 
     const password_hash = await bcrypt.hash(dto.new_password, resolveBcryptRounds());
 
@@ -167,6 +218,8 @@ export class UsersService {
           password_hash,
           updated_at: new Date(),
           token_version: { increment: 1 },
+          // The admin chose this password, so the user should replace it.
+          must_change_password: true,
         },
       }),
       this.prisma.refresh_tokens.updateMany({
@@ -178,7 +231,7 @@ export class UsersService {
     invalidateJwtUserCache(userId);
 
     await this.audit.write({
-      actorId,
+      actorId: actor.id,
       action: AUDIT_ACTIONS.USER_PASSWORD_RESET_BY_ADMIN,
       resourceType: 'user',
       resourceId: userId,
@@ -188,9 +241,12 @@ export class UsersService {
     return { message: 'Password reset; user must re-authenticate', data: null };
   }
 
-  async softDelete(id: string, actorId: string) {
-    const user = await this.prisma.users.findFirst({ where: { id, deleted_at: null } });
-    if (!user) throw new NotFoundException('User not found');
+  async softDelete(id: string, actor: CurrentUserPayload) {
+    if (id === actor.id) {
+      throw new ForbiddenException('You cannot delete your own account');
+    }
+
+    const user = await this.loadManagedUser(id, actor);
 
     // Free the unique `username` so it can be reused after deletion. username
     // is a hard unique column and softDelete previously left it occupying the
@@ -198,15 +254,18 @@ export class UsersService {
     // name. Suffix it like the slug/ISBN soft-delete scheme; `restore` reverses
     // the suffix (and 409s if the original name was reclaimed meanwhile).
     const deletedAt = new Date();
-    await this.prisma.users.update({
-      where: { id },
-      data: { deleted_at: deletedAt, username: `${user.username}${softDeleteSuffix(deletedAt)}` },
+    await this.prisma.$transaction(async (tx) => {
+      await assertNotLastAdministrator(tx, { kind: 'delete-user', userId: id });
+      await tx.users.update({
+        where: { id },
+        data: { deleted_at: deletedAt, username: `${user.username}${softDeleteSuffix(deletedAt)}` },
+      });
     });
 
     invalidateJwtUserCache(id);
 
     await this.audit.write({
-      actorId,
+      actorId: actor.id,
       action: AUDIT_ACTIONS.USER_DELETED,
       resourceType: 'user',
       resourceId: id,
@@ -253,14 +312,25 @@ export class UsersService {
    * Restore a soft-deleted user. Reverses the username suffix from softDelete.
    * Refused with 409 if a live user has claimed the original username while the
    * row sat in trash — the admin must rename one side and retry.
+   *
+   * Subject to the same privilege envelope as update/adminResetPassword/
+   * softDelete: without this, a `users:delete` holder could soft-delete a
+   * super-admin (blocked from resetting/renaming it) and then simply restore
+   * it right back — fully reversing the very access-revocation the envelope
+   * exists to enforce. loadManagedUser only looks at live rows, so the check
+   * is inlined here against the soft-deleted row instead.
    */
-  async restore(id: string, actorId: string) {
-    const user = await this.prisma.users.findFirst({ where: { id, deleted_at: { not: null } } });
+  async restore(id: string, actor: CurrentUserPayload) {
+    const user = await this.prisma.users.findFirst({
+      where: { id, deleted_at: { not: null } },
+      include: USER_PERMISSIONS_INCLUDE,
+    });
     if (!user) throw new NotFoundException('Deleted user not found');
+    assertWithinActorEnvelope(actor.permissions, flattenPermissions(user), MANAGE_USER_ENVELOPE_MESSAGE);
 
     const originalUsername = stripSoftDeleteSuffix(user.username);
     const conflict = await this.prisma.users.findFirst({
-      where: { username: originalUsername, deleted_at: null, NOT: { id } },
+      where: { username: { equals: originalUsername, mode: 'insensitive' }, deleted_at: null, NOT: { id } },
       select: { id: true },
     });
     if (conflict) {
@@ -281,7 +351,7 @@ export class UsersService {
     }
 
     await this.audit.write({
-      actorId,
+      actorId: actor.id,
       action: AUDIT_ACTIONS.USER_RESTORED,
       resourceType: 'user',
       resourceId: id,
@@ -306,13 +376,11 @@ export class UsersService {
     rolePermissions: string[],
     verb: 'assign' | 'remove',
   ) {
-    const actorPermissions = new Set(actor.permissions ?? []);
-    const exceeding = rolePermissions.filter((p) => !actorPermissions.has(p));
-    if (exceeding.length > 0) {
-      throw new ForbiddenException(
-        `You cannot ${verb} a role that grants permissions beyond your own`,
-      );
-    }
+    assertWithinActorEnvelope(
+      actor.permissions,
+      rolePermissions,
+      `You cannot ${verb} a role that grants permissions beyond your own`,
+    );
   }
 
   async assignRole(userId: string, dto: AssignRoleDto, actor: CurrentUserPayload) {
@@ -382,8 +450,14 @@ export class UsersService {
       'remove',
     );
 
-    const result = await this.prisma.user_roles.deleteMany({
-      where: { user_id: userId, role_id: roleId },
+    // Stripping a role can only be allowed if at least one full-permission
+    // administrator remains afterwards — otherwise the role graph becomes
+    // unrepairable through the API (see rbac.util).
+    const result = await this.prisma.$transaction(async (tx) => {
+      await assertNotLastAdministrator(tx, { kind: 'remove-role', userId, roleId });
+      return tx.user_roles.deleteMany({
+        where: { user_id: userId, role_id: roleId },
+      });
     });
     if (result.count === 0) {
       throw new NotFoundException('Role is not assigned to this user');

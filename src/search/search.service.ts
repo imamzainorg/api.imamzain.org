@@ -1,8 +1,11 @@
 import { Injectable } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
-import { resolveTranslation } from '../common/utils/translation.util';
+import { onlyActiveTranslations, resolveTranslation } from '../common/utils/translation.util';
+import { MEDIA_URL_WITH_VARIANTS_SELECT } from '../common/crud/media-selects';
 import { SearchQueryDto, SearchResourceType } from './dto/search.dto';
+
+type ImageVariant = { id: string; width: number; url: string; format: string };
 
 type Hit = {
   type: SearchResourceType;
@@ -12,7 +15,17 @@ type Hit = {
   lang: string;
   slug: string | null;
   cover_image_url: string | null;
+  // Additive next to cover_image_url: WebP renditions, width ascending; [] when
+  // the hit has no image (papers, audios) or none was generated.
+  cover_image_variants: ImageVariant[];
 };
+
+/**
+ * A hit with no servable translation (every matching row is in a retired
+ * language) has no title to show: it is not a hit. The SQL stage cannot know
+ * which languages are live, so this is where it is dropped.
+ */
+const hasLiveTranslation = (hit: Hit): boolean => hit.lang !== '';
 
 /**
  * Cross-resource search using PostgreSQL pg_trgm similarity. Each resource has
@@ -116,7 +129,7 @@ export class SearchService {
         id: true,
         slug: true,
         post_translations: { select: { lang: true, title: true, summary: true, body: true, is_default: true } },
-        media: { select: { url: true } },
+        media: { select: MEDIA_URL_WITH_VARIANTS_SELECT },
       },
     });
     const byId = new Map(rows.map((r) => [r.id, r]));
@@ -134,8 +147,10 @@ export class SearchService {
           lang: matched?.lang ?? '',
           slug: post.slug ?? null,
           cover_image_url: post.media?.url ?? null,
+          cover_image_variants: post.media?.media_variants ?? [],
         };
-      });
+      })
+      .filter(hasLiveTranslation);
   }
 
   private async searchBooks(q: string, limit: number, lang: string | null): Promise<Hit[]> {
@@ -171,7 +186,7 @@ export class SearchService {
         book_translations: {
           select: { lang: true, title: true, author: true, description: true, is_default: true },
         },
-        media: { select: { url: true } },
+        media: { select: MEDIA_URL_WITH_VARIANTS_SELECT },
       },
     });
     const byId = new Map(rows.map((r) => [r.id, r]));
@@ -189,8 +204,10 @@ export class SearchService {
           lang: matched?.lang ?? '',
           slug: book.slug ?? null,
           cover_image_url: book.media?.url ?? null,
+          cover_image_variants: book.media?.media_variants ?? [],
         };
-      });
+      })
+      .filter(hasLiveTranslation);
   }
 
   private async searchPapers(q: string, limit: number, lang: string | null): Promise<Hit[]> {
@@ -235,8 +252,10 @@ export class SearchService {
           lang: matched?.lang ?? '',
           slug: null,
           cover_image_url: null,
+          cover_image_variants: [],
         };
-      });
+      })
+      .filter(hasLiveTranslation);
   }
 
   private async searchGallery(q: string, limit: number, lang: string | null): Promise<Hit[]> {
@@ -264,7 +283,7 @@ export class SearchService {
       select: {
         media_id: true,
         gallery_image_translations: { select: { lang: true, title: true, description: true, is_default: true } },
-        media: { select: { url: true } },
+        media: { select: MEDIA_URL_WITH_VARIANTS_SELECT },
       },
     });
     const byId = new Map(rows.map((r) => [r.media_id, r]));
@@ -282,12 +301,14 @@ export class SearchService {
           lang: matched?.lang ?? '',
           slug: null,
           cover_image_url: image.media?.url ?? null,
+          cover_image_variants: image.media?.media_variants ?? [],
         };
-      });
+      })
+      .filter(hasLiveTranslation);
   }
 
   /**
-   * Audios match on their translation title and their speaker's translated name.
+   * Audios match on their translation title and their (live) speaker's translated name.
    * The GROUP BY collapses an audio's multiple translations (and its speaker's
    * translations) to a single best-similarity score. Visibility follows the
    * POSTS rule — `is_published = TRUE AND deleted_at IS NULL` — because audios
@@ -301,7 +322,8 @@ export class SearchService {
       ) AS score
       FROM audios a
       JOIN audio_translations at ON at.audio_id = a.id
-      LEFT JOIN speaker_translations sp ON sp.speaker_id = a.speaker_id
+      LEFT JOIN speakers s ON s.id = a.speaker_id AND s.deleted_at IS NULL
+      LEFT JOIN speaker_translations sp ON sp.speaker_id = s.id
       WHERE a.deleted_at IS NULL
         AND a.is_published = TRUE
         AND (at.title % ${q} OR sp.name % ${q})
@@ -319,7 +341,9 @@ export class SearchService {
         id: true,
         slug: true,
         audio_translations: { select: { lang: true, title: true, is_default: true } },
-        speakers: { select: { speaker_translations: { select: { lang: true, name: true, is_default: true } } } },
+        speakers: {
+          select: { deleted_at: true, speaker_translations: { select: { lang: true, name: true, is_default: true } } },
+        },
       },
     });
     const byId = new Map(rows.map((r) => [r.id, r]));
@@ -329,7 +353,11 @@ export class SearchService {
       .filter((a): a is NonNullable<typeof a> => Boolean(a))
       .map((audio) => {
         const matched = this.pickMatchedTranslation(audio.audio_translations, q, lang, ['title']);
-        const speaker = resolveTranslation(audio.speakers?.speaker_translations ?? null, matched?.lang ?? lang);
+        // A trashed speaker is neither matched (SQL above) nor named in the summary.
+        const speaker = resolveTranslation(
+          audio.speakers && !audio.speakers.deleted_at ? audio.speakers.speaker_translations : null,
+          matched?.lang ?? lang,
+        );
         return {
           type: SearchResourceType.Audio,
           id: audio.id,
@@ -338,8 +366,10 @@ export class SearchService {
           lang: matched?.lang ?? '',
           slug: audio.slug ?? null,
           cover_image_url: null,
+          cover_image_variants: [],
         };
-      });
+      })
+      .filter(hasLiveTranslation);
   }
 
   /**
@@ -348,13 +378,17 @@ export class SearchService {
    * translation. This way an Arabic search that hits an English summary
    * still returns the English row instead of misleadingly showing the
    * Arabic default whose text doesn't contain `q`.
+   *
+   * Translations in a retired language (inactive / soft-deleted) never
+   * qualify, even when they are the ones that matched in SQL.
    */
   private pickMatchedTranslation<T extends { lang: string; is_default?: boolean } & Record<string, any>>(
-    translations: T[],
+    allTranslations: T[],
     q: string,
     lang: string | null,
     matchFields: readonly string[],
   ): T | null {
+    const translations = onlyActiveTranslations(allTranslations);
     if (translations.length === 0) return null;
     const needle = q.toLowerCase();
     const matches = translations.filter((t) =>

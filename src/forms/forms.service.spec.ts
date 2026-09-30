@@ -1,8 +1,7 @@
 import { Test, TestingModule } from "@nestjs/testing";
-import { NotFoundException } from "@nestjs/common";
+import { BadRequestException, ConflictException, NotFoundException } from "@nestjs/common";
 import { FormsService } from "./forms.service";
 import { PrismaService } from "../prisma/prisma.service";
-import { EmailService } from "../email/email.service";
 import { WhatsappService } from "../whatsapp/whatsapp.service";
 import { AuditService } from "../common/audit/audit.service";
 
@@ -30,7 +29,6 @@ const baseContact = {
 describe("FormsService", () => {
   let service: FormsService;
   let prisma: any;
-  let emailService: any;
   let whatsappService: any;
 
   beforeEach(async () => {
@@ -45,6 +43,8 @@ describe("FormsService", () => {
               findFirst: jest.fn(),
               findMany: jest.fn(),
               update: jest.fn().mockResolvedValue({}),
+              updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+              findUniqueOrThrow: jest.fn().mockResolvedValue({}),
               count: jest.fn(),
             },
             contact_submissions: {
@@ -52,16 +52,11 @@ describe("FormsService", () => {
               findFirst: jest.fn(),
               findMany: jest.fn(),
               update: jest.fn().mockResolvedValue({}),
+              updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+              findUniqueOrThrow: jest.fn().mockResolvedValue({}),
               count: jest.fn(),
             },
             audit_logs: { create: jest.fn().mockResolvedValue({}) },
-          },
-        },
-        {
-          provide: EmailService,
-          useValue: {
-            notifyContactSubmission: jest.fn().mockResolvedValue(true),
-            notifyProxyVisit: jest.fn().mockResolvedValue(true),
           },
         },
         {
@@ -76,7 +71,6 @@ describe("FormsService", () => {
 
     service = module.get<FormsService>(FormsService);
     prisma = module.get(PrismaService);
-    emailService = module.get(EmailService);
     whatsappService = module.get(WhatsappService);
   });
 
@@ -105,7 +99,7 @@ describe("FormsService", () => {
       expect(result.message).toBe("Proxy visit request submitted");
     });
 
-    it("fires email notification without awaiting", async () => {
+    it("sends no e-mail inline — the row waits in the notification outbox", async () => {
       prisma.proxy_visit_requests.create.mockResolvedValue(baseProxyVisit);
 
       await service.submitProxyVisit({
@@ -114,76 +108,94 @@ describe("FormsService", () => {
         visitor_country: "IQ",
       });
 
-      expect(emailService.notifyProxyVisit).toHaveBeenCalledWith(
-        baseProxyVisit,
-      );
+      // notified_at is left to its NULL default; FormNotificationsService owns it.
+      expect(prisma.proxy_visit_requests.create.mock.calls[0][0].data).not.toHaveProperty("notified_at");
     });
   });
 
   describe("updateProxyVisit", () => {
+    const lastWrite = () => prisma.proxy_visit_requests.updateMany.mock.calls.at(-1)[0];
+
     it("updates status and sets processed_by + processed_at for APPROVED", async () => {
       prisma.proxy_visit_requests.findFirst.mockResolvedValue(baseProxyVisit);
 
-      const result = await service.updateProxyVisit(
-        "pv-1",
-        { status: "APPROVED" },
-        "admin-1",
-      );
+      const result = await service.updateProxyVisit("pv-1", { status: "APPROVED" }, "admin-1");
 
-      expect(prisma.proxy_visit_requests.update).toHaveBeenCalledWith(
-        expect.objectContaining({
-          data: expect.objectContaining({
-            status: "APPROVED",
-            processed_by: "admin-1",
-          }),
-        }),
+      expect(lastWrite().data).toEqual(
+        expect.objectContaining({ status: "APPROVED", processed_by: "admin-1", processed_at: expect.any(Date) }),
       );
       expect(result.message).toBe("Request updated");
     });
 
-    it("sends WhatsApp when status transitions to COMPLETED", async () => {
-      prisma.proxy_visit_requests.findFirst.mockResolvedValue({
-        ...baseProxyVisit,
-        status: "APPROVED",
-      });
-      prisma.proxy_visit_requests.update.mockResolvedValue({});
+    it("writes with a compare-and-set on the status it read", async () => {
+      prisma.proxy_visit_requests.findFirst.mockResolvedValue({ ...baseProxyVisit, status: "APPROVED" });
 
-      await service.updateProxyVisit(
-        "pv-1",
-        { status: "COMPLETED" },
-        "admin-1",
-      );
+      await service.updateProxyVisit("pv-1", { status: "COMPLETED" }, "admin-1");
 
-      expect(whatsappService.sendProxyVisitCompletion).toHaveBeenCalledWith(
-        baseProxyVisit.phone,
-        baseProxyVisit.name,
-      );
+      expect(lastWrite().where).toEqual({ id: "pv-1", deleted_at: null, status: "APPROVED" });
     });
 
-    it("does NOT send WhatsApp if already COMPLETED", async () => {
-      prisma.proxy_visit_requests.findFirst.mockResolvedValue({
-        ...baseProxyVisit,
-        status: "COMPLETED",
-      });
-      prisma.proxy_visit_requests.update.mockResolvedValue({});
+    it("sends WhatsApp when status transitions to COMPLETED", async () => {
+      prisma.proxy_visit_requests.findFirst.mockResolvedValue({ ...baseProxyVisit, status: "APPROVED" });
 
-      await service.updateProxyVisit(
-        "pv-1",
-        { status: "COMPLETED" },
-        "admin-1",
-      );
+      await service.updateProxyVisit("pv-1", { status: "COMPLETED" }, "admin-1");
 
+      expect(whatsappService.sendProxyVisitCompletion).toHaveBeenCalledWith(baseProxyVisit.phone, baseProxyVisit.name);
+    });
+
+    it("loses the race cleanly: 409 and NO WhatsApp when someone else completed it first", async () => {
+      prisma.proxy_visit_requests.findFirst.mockResolvedValue({ ...baseProxyVisit, status: "APPROVED" });
+      prisma.proxy_visit_requests.updateMany.mockResolvedValueOnce({ count: 0 });
+
+      await expect(service.updateProxyVisit("pv-1", { status: "COMPLETED" }, "admin-2")).rejects.toThrow(ConflictException);
       expect(whatsappService.sendProxyVisitCompletion).not.toHaveBeenCalled();
     });
 
-    it("persists an admin note, independently of any status change", async () => {
-      prisma.proxy_visit_requests.findFirst.mockResolvedValue(baseProxyVisit);
+    it("does NOT send WhatsApp if already COMPLETED", async () => {
+      prisma.proxy_visit_requests.findFirst.mockResolvedValue({ ...baseProxyVisit, status: "COMPLETED" });
+
+      await service.updateProxyVisit("pv-1", { status: "COMPLETED" }, "admin-1");
+
+      expect(whatsappService.sendProxyVisitCompletion).not.toHaveBeenCalled();
+      // Same status, no note: nothing to write at all.
+      expect(prisma.proxy_visit_requests.updateMany).not.toHaveBeenCalled();
+    });
+
+    it.each(["PENDING", "APPROVED", "REJECTED"])("treats COMPLETED as final — refuses COMPLETED → %s", async (next) => {
+      prisma.proxy_visit_requests.findFirst.mockResolvedValue({ ...baseProxyVisit, status: "COMPLETED" });
+
+      await expect(service.updateProxyVisit("pv-1", { status: next }, "admin-1")).rejects.toThrow(BadRequestException);
+      expect(prisma.proxy_visit_requests.updateMany).not.toHaveBeenCalled();
+    });
+
+    it("refuses REJECTED → COMPLETED (so the WhatsApp can't be re-triggered through a detour)", async () => {
+      prisma.proxy_visit_requests.findFirst.mockResolvedValue({ ...baseProxyVisit, status: "REJECTED" });
+
+      await expect(service.updateProxyVisit("pv-1", { status: "COMPLETED" }, "admin-1")).rejects.toThrow(
+        /cannot become COMPLETED/,
+      );
+      expect(whatsappService.sendProxyVisitCompletion).not.toHaveBeenCalled();
+    });
+
+    it("clears the processed_* stamps when a request goes back to PENDING", async () => {
+      prisma.proxy_visit_requests.findFirst.mockResolvedValue({
+        ...baseProxyVisit,
+        status: "APPROVED",
+        processed_by: "admin-1",
+        processed_at: new Date("2026-09-01"),
+      });
+
+      await service.updateProxyVisit("pv-1", { status: "PENDING" }, "admin-2");
+
+      expect(lastWrite().data).toEqual({ status: "PENDING", processed_by: null, processed_at: null });
+    });
+
+    it("persists an admin note, independently of any status change — even on a final record", async () => {
+      prisma.proxy_visit_requests.findFirst.mockResolvedValue({ ...baseProxyVisit, status: "COMPLETED" });
 
       await service.updateProxyVisit("pv-1", { notes: "Visit completed; photos sent." }, "admin-1");
 
-      const data = prisma.proxy_visit_requests.update.mock.calls.at(-1)[0].data;
-      expect(data.notes).toBe("Visit completed; photos sent.");
-      expect(data.status).toBeUndefined();
+      expect(lastWrite().data).toEqual({ notes: "Visit completed; photos sent." });
       // A note on its own must not trigger the COMPLETED WhatsApp message.
       expect(whatsappService.sendProxyVisitCompletion).not.toHaveBeenCalled();
     });
@@ -248,7 +260,7 @@ describe("FormsService", () => {
   // ─── Contact Submissions ───────────────────────────────────────────────────
 
   describe("submitContact", () => {
-    it("creates contact record and fires both emails", async () => {
+    it("creates the contact record and leaves the notification to the outbox", async () => {
       prisma.contact_submissions.create.mockResolvedValue(baseContact);
 
       const result = await service.submitContact({
@@ -258,31 +270,43 @@ describe("FormsService", () => {
       });
 
       expect(prisma.contact_submissions.create).toHaveBeenCalled();
-      expect(emailService.notifyContactSubmission).toHaveBeenCalledWith(
-        baseContact,
-      );
+      expect(prisma.contact_submissions.create.mock.calls[0][0].data).not.toHaveProperty("notified_at");
       expect(result.message).toBe("Contact submission received");
     });
   });
 
   describe("updateContact", () => {
+    const lastWrite = () => prisma.contact_submissions.updateMany.mock.calls.at(-1)[0];
+
     it("updates status to RESPONDED and sets responded_by + responded_at", async () => {
       prisma.contact_submissions.findFirst.mockResolvedValue(baseContact);
 
-      await service.updateContact(
-        "contact-1",
-        { status: "RESPONDED" },
-        "admin-1",
-      );
+      await service.updateContact("contact-1", { status: "RESPONDED" }, "admin-1");
 
-      expect(prisma.contact_submissions.update).toHaveBeenCalledWith(
-        expect.objectContaining({
-          data: expect.objectContaining({
-            status: "RESPONDED",
-            responded_by: "admin-1",
-          }),
-        }),
-      );
+      expect(lastWrite()).toEqual({
+        where: { id: "contact-1", deleted_at: null, status: "NEW" },
+        data: { status: "RESPONDED", responded_by: "admin-1", responded_at: expect.any(Date) },
+      });
+    });
+
+    it("clears the responder stamp when a submission leaves RESPONDED", async () => {
+      prisma.contact_submissions.findFirst.mockResolvedValue({
+        ...baseContact,
+        status: "RESPONDED",
+        responded_by: "admin-1",
+        responded_at: new Date("2026-09-01"),
+      });
+
+      await service.updateContact("contact-1", { status: "NEW" }, "admin-2");
+
+      expect(lastWrite().data).toEqual({ status: "NEW", responded_by: null, responded_at: null });
+    });
+
+    it("answers 409 when the row changed under the editor", async () => {
+      prisma.contact_submissions.findFirst.mockResolvedValue(baseContact);
+      prisma.contact_submissions.updateMany.mockResolvedValueOnce({ count: 0 });
+
+      await expect(service.updateContact("contact-1", { status: "SPAM" }, "admin-1")).rejects.toThrow(ConflictException);
     });
 
     it("persists an admin note, independently of any status change", async () => {
@@ -290,11 +314,8 @@ describe("FormsService", () => {
 
       await service.updateContact("contact-1", { notes: "Replied by phone." }, "admin-1");
 
-      const data = prisma.contact_submissions.update.mock.calls.at(-1)[0].data;
-      expect(data.notes).toBe("Replied by phone.");
       // No status supplied — the status transition side-effects must not fire.
-      expect(data.status).toBeUndefined();
-      expect(data.responded_by).toBeUndefined();
+      expect(lastWrite().data).toEqual({ notes: "Replied by phone." });
     });
 
     it("clears an admin note when passed an empty string", async () => {
@@ -302,7 +323,7 @@ describe("FormsService", () => {
 
       await service.updateContact("contact-1", { notes: "" }, "admin-1");
 
-      expect(prisma.contact_submissions.update.mock.calls.at(-1)[0].data.notes).toBe("");
+      expect(lastWrite().data.notes).toBe("");
     });
 
     it("throws NotFoundException when not found", async () => {

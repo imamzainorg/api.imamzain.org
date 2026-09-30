@@ -13,6 +13,13 @@ class LoginUserDto {
 
   @ApiProperty({ type: [String], example: ['post:create', 'post:delete'] })
   permissions: string[];
+
+  @ApiProperty({
+    example: false,
+    description:
+      "True after an admin reset this account's password, until the user changes it themselves. The CMS should route the user to the change-password screen.",
+  })
+  must_change_password: boolean;
 }
 
 class LoginDataDto {
@@ -43,6 +50,12 @@ class MeDataDto {
 
   @ApiProperty({ type: [String], example: ['post:create'] })
   permissions: string[];
+
+  @ApiProperty({
+    example: false,
+    description: "True after an admin reset this account's password, until the user changes it themselves.",
+  })
+  must_change_password: boolean;
 }
 
 export class MeResponseDto extends ApiEnvelope(MeDataDto, 'Profile fetched') {}

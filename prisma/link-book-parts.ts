@@ -316,7 +316,6 @@ async function main() {
 
 main()
   .catch((err) => {
-    // eslint-disable-next-line no-console
     console.error('❌ link-book-parts failed:', err);
     process.exit(1);
   })

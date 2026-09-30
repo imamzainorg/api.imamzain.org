@@ -40,7 +40,7 @@ export class BooksController {
   @ApiOperation({
     summary: 'List all books (public)',
     description:
-      'Supports filtering by category, publication flag, and full-text search. **Series parts are never returned here** — a multi-part series appears as one row (its parent/cover entry) with `parts_count` set; call `GET /books/:id` on that row to fetch the parts themselves. Response is CDN-cacheable (`public, max-age=60, s-maxage=300`) and varies by `Accept-Language`. **List payload is slim** — each translation drops the `description` field. Call `GET /books/:id` for the full description.',
+      'Supports filtering by category, publication flag, and full-text search. **Series parts are never returned here** — a multi-part series appears as one row (its parent/cover entry) with `parts_count` set to its published, non-deleted parts; call `GET /books/:id` on that row to fetch the parts themselves. Response is CDN-cacheable (`public, max-age=60, s-maxage=300`) and varies by `Accept-Language`. **List payload is slim** — each translation drops the `description` field. Call `GET /books/:id` for the full description.',
   })
   @ApiQuery({ name: 'page', required: false, type: Number, example: 1, description: 'Page number (default: 1)' })
   @ApiQuery({ name: 'limit', required: false, type: Number, example: 20, description: 'Items per page (default: 20, max: 100)' })
@@ -58,7 +58,7 @@ export class BooksController {
   @ApiOperation({
     summary: 'List all books including unpublished (admin)',
     description:
-      'Returns drafts and published books. Series parts are hidden here too — same `parts_count` convention as the public list. Requires permission: `books:read`.',
+      'Returns drafts and published books. Series parts are hidden here too — same `parts_count` convention as the public list, except that it also counts unpublished (draft) parts. Requires permission: `books:read`.',
   })
   @ApiQuery({ name: 'page', required: false, type: Number, example: 1 })
   @ApiQuery({ name: 'limit', required: false, type: Number, example: 20 })
@@ -166,7 +166,7 @@ export class BooksController {
   @ApiOperation({ summary: 'Create a new book with translations', description: 'Requires permission: `books:create`. Exactly one translation must have `is_default: true`.' })
   @ApiCreatedResponse({ type: BookCreatedResponseDto, description: 'Book created with all provided translations; returns the full book object' })
   @ApiBadRequestResponse({ type: ValidationErrorDto, description: 'Validation failed' })
-  @ApiNotFoundResponse({ type: NotFoundErrorDto, description: 'No book category with that category_id exists, or the cover_image_id does not match any media record' })
+  @ApiNotFoundResponse({ type: NotFoundErrorDto, description: 'No book category with that category_id exists, the cover_image_id does not match any media record, or a translation og_image_id does not' })
   @ApiConflictResponse({ type: ConflictErrorDto, description: 'A book with that ISBN or slug already exists' })
   create(@Body() dto: CreateBookDto, @CurrentUser() user: CurrentUserPayload, @Lang() lang: string | null) {
     return this.booksService.create(dto, user.id, lang);
@@ -178,7 +178,7 @@ export class BooksController {
   @ApiParam({ name: 'id', format: 'uuid' })
   @ApiOkResponse({ type: BookDetailResponseDto, description: 'Updated book with all translations' })
   @ApiBadRequestResponse({ type: ValidationErrorDto, description: 'Validation failed, or the resulting translations did not contain exactly one is_default entry' })
-  @ApiNotFoundResponse({ type: NotFoundErrorDto, description: 'No book with that ID exists, or the new category_id / cover_image_id does not exist or has been soft-deleted' })
+  @ApiNotFoundResponse({ type: NotFoundErrorDto, description: 'No book with that ID exists, the new category_id / cover_image_id does not exist or has been soft-deleted, or a translation og_image_id does not match any media record' })
   @ApiConflictResponse({ type: ConflictErrorDto, description: 'A book with that ISBN or slug already exists' })
   update(@Param('id') id: string, @Body() dto: UpdateBookDto, @CurrentUser() user: CurrentUserPayload, @Lang() lang: string | null) {
     return this.booksService.update(id, dto, user.id, lang);

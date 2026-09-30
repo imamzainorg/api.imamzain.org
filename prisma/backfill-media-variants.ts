@@ -98,7 +98,6 @@ async function main() {
 
 main()
   .catch((err) => {
-    // eslint-disable-next-line no-console
     console.error('Backfill failed:', err);
     process.exitCode = 1;
   });

@@ -14,6 +14,11 @@ const SETTINGS_CACHE_TTL_MS = 60_000;
 
 type SettingRow = Prisma.site_settingsGetPayload<{}>;
 
+// A finite decimal: optional sign, digits with an optional fraction (or a bare
+// fraction), optional exponent. `Number()` alone also accepts '', '  ', '0x1A',
+// '0b11' and 'Infinity', none of which is a number an editor meant to type.
+const DECIMAL_NUMBER = /^[+-]?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?$/;
+
 export interface DecodedSetting {
   key: string;
   value: string | number | boolean | unknown;
@@ -24,10 +29,14 @@ export interface DecodedSetting {
   updated_by: string | null;
 }
 
+/** What GET /settings/public returns: no staff identity (updated_by). */
+export type PublicSetting = Omit<DecodedSetting, 'updated_by'>;
+
 @Injectable()
 export class SettingsService implements OnApplicationBootstrap {
   private readonly logger = new Logger(SettingsService.name);
   private readonly cache = new TtlCache<DecodedSetting[]>(SETTINGS_CACHE_TTL_MS);
+  private readonly publicCache = new TtlCache<PublicSetting[]>(SETTINGS_CACHE_TTL_MS);
 
   constructor(
     private readonly prisma: PrismaService,
@@ -82,9 +91,9 @@ export class SettingsService implements OnApplicationBootstrap {
   private assertValid(value: string, type: site_setting_type): void {
     switch (type) {
       case 'number': {
-        const n = Number(value);
-        if (!Number.isFinite(n)) {
-          throw new BadRequestException(`Value "${value}" is not a finite number`);
+        const text = value.trim();
+        if (!DECIMAL_NUMBER.test(text) || !Number.isFinite(Number(text))) {
+          throw new BadRequestException(`Value "${value}" is not a finite decimal number`);
         }
         break;
       }
@@ -105,6 +114,11 @@ export class SettingsService implements OnApplicationBootstrap {
     }
   }
 
+  private clearCaches(): void {
+    this.cache.clear();
+    this.publicCache.clear();
+  }
+
   async findAll(): Promise<{ message: string; data: DecodedSetting[] }> {
     const cached = this.cache.get('all');
     if (cached) return { message: 'Settings fetched', data: cached };
@@ -114,16 +128,28 @@ export class SettingsService implements OnApplicationBootstrap {
     return { message: 'Settings fetched', data: decoded };
   }
 
-  async findPublic(): Promise<{ message: string; data: DecodedSetting[] }> {
-    const cached = this.cache.get('public');
+  async findPublic(): Promise<{ message: string; data: PublicSetting[] }> {
+    const cached = this.publicCache.get('public');
     if (cached) return { message: 'Public settings fetched', data: cached };
     const rows = await this.prisma.site_settings.findMany({
       where: { is_public: true },
       orderBy: { key: 'asc' },
     });
-    const decoded = rows.map((r) => this.decode(r));
-    this.cache.set('public', decoded);
+    const decoded = rows.map((r) => this.toPublic(this.decode(r)));
+    this.publicCache.set('public', decoded);
     return { message: 'Public settings fetched', data: decoded };
+  }
+
+  /** Explicit allowlist, so a column added to site_settings never leaks publicly by default. */
+  private toPublic(s: DecodedSetting): PublicSetting {
+    return {
+      key: s.key,
+      value: s.value,
+      type: s.type,
+      description: s.description,
+      is_public: s.is_public,
+      updated_at: s.updated_at,
+    };
   }
 
   async findOne(key: string): Promise<{ message: string; data: DecodedSetting }> {
@@ -148,19 +174,20 @@ export class SettingsService implements OnApplicationBootstrap {
     }
 
     this.assertValid(dto.value, targetType);
+    const storedValue = targetType === 'number' ? dto.value.trim() : dto.value;
 
     const row = await this.prisma.site_settings.upsert({
       where: { key },
       create: {
         key,
-        value: dto.value,
+        value: storedValue,
         type: targetType,
         description: dto.description ?? null,
         is_public: dto.is_public ?? false,
         updated_by: actorId,
       },
       update: {
-        value: dto.value,
+        value: storedValue,
         description: dto.description ?? existing?.description ?? null,
         is_public: dto.is_public ?? existing?.is_public ?? false,
         updated_at: new Date(),
@@ -168,7 +195,7 @@ export class SettingsService implements OnApplicationBootstrap {
       },
     });
 
-    this.cache.clear();
+    this.clearCaches();
 
     this.audit.write({
       actorId,
@@ -186,7 +213,7 @@ export class SettingsService implements OnApplicationBootstrap {
     if (!existing) throw new NotFoundException('Setting not found');
 
     await this.prisma.site_settings.delete({ where: { key } });
-    this.cache.clear();
+    this.clearCaches();
 
     this.audit.write({
       actorId,

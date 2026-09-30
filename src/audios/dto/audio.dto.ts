@@ -19,6 +19,9 @@ import {
   ValidateNested,
 } from "class-validator";
 import { PaginationDto } from "../../common/dto/pagination.dto";
+import { DTO_LIMITS } from "../../common/validators/dto-limits";
+import { toQueryBoolean } from "../../common/validators/query-boolean";
+import { SearchTerm } from "../../common/validators/search-term";
 
 // The canonical extractor (browser Web Audio / the analyze script) emits exactly
 // 300 peaks — enough for an interactive waveform without bloating the jsonb
@@ -117,11 +120,13 @@ export class CreateAudioDto {
   @ApiProperty({
     type: [AudioTranslationDto],
     description: "Must include exactly one translation with is_default: true.",
+    maxItems: DTO_LIMITS.listItems,
   })
   @IsArray()
   @ValidateNested({ each: true })
   @Type(() => AudioTranslationDto)
   @ArrayMinSize(1)
+  @ArrayMaxSize(DTO_LIMITS.listItems)
   translations!: AudioTranslationDto[];
 }
 
@@ -178,11 +183,12 @@ export class UpdateAudioDto {
   @IsBoolean()
   is_published?: boolean;
 
-  @ApiPropertyOptional({ type: [AudioTranslationDto], description: "Upserted by (audio_id, lang)." })
+  @ApiPropertyOptional({ type: [AudioTranslationDto], description: "Upserted by (audio_id, lang).", maxItems: DTO_LIMITS.listItems })
   @IsOptional()
   @IsArray()
   @ValidateNested({ each: true })
   @Type(() => AudioTranslationDto)
+  @ArrayMaxSize(DTO_LIMITS.listItems)
   translations?: AudioTranslationDto[];
 }
 
@@ -198,17 +204,20 @@ export class AudioQueryDto extends PaginationDto {
   @IsUUID()
   speaker_id?: string;
 
-  @ApiPropertyOptional({ example: "السجاد", description: "Trigram search across title + speaker name." })
-  @IsOptional()
-  @IsString()
-  @MaxLength(200)
+  @ApiPropertyOptional({
+    example: "السجاد",
+    description: "Trigram search across title + speaker name. 2–200 characters after trimming; a blank value is ignored.",
+    minLength: 2,
+    maxLength: 200,
+  })
+  @SearchTerm()
   search?: string;
 }
 
 export class AudioAdminQueryDto extends AudioQueryDto {
-  @ApiPropertyOptional({ example: true, description: "Filter by published state. Omit to include both." })
+  @ApiPropertyOptional({ example: true, description: "Filter by published state. Omit to include both. Only `true` / `false` are accepted." })
   @IsOptional()
-  @Transform(({ value }) => value === "true" || value === true)
+  @Transform(toQueryBoolean)
   @IsBoolean()
   is_published?: boolean;
 }

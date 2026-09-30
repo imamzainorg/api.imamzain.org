@@ -13,8 +13,10 @@ import { assertExactlyOneDefault, resolveTranslation } from '../common/utils/tra
 import { buildPaginationMeta, resolvePagination } from '../common/utils/pagination.util';
 import { ADVISORY_LOCK_KEYS, withAdvisoryLock } from '../common/utils/advisory-lock.util';
 import { publicWhere } from '../common/utils/visibility.util';
+import { assertSlugRenameAllowed, resolvePublishedAt } from '../common/utils/publish-rules.util';
 import { MEDIA_VARIANT_SELECT, OG_IMAGE_SELECT, PUBLIC_MEDIA_SELECT } from '../common/crud/media-selects';
 import { BulkIdsDto, BulkPublishDto, CreatePostDto, PostQueryDto, PostSort, PostStatus, TogglePublishDto, UpdatePostDto } from './dto/post.dto';
+import { ViewDedupService } from './view-dedup.service';
 
 const POST_DETAIL_INCLUDE = {
   post_translations: { include: { og_image: { select: OG_IMAGE_SELECT } } },
@@ -25,6 +27,32 @@ const POST_DETAIL_INCLUDE = {
     orderBy: { display_order: 'asc' },
   },
 } satisfies Prisma.postsInclude;
+
+// The PUBLIC detail shape. Admin reads keep POST_DETAIL_INCLUDE (full rows, so
+// the CMS still sees created_by and the media bookkeeping columns); an
+// anonymous caller gets an explicit column list instead: no staff UUID
+// (`created_by`), and embedded media reduced to PUBLIC_MEDIA_SELECT (no
+// file_size / uploaded_by).
+const POST_PUBLIC_DETAIL_SELECT = {
+  id: true,
+  category_id: true,
+  cover_image_id: true,
+  slug: true,
+  is_published: true,
+  is_featured: true,
+  published_at: true,
+  views: true,
+  created_at: true,
+  updated_at: true,
+  deleted_at: true,
+  post_translations: { include: { og_image: { select: OG_IMAGE_SELECT } } },
+  post_categories: { include: { post_category_translations: true } },
+  media: { select: PUBLIC_MEDIA_SELECT },
+  post_attachments: {
+    select: { post_id: true, media_id: true, display_order: true, media: { select: PUBLIC_MEDIA_SELECT } },
+    orderBy: { display_order: 'asc' },
+  },
+} satisfies Prisma.postsSelect;
 
 // List queries drop the full `body` from translations (typically 5-50 KB of
 // HTML each, multiplied by N translations × page size) and collapse the
@@ -81,6 +109,26 @@ function withZeroReadingTime<T extends Record<string, unknown>>(t: T): T & { rea
   return { ...t, reading_time_minutes: 0 };
 }
 
+/**
+ * Message per violated unique index, for `rethrowP2002AsConflict`. Only the
+ * slug index may produce the "slug already used" text: the other unique keys a
+ * post write can hit are the (post, lang) and (post, media) primary keys of its
+ * child tables, and reporting those as a slug clash sent editors hunting for a
+ * slug problem that did not exist.
+ */
+function postConflictMessages(slug: string | undefined): { fallback: string; byTarget: Record<string, string> } {
+  return {
+    fallback: 'A value in this request is already in use by another record',
+    byTarget: {
+      slug: slug ? `Slug "${slug}" is already used by another post` : 'The slug is already used by another post',
+      post_translations: 'The same language appears more than once in translations',
+      lang: 'The same language appears more than once in translations',
+      post_attachments: 'The same media file appears more than once in attachment_ids',
+      media_id: 'The same media file appears more than once in attachment_ids',
+    },
+  };
+}
+
 @Injectable()
 export class PostsService {
   private readonly logger = new Logger(PostsService.name);
@@ -88,6 +136,7 @@ export class PostsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly audit: AuditService,
+    private readonly viewDedup: ViewDedupService,
   ) {}
 
   async findAll(query: PostQueryDto, lang: string | null, isAdmin = false) {
@@ -167,28 +216,31 @@ export class PostsService {
     const where: Prisma.postsWhereInput = { id, deleted_at: null };
     if (!isAdmin) where.is_published = true;
 
-    const post = await this.prisma.posts.findFirst({ where, include: POST_DETAIL_INCLUDE });
+    const post = isAdmin
+      ? await this.prisma.posts.findFirst({ where, include: POST_DETAIL_INCLUDE })
+      : await this.prisma.posts.findFirst({ where, select: POST_PUBLIC_DETAIL_SELECT });
 
     if (!post) throw new NotFoundException('Post not found');
 
-    const decorated = post.post_translations.map(withReadingTime);
-
-    return {
-      message: 'Post fetched',
-      data: { ...post, post_translations: decorated, translation: resolveTranslation(decorated, lang) },
-    };
+    return this.presentDetail(post, lang);
   }
 
   /** Public detail by canonical slug — one language-agnostic slug per post. */
   async findBySlug(slug: string, lang: string | null) {
     const post = await this.prisma.posts.findFirst({
       where: { slug, ...publicWhere(true) },
-      include: POST_DETAIL_INCLUDE,
+      select: POST_PUBLIC_DETAIL_SELECT,
     });
     if (!post) throw new NotFoundException('Post not found');
 
-    const decorated = post.post_translations.map(withReadingTime);
+    return this.presentDetail(post, lang);
+  }
 
+  private presentDetail<T extends { post_translations: { body?: string | null; lang?: string; is_default?: boolean }[] }>(
+    post: T,
+    lang: string | null,
+  ) {
+    const decorated = post.post_translations.map(withReadingTime);
     return {
       message: 'Post fetched',
       data: { ...post, post_translations: decorated, translation: resolveTranslation(decorated, lang) },
@@ -206,34 +258,24 @@ export class PostsService {
       if (!media) throw new NotFoundException('Cover image not found');
     }
 
-    // Validate every translation-level og_image_id up front so a bad one
-    // surfaces as 404 with a useful message instead of a Prisma FK error.
-    const ogImageIds = dto.translations
-      .map((t) => t.og_image_id)
-      .filter((v): v is string => typeof v === 'string');
-    if (ogImageIds.length > 0) {
-      const found = await this.prisma.media.findMany({
-        where: { id: { in: ogImageIds } },
-        select: { id: true },
-      });
-      if (found.length !== new Set(ogImageIds).size) {
-        throw new NotFoundException('One or more og_image_id values do not match any media record');
-      }
-    }
+    await this.assertOgImagesExist(dto.translations);
 
     assertExactlyOneDefault(dto.translations);
     await this.assertSlugAvailable(dto.slug, null);
 
-    // Stamp published_at when a post is created already-published without an
-    // explicit timestamp. A published post with published_at = NULL sorts
-    // NULLS FIRST under `ORDER BY published_at DESC` (the public list, homepage
-    // and RSS feed all use it), pinning it to the top of every list forever.
+    // A post created already-published must carry a published_at that is not
+    // in the future: NULL sorts NULLS FIRST under `ORDER BY published_at DESC`
+    // (the public list, homepage and RSS feed all use it) and a future date
+    // sorts above everything real — either pins the post to the top of every
+    // list. A draft only keeps a FUTURE date (a schedule); a past one would be
+    // picked up by the publish cron and put the "draft" live within a minute.
     const isPublished = dto.is_published ?? false;
-    const publishedAt = dto.published_at
-      ? new Date(dto.published_at)
-      : isPublished
-        ? new Date()
-        : null;
+    const publishedAt = resolvePublishedAt({
+      willBePublished: isPublished,
+      wasPublished: false,
+      stored: null,
+      requested: dto.published_at ? new Date(dto.published_at) : null,
+    });
 
     let post;
     try {
@@ -277,7 +319,8 @@ export class PostsService {
         return created;
       });
     } catch (err) {
-      rethrowP2002AsConflict(err, `Slug "${dto.slug}" is already used by another post`);
+      const { fallback, byTarget } = postConflictMessages(dto.slug);
+      rethrowP2002AsConflict(err, fallback, byTarget);
     }
 
     this.audit.write({
@@ -308,21 +351,15 @@ export class PostsService {
       if (!media) throw new NotFoundException('Cover image not found');
     }
 
-    if (dto.translations) {
-      const ogImageIds = dto.translations
-        .map((t) => t.og_image_id)
-        .filter((v): v is string => typeof v === 'string');
-      if (ogImageIds.length > 0) {
-        const found = await this.prisma.media.findMany({
-          where: { id: { in: ogImageIds } },
-          select: { id: true },
-        });
-        if (found.length !== new Set(ogImageIds).size) {
-          throw new NotFoundException('One or more og_image_id values do not match any media record');
-        }
-      }
-    }
+    if (dto.translations) await this.assertOgImagesExist(dto.translations);
 
+    assertSlugRenameAllowed({
+      resourceLabel: 'post',
+      currentSlug: post.slug,
+      nextSlug: dto.slug,
+      isPublished: post.is_published,
+      willBePublished: dto.is_published ?? post.is_published,
+    });
     if (dto.slug !== undefined) await this.assertSlugAvailable(dto.slug, id);
 
     try {
@@ -337,23 +374,20 @@ export class PostsService {
         if (dto.slug !== undefined) updateData.slug = dto.slug;
         if (dto.is_published !== undefined) updateData.is_published = dto.is_published;
         if (dto.is_featured !== undefined) updateData.is_featured = dto.is_featured;
-        if (dto.published_at !== undefined) {
-          updateData.published_at = dto.published_at ? new Date(dto.published_at) : null;
-        }
 
-        // Stamp published_at = now when the post is (or is becoming) published
-        // but would still have no timestamp — otherwise it sorts NULLS FIRST and
-        // pins to the top of every public list/feed forever. (togglePublish
-        // already stamps; create/update previously did not.)
-        const willBePublished = dto.is_published ?? post.is_published;
-        const resolvedPublishedAt =
-          dto.published_at !== undefined
-            ? dto.published_at
-              ? new Date(dto.published_at)
-              : null
-            : post.published_at;
-        if (willBePublished && resolvedPublishedAt === null) {
-          updateData.published_at = new Date();
+        // published_at is never copied straight from the request — see
+        // resolvePublishedAt for the two invariants it keeps (a live post is
+        // never future-dated or undated; an unpublished post never carries a
+        // past date the publish cron would act on, which is what the CMS form
+        // sends when it unpublishes: the stored date, verbatim).
+        const nextPublishedAt = resolvePublishedAt({
+          willBePublished: dto.is_published ?? post.is_published,
+          wasPublished: post.is_published,
+          stored: post.published_at,
+          requested: dto.published_at === undefined ? undefined : dto.published_at ? new Date(dto.published_at) : null,
+        });
+        if (nextPublishedAt?.getTime() !== post.published_at?.getTime()) {
+          updateData.published_at = nextPublishedAt;
         }
 
         await tx.posts.update({ where: { id }, data: updateData });
@@ -402,7 +436,8 @@ export class PostsService {
         }
       });
     } catch (err) {
-      rethrowP2002AsConflict(err, `Slug "${dto.slug}" is already used by another post`);
+      const { fallback, byTarget } = postConflictMessages(dto.slug);
+      rethrowP2002AsConflict(err, fallback, byTarget);
     }
 
     this.audit.write({
@@ -417,6 +452,24 @@ export class PostsService {
     return { message: 'Post updated', data };
   }
 
+  /**
+   * Validate every translation-level og_image_id up front so a bad one surfaces
+   * as 404 with a useful message instead of a Prisma FK error.
+   */
+  private async assertOgImagesExist(translations: { og_image_id?: string }[]): Promise<void> {
+    const ogImageIds = translations
+      .map((t) => t.og_image_id)
+      .filter((v): v is string => typeof v === 'string');
+    if (ogImageIds.length === 0) return;
+    const found = await this.prisma.media.findMany({
+      where: { id: { in: ogImageIds } },
+      select: { id: true },
+    });
+    if (found.length !== new Set(ogImageIds).size) {
+      throw new NotFoundException('One or more og_image_id values do not match any media record');
+    }
+  }
+
   /** Reject a slug that collides with another live post's slug. */
   private async assertSlugAvailable(slug: string, excludePostId: string | null): Promise<void> {
     const conflict = await this.prisma.posts.findFirst({
@@ -426,20 +479,42 @@ export class PostsService {
     if (conflict) throw new ConflictException(`Slug "${slug}" is already used by another post`);
   }
 
-  async togglePublish(id: string, dto: TogglePublishDto, userId: string, lang: string | null) {
-    const post = await this.prisma.posts.findFirst({ where: { id, deleted_at: null } });
+  async togglePublish(id: string, dto: TogglePublishDto, actorId: string, lang: string | null) {
+    const post = await this.prisma.posts.findFirst({
+      where: { id, deleted_at: null },
+      select: { id: true, is_published: true, published_at: true },
+    });
     if (!post) throw new NotFoundException('Post not found');
 
-    const updateData: Prisma.postsUpdateInput = { is_published: dto.is_published, updated_at: new Date() };
-    if (dto.is_published && !post.published_at) {
-      updateData.published_at = new Date();
+    // Already in the requested state: nothing changes, so no audit row and no
+    // updated_at bump (the sibling modules and bulkSetPublish behave the same).
+    // A schedule on an unpublished post is left alone — cancel it with
+    // PATCH /posts/:id { published_at: null }.
+    if (post.is_published === dto.is_published) {
+      const { data } = await this.findOne(id, lang, true);
+      return { message: 'Post already in requested state', data };
+    }
+
+    const now = new Date();
+    const updateData: Prisma.postsUpdateInput = { is_published: dto.is_published, updated_at: now };
+    if (dto.is_published) {
+      // "Publish now" on a scheduled post must not keep its future date — a
+      // live, future-dated post pins itself to the top of every list. A past
+      // date (a due schedule the cron had not reached yet) is kept.
+      if (!post.published_at || post.published_at > now) updateData.published_at = now;
+    } else {
+      // Unpublishing must also clear published_at. The scheduled-publish cron
+      // selects `is_published = false AND published_at <= now`, so a past
+      // timestamp left in place would re-publish the post within a minute.
+      // A later publish stamps a fresh timestamp.
+      updateData.published_at = null;
     }
 
     await this.prisma.posts.update({ where: { id }, data: updateData });
 
     const action = dto.is_published ? AUDIT_ACTIONS.POST_PUBLISHED : AUDIT_ACTIONS.POST_UNPUBLISHED;
     this.audit.write({
-      actorId: userId,
+      actorId,
       action,
       resourceType: 'post',
       resourceId: id,
@@ -506,16 +581,34 @@ export class PostsService {
   }
 
   /**
-   * Increment the view counter for a published post. Single conditional
-   * update — no SELECT-then-UPDATE race that would let a soft-delete between
-   * the two queries still bump the counter.
+   * Increment the view counter for a published post — at most once per client
+   * IP per post per 30 minutes (see ViewDedupService). A repeat still answers
+   * with the same success response; it just does not count. The counting
+   * update is a single conditional UPDATE — no SELECT-then-UPDATE race that
+   * would let a soft-delete between the two queries still bump the counter.
    */
-  async trackView(id: string) {
-    const result = await this.prisma.posts.updateMany({
-      where: { id, ...publicWhere(true) },
-      data: { views: { increment: 1 } },
-    });
-    if (result.count === 0) throw new NotFoundException('Post not found');
+  async trackView(id: string, ip?: string) {
+    const first = await this.viewDedup.claim('post', id, ip);
+
+    if (!first) {
+      // A repeat must not turn a since-deleted or unpublished post into a 200.
+      const live = await this.prisma.posts.count({ where: { id, ...publicWhere(true) } });
+      if (live === 0) throw new NotFoundException('Post not found');
+      return { message: 'View tracked', data: null };
+    }
+
+    try {
+      const result = await this.prisma.posts.updateMany({
+        where: { id, ...publicWhere(true) },
+        data: { views: { increment: 1 } },
+      });
+      if (result.count === 0) throw new NotFoundException('Post not found');
+    } catch (err) {
+      // Nothing was counted (unknown id, DB error): give the claim back so a
+      // retry counts and a bad id leaves no dedup key behind.
+      await this.viewDedup.release('post', id, ip);
+      throw err;
+    }
     return { message: 'View tracked', data: null };
   }
 
@@ -640,6 +733,7 @@ export class PostsService {
     const skipped: string[] = [];
     const idsNeedingStamp: string[] = [];
     const idsAlreadyStamped: string[] = [];
+    const now = new Date();
 
     for (const id of uniqueIds) {
       const row = existingById.get(id);
@@ -647,7 +741,9 @@ export class PostsService {
         skipped.push(id);
         continue;
       }
-      if (dto.is_published && !row.published_at) {
+      // Publishing stamps "now" over a missing OR future date — a scheduled
+      // post published early must not stay future-dated (see togglePublish).
+      if (dto.is_published && (!row.published_at || row.published_at > now)) {
         idsNeedingStamp.push(id);
       } else {
         idsAlreadyStamped.push(id);
@@ -659,14 +755,16 @@ export class PostsService {
       return { message: 'No posts updated', data: { affected: 0, skipped } };
     }
 
-    const now = new Date();
     const action = dto.is_published ? AUDIT_ACTIONS.POST_PUBLISHED : AUDIT_ACTIONS.POST_UNPUBLISHED;
 
     await this.prisma.$transaction(async (tx) => {
       if (idsAlreadyStamped.length > 0) {
         await tx.posts.updateMany({
           where: { id: { in: idsAlreadyStamped } },
-          data: { is_published: dto.is_published, updated_at: now },
+          // Unpublishing clears published_at — see togglePublish for why.
+          data: dto.is_published
+            ? { is_published: true, updated_at: now }
+            : { is_published: false, updated_at: now, published_at: null },
         });
       }
       if (idsNeedingStamp.length > 0) {

@@ -13,6 +13,7 @@ import {
   ValidateNested,
 } from "class-validator";
 import { PaginationDto } from "../../common/dto/pagination.dto";
+import { toQueryBoolean } from "../../common/validators/query-boolean";
 
 export class StartContestDto {
   @ApiProperty({ example: "Ahmad Hassan Al-Karbalayi", maxLength: 150 })
@@ -90,11 +91,7 @@ export class SubmitContestDto {
 export class AttemptQueryDto extends PaginationDto {
   @ApiPropertyOptional({ example: true, description: "Filter by submission status" })
   @IsOptional()
-  @Transform(({ value }) => {
-    if (value === true || value === "true") return true;
-    if (value === false || value === "false") return false;
-    return undefined;
-  })
+  @Transform(toQueryBoolean)
   @IsBoolean()
   submitted?: boolean;
 }

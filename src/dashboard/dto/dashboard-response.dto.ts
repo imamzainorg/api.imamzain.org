@@ -48,10 +48,13 @@ class NewsletterStatsDto {
   @ApiProperty({ example: 1280 })
   active_subscribers: number;
 
-  @ApiProperty({ example: 47 })
+  @ApiProperty({ example: 47, description: 'Opted out (unsubscribed by themselves or by an admin). Excludes sign-ups still waiting for confirmation.' })
   inactive_subscribers: number;
 
-  @ApiProperty({ example: 12, description: 'Subscribed within the recent window' })
+  @ApiProperty({ example: 5, description: 'Signed up but have not yet clicked the confirmation link (double opt-in). Not mailed until they do.' })
+  pending_subscribers: number;
+
+  @ApiProperty({ example: 12, description: 'Confirmed their subscription within the recent window' })
   recent_subscribers: number;
 }
 
@@ -71,7 +74,7 @@ class FormsStatsDto {
   @ApiProperty({
     example: 0,
     description:
-      'Submissions whose admin-notification email failed. Non-zero usually means stale SMTP creds — on-call should investigate.',
+      'Submissions still waiting for their admin-notification digest whose last send failed — stuck RIGHT NOW (SMTP down, or stale credentials); the digest cron retries them every minute and the count drops to 0 by itself once mail flows. Historical failures from before the digest outbox existed are not counted. Non-zero for more than a few minutes: on-call should investigate.',
   })
   unsent_notifications: number;
 }

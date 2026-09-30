@@ -7,6 +7,12 @@ import { resolveTranslation } from '../common/utils/translation.util';
 import { buildPaginationMeta, resolvePagination } from '../common/utils/pagination.util';
 import { publicWhere } from '../common/utils/visibility.util';
 import { MEDIA_VARIANT_SELECT, OG_IMAGE_SELECT, PUBLIC_MEDIA_SELECT } from '../common/crud/media-selects';
+import {
+  DUPLICATE_LANG_MESSAGE,
+  UNIQUE_CONFLICT_CODES,
+  conflict,
+  uniqueViolationTarget,
+} from '../common/crud/unique-conflict.util';
 import { CreateGalleryImageDto, GalleryQueryDto, UpdateGalleryImageDto } from './dto/gallery.dto';
 
 // List queries drop the description from translations.
@@ -44,6 +50,33 @@ const GALLERY_LIST_SELECT = {
   },
 } satisfies Prisma.gallery_imagesSelect;
 
+// What the CMS reads: the whole row (added_by included) and full media.
+const GALLERY_ADMIN_DETAIL_INCLUDE = {
+  gallery_image_translations: { include: { og_image: { select: OG_IMAGE_SELECT } } },
+  media: { include: { media_variants: { select: MEDIA_VARIANT_SELECT, orderBy: { width: 'asc' } } } },
+  gallery_categories: { include: { gallery_category_translations: true } },
+} satisfies Prisma.gallery_imagesInclude;
+
+// What anonymous visitors read: every column of the row except the staff UUID
+// (added_by), and the slim public media shape instead of the whole media row
+// (file_size, uploaded_by).
+const GALLERY_PUBLIC_DETAIL_SELECT = {
+  media_id: true,
+  category_id: true,
+  taken_at: true,
+  author: true,
+  tags: true,
+  locations: true,
+  views: true,
+  is_published: true,
+  created_at: true,
+  updated_at: true,
+  deleted_at: true,
+  gallery_image_translations: GALLERY_ADMIN_DETAIL_INCLUDE.gallery_image_translations,
+  media: { select: PUBLIC_MEDIA_SELECT },
+  gallery_categories: GALLERY_ADMIN_DETAIL_INCLUDE.gallery_categories,
+} satisfies Prisma.gallery_imagesSelect;
+
 @Injectable()
 export class GalleryService {
   constructor(
@@ -73,7 +106,7 @@ export class GalleryService {
 
     const mapped = items.map((img) => ({
       ...img,
-      translation: resolveTranslation(img.gallery_image_translations, lang),
+      translation: resolveTranslation(img.gallery_image_translations, lang, { includeInactive: isAdmin }),
     }));
     return { message: 'Gallery fetched', data: { items: mapped, pagination: buildPaginationMeta(page, limit, total) } };
   }
@@ -82,18 +115,16 @@ export class GalleryService {
     const where: Prisma.gallery_imagesWhereInput = { media_id: id, deleted_at: null };
     if (!isAdmin) where.is_published = true;
 
-    const image = await this.prisma.gallery_images.findFirst({
-      where,
-      include: {
-        gallery_image_translations: { include: { og_image: { select: OG_IMAGE_SELECT } } },
-        media: { include: { media_variants: { select: MEDIA_VARIANT_SELECT, orderBy: { width: 'asc' } } } },
-        gallery_categories: { include: { gallery_category_translations: true } },
-      },
-    });
+    const image = isAdmin
+      ? await this.prisma.gallery_images.findFirst({ where, include: GALLERY_ADMIN_DETAIL_INCLUDE })
+      : await this.prisma.gallery_images.findFirst({ where, select: GALLERY_PUBLIC_DETAIL_SELECT });
     if (!image) throw new NotFoundException('Gallery image not found');
     return {
       message: 'Gallery image fetched',
-      data: { ...image, translation: resolveTranslation(image.gallery_image_translations, lang) },
+      data: {
+        ...image,
+        translation: resolveTranslation(image.gallery_image_translations, lang, { includeInactive: isAdmin }),
+      },
     };
   }
 
@@ -164,34 +195,39 @@ export class GalleryService {
       }
     }
 
-    const image = await this.prisma.$transaction(async (tx) => {
-      const created = await tx.gallery_images.create({
-        data: {
-          media_id: dto.media_id,
-          category_id: dto.category_id ?? null,
-          taken_at: dto.taken_at ? new Date(dto.taken_at) : null,
-          author: dto.author ?? null,
-          tags: dto.tags ?? [],
-          locations: dto.locations ?? [],
-          // Gallery photos are typically uploaded already-final by staff —
-          // default to published, matching books/papers/audios.
-          is_published: dto.is_published ?? true,
-          added_by: userId,
-        },
+    let image: { media_id: string };
+    try {
+      image = await this.prisma.$transaction(async (tx) => {
+        const created = await tx.gallery_images.create({
+          data: {
+            media_id: dto.media_id,
+            category_id: dto.category_id ?? null,
+            taken_at: dto.taken_at ? new Date(dto.taken_at) : null,
+            author: dto.author ?? null,
+            tags: dto.tags ?? [],
+            locations: dto.locations ?? [],
+            // Gallery photos are typically uploaded already-final by staff —
+            // default to published, matching books/papers/audios.
+            is_published: dto.is_published ?? true,
+            added_by: userId,
+          },
+        });
+        await tx.gallery_image_translations.createMany({
+          data: dto.translations.map((t) => ({
+            media_id: created.media_id,
+            lang: t.lang,
+            title: t.title,
+            description: t.description ?? null,
+            meta_title: t.meta_title ?? null,
+            meta_description: t.meta_description ?? null,
+            og_image_id: t.og_image_id ?? null,
+          })),
+        });
+        return created;
       });
-      await tx.gallery_image_translations.createMany({
-        data: dto.translations.map((t) => ({
-          media_id: created.media_id,
-          lang: t.lang,
-          title: t.title,
-          description: t.description ?? null,
-          meta_title: t.meta_title ?? null,
-          meta_description: t.meta_description ?? null,
-          og_image_id: t.og_image_id ?? null,
-        })),
-      });
-      return created;
-    });
+    } catch (err) {
+      throw await this.asCreateConflict(err, dto.media_id);
+    }
 
     await this.audit.write({
       actorId: userId,
@@ -201,8 +237,46 @@ export class GalleryService {
       changes: { method: 'POST', path: '/api/v1/gallery' },
     });
 
-    const { data } = await this.findOne(image.media_id, lang);
+    // Hydrate with the admin flag: a draft (is_published=false) is filtered out
+    // by the public overload, and the write has already committed.
+    const { data } = await this.findOne(image.media_id, lang, true);
     return { message: 'Gallery image created', data };
+  }
+
+  /**
+   * A gallery entry is keyed by its media id, so re-adding a media that is
+   * already there (live or in the trash) trips the primary key. Say which, and
+   * tell the editor what to do, instead of the filter's generic 409.
+   */
+  private async asCreateConflict(err: unknown, mediaId: string): Promise<unknown> {
+    const target = uniqueViolationTarget(err);
+    if (target === null) return err;
+    // Checked first: the translations key (media_id, lang) also mentions media_id.
+    if (target.includes('translations') || target.includes('lang')) {
+      return conflict(DUPLICATE_LANG_MESSAGE, UNIQUE_CONFLICT_CODES.DUPLICATE_TRANSLATION_LANG);
+    }
+    if (target.includes('media_id') || target.includes('pkey')) {
+      let trashed = false;
+      try {
+        const existing = await this.prisma.gallery_images.findUnique({
+          where: { media_id: mediaId },
+          select: { deleted_at: true },
+        });
+        trashed = existing?.deleted_at != null;
+      } catch {
+        // Fall through to the live-entry message; the lookup only sharpens it.
+      }
+      return trashed
+        ? conflict(
+            'This media is in the gallery trash (a gallery entry is keyed by its media id); restore it instead of adding it again',
+            UNIQUE_CONFLICT_CODES.GALLERY_IMAGE_IN_TRASH,
+          )
+        : conflict(
+            'This media is already in the gallery (a gallery entry is keyed by its media id)',
+            UNIQUE_CONFLICT_CODES.GALLERY_IMAGE_EXISTS,
+          );
+    }
+    return err;
   }
 
   async update(id: string, dto: UpdateGalleryImageDto, userId: string, lang: string | null) {
@@ -280,7 +354,7 @@ export class GalleryService {
       changes: { method: 'PATCH', path: `/api/v1/gallery/${id}` },
     });
 
-    const { data } = await this.findOne(id, lang);
+    const { data } = await this.findOne(id, lang, true);
     return { message: 'Gallery image updated', data };
   }
 
@@ -302,7 +376,7 @@ export class GalleryService {
 
     const mapped = items.map((img) => ({
       ...img,
-      translation: resolveTranslation(img.gallery_image_translations, null),
+      translation: resolveTranslation(img.gallery_image_translations, null, { includeInactive: true }),
     }));
 
     return {

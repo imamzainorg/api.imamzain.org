@@ -1,6 +1,7 @@
 import {
   BadRequestException,
   ConflictException,
+  ForbiddenException,
   Injectable,
   Logger,
   NotFoundException,
@@ -8,22 +9,44 @@ import {
   UnauthorizedException,
 } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
-import * as crypto from "crypto";
 import { PrismaService } from "../prisma/prisma.service";
 import { buildPaginationMeta } from "../common/utils/pagination.util";
+import { hmacHex, HmacKeyring, KEY_INFO, resolveHmacKeyring, verifyHmacHex } from "../common/utils/derive-key.util";
 import { StartContestDto, SubmitContestDto } from "./dto/contest.dto";
+import { canonicalContact, identityVariants, scoreIsRevealed } from "./contest.util";
 
 const PHONE_RE = /^\+?[\d\s-]{7,20}$/;
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
-function resolveAttemptSecret(): string {
-  const secret = process.env.CONTEST_ATTEMPT_SECRET ?? process.env.JWT_SECRET;
-  if (!secret) {
-    // Empty string here would produce HMAC tokens an attacker can forge.
-    // Refuse to boot so the misconfig is caught immediately.
-    throw new Error("CONTEST_ATTEMPT_SECRET (or JWT_SECRET) is required");
-  }
-  return secret;
+const ALREADY_PARTICIPATED = "لقد شاركتَ في المسابقة مسبقاً، لا يمكنك المشاركة مرة أخرى.";
+
+/**
+ * Whether the contest is currently accepting NEW activity (a fresh /start, or
+ * a /submit on an attempt already open). A `site_settings` row rather than an
+ * env var — see SettingsService — so the CMS can flip it without a redeploy
+ * the next time this contest (or a future one built on the same tables) runs.
+ *
+ * Missing or malformed reads as CLOSED, not open: the Qutuf Sajjadiya contest
+ * concluded in September 2026 (286 attempts, 120 submitted, last activity
+ * 2026-09-03), so "no row yet" — an environment the reopen-seed hasn't
+ * reached — must not accidentally leave it open to the public.
+ */
+const CONTEST_OPEN_SETTING_KEY = "contest_open";
+const CONTEST_CLOSED_MESSAGE =
+  "انتهت مسابقة قطوف من الصحيفة السجادية ولم تعد تستقبل مشاركات جديدة.";
+
+// A dedicated CONTEST_ATTEMPT_SECRET is used as-is. Unset (or BLANK, as
+// .env.example ships it) the token is keyed with an HKDF-derived key of
+// JWT_SECRET rather than JWT_SECRET itself — the attempt id is public, so the
+// raw key would hand anonymous callers known-plaintext MAC pairs — while tokens
+// minted before that change still verify (see derive-key.util).
+function resolveAttemptKeys(): HmacKeyring {
+  return resolveHmacKeyring({
+    dedicatedSecret: process.env.CONTEST_ATTEMPT_SECRET,
+    dedicatedName: "CONTEST_ATTEMPT_SECRET",
+    jwtSecret: process.env.JWT_SECRET,
+    info: KEY_INFO.contestAttempt,
+  });
 }
 
 export interface CachedQuestion {
@@ -38,7 +61,7 @@ export interface CachedQuestion {
 @Injectable()
 export class ContestService implements OnApplicationBootstrap {
   private readonly logger = new Logger(ContestService.name);
-  private readonly attemptSecret = resolveAttemptSecret();
+  private readonly attemptKeys = resolveAttemptKeys();
 
   /**
    * Pre-warm both question caches at boot so the first /questions or /submit
@@ -96,18 +119,17 @@ export class ContestService implements OnApplicationBootstrap {
    * only; the token itself is safe to hand back to the client.
    */
   private signAttemptToken(attemptId: string): string {
-    return crypto
-      .createHmac("sha256", this.attemptSecret)
-      .update(attemptId)
-      .digest("hex");
+    return hmacHex(this.attemptKeys.signingKey, attemptId);
   }
 
   private verifyAttemptToken(attemptId: string, token: string): boolean {
-    const expected = this.signAttemptToken(attemptId);
-    const a = Buffer.from(expected, "utf8");
-    const b = Buffer.from(token, "utf8");
-    if (a.length !== b.length) return false;
-    return crypto.timingSafeEqual(a, b);
+    return verifyHmacHex(this.attemptKeys, attemptId, token);
+  }
+
+  private async assertContestOpen(): Promise<void> {
+    const row = await this.prisma.site_settings.findUnique({ where: { key: CONTEST_OPEN_SETTING_KEY } });
+    if (row?.value === "true") return;
+    throw new ForbiddenException({ message: CONTEST_CLOSED_MESSAGE, code: "CONTEST_CLOSED" });
   }
 
   async findAllAttempts(page: number, limit: number, submitted?: boolean) {
@@ -152,7 +174,45 @@ export class ContestService implements OnApplicationBootstrap {
     return { message: "Questions fetched", data: questions };
   }
 
+  /**
+   * The attempt already holding this identity, if any. Searches both columns so
+   * the same string submitted as contactType=phone and as =email is caught, and
+   * every stored form of a phone number (see identityVariants).
+   */
+  private findAttemptByIdentity(variants: string[]) {
+    return this.prisma.qutuf_sajjadiya_contest_attempts.findFirst({
+      where: { OR: [{ phone: { in: variants } }, { email: { in: variants } }] },
+      select: { id: true, submitted_at: true, final_score: true },
+    });
+  }
+
+  /**
+   * /start is idempotent for an attempt that was opened but never submitted.
+   * The response to the first /start can be lost (dropped connection, a double
+   * click, a closed tab) and the identity would otherwise be locked out for good
+   * — no way back in, no admin reset. Handing the SAME attempt back costs
+   * nothing: answers are only stored at /submit, so there is nothing to lose or
+   * leak, and the token is a pure function of the attempt id. A submitted
+   * attempt stays final.
+   */
+  private resumeOrReject(existing: { id: string; submitted_at: Date | null; final_score: number | null }) {
+    // Strict null checks: a row missing these fields counts as submitted.
+    if (existing.submitted_at !== null || existing.final_score !== null) {
+      throw new ConflictException(ALREADY_PARTICIPATED);
+    }
+    return {
+      message: "Contest resumed",
+      data: {
+        attempt_id: existing.id,
+        attempt_token: this.signAttemptToken(existing.id),
+        resumed: true,
+      },
+    };
+  }
+
   async start(dto: StartContestDto, ip: string, userAgent: string) {
+    await this.assertContestOpen();
+
     if (dto.contactType === "phone" && !PHONE_RE.test(dto.contact)) {
       throw new BadRequestException("Invalid phone number format");
     }
@@ -162,31 +222,21 @@ export class ContestService implements OnApplicationBootstrap {
 
     // Normalise to a canonical identity before dedup/insert so case and
     // formatting variants of the same person (Test@x.com vs test@x.com,
-    // "+964 780 123" vs "+964780123") collapse to one. Both the fast-path
-    // check and the stored column use the canonical value, so the partial
-    // unique index enforces the same identity.
-    const normalizedContact =
-      dto.contactType === "email"
-        ? dto.contact.trim().toLowerCase()
-        : dto.contact.replace(/[\s-]/g, "");
+    // "+964 780 123" vs "+964780123" vs "00964 780 123") collapse to one. Both
+    // the fast-path check and the stored column use the canonical value, so the
+    // partial unique index enforces the same identity.
+    const normalizedContact = canonicalContact(dto.contactType, dto.contact);
+    const variants = identityVariants(dto.contactType, normalizedContact);
 
     const phone = dto.contactType === "phone" ? normalizedContact : null;
     const email = dto.contactType === "email" ? normalizedContact : null;
 
     // The partial unique indexes uniq_contest_attempts_phone /
     // uniq_contest_attempts_email (migration 20260525120000_contest_contact_unique)
-    // are the atomic backstop; this findFirst is a fast-path that returns the
-    // friendly Arabic message before the insert. Search both columns so the
-    // same string submitted as both contactType=phone and =email is caught.
-    const existing = await this.prisma.qutuf_sajjadiya_contest_attempts.findFirst({
-      where: { OR: [{ phone: normalizedContact }, { email: normalizedContact }] },
-      select: { id: true },
-    });
-    if (existing) {
-      throw new ConflictException(
-        "لقد شاركتَ في المسابقة مسبقاً، لا يمكنك المشاركة مرة أخرى.",
-      );
-    }
+    // are the atomic backstop; this lookup is a fast-path that answers before the
+    // insert (a friendly Arabic message, or the resumed attempt).
+    const existing = await this.findAttemptByIdentity(variants);
+    if (existing) return this.resumeOrReject(existing);
 
     let rows: { id: string }[];
     try {
@@ -205,13 +255,13 @@ export class ContestService implements OnApplicationBootstrap {
         RETURNING id
       `;
     } catch (err) {
-      // Concurrent /start with the same identity: the partial unique index
-      // rejects the loser with P2002. Surface the same friendly Arabic message
-      // the fast-path returns instead of the generic 409.
+      // Concurrent /start with the same identity (a double click is the usual
+      // cause): the partial unique index rejects the loser with P2002. It then
+      // takes the winner's attempt, exactly as if it had arrived a moment later.
       if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === "P2002") {
-        throw new ConflictException(
-          "لقد شاركتَ في المسابقة مسبقاً، لا يمكنك المشاركة مرة أخرى.",
-        );
+        const winner = await this.findAttemptByIdentity(variants);
+        if (winner) return this.resumeOrReject(winner);
+        throw new ConflictException(ALREADY_PARTICIPATED);
       }
       throw err;
     }
@@ -222,11 +272,14 @@ export class ContestService implements OnApplicationBootstrap {
       data: {
         attempt_id: attemptId,
         attempt_token: this.signAttemptToken(attemptId),
+        resumed: false,
       },
     };
   }
 
   async submit(dto: SubmitContestDto) {
+    await this.assertContestOpen();
+
     // Verify the attempt_token if present. Currently optional so frontends
     // that haven't adopted token-binding keep working; once they have, flip
     // this to required (`if (!dto.attempt_token) throw new UnauthorizedException`).
@@ -332,11 +385,15 @@ export class ContestService implements OnApplicationBootstrap {
       `Contest submission: attempt=${dto.attempt_id} answered=${insertValues.length}/${questionMap.size}`,
     );
 
+    // The score is always STORED (the committee reads it from /attempts); whether
+    // the participant is told is a deployment choice — see scoreIsRevealed().
+    const revealed = scoreIsRevealed();
     return {
       message: "Contest submitted",
       data: {
-        final_score: finalScore,
+        final_score: revealed ? finalScore : null,
         total_questions: questionMap.size,
+        score_revealed: revealed,
       },
     };
   }

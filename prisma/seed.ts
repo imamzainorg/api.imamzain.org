@@ -1,5 +1,7 @@
 import { PrismaClient } from '@prisma/client';
 import * as bcrypt from 'bcryptjs';
+import { planRoleGrants } from '../src/common/utils/seed-grants.util';
+import { planTranslationWrite } from '../src/common/utils/seed-translation-grants.util';
 
 const prisma = new PrismaClient();
 
@@ -508,33 +510,33 @@ const PERMISSIONS: { name: string; translations: Translations }[] = [
   {
     name: 'daily-hadiths:read',
     translations: {
-      ar: { title: 'عرض الأحاديث اليومية', description: 'مراجعة قائمة الأحاديث اليومية المتداولة على الصفحة الرئيسية' },
-      en: { title: 'View Daily Hadiths', description: 'Browse the rotating daily hadith pool used on the homepage' },
-      fa: { title: 'مشاهده احادیث روزانه', description: 'مرور احادیث در گردش که در صفحه اصلی نمایش داده می‌شوند' },
+      ar: { title: 'عرض الأحاديث اليومية', description: 'مراجعة قائمة الأحاديث اليومية المعروضة على الصفحة الرئيسية' },
+      en: { title: 'View Daily Hadiths', description: 'View the daily hadiths shown on the homepage' },
+      fa: { title: 'مشاهده احادیث روزانه', description: 'مرور احادیث روزانه که در صفحه اصلی نمایش داده می‌شوند' },
     },
   },
   {
     name: 'daily-hadiths:create',
     translations: {
-      ar: { title: 'إضافة حديث يومي', description: 'إضافة حديث جديد إلى دورة الأحاديث اليومية' },
-      en: { title: 'Add Daily Hadiths', description: 'Add new hadiths to the homepage rotation' },
-      fa: { title: 'افزودن حدیث روزانه', description: 'افزودن حدیث جدید به چرخش احادیث روزانه' },
+      ar: { title: 'إضافة حديث يومي', description: 'إضافة أحاديث جديدة وتحديد تاريخ عرضها' },
+      en: { title: 'Add Daily Hadiths', description: 'Add hadiths and set which day they\'re shown' },
+      fa: { title: 'افزودن حدیث روزانه', description: 'افزودن احادیث جدید و تعیین تاریخ نمایش آن‌ها' },
     },
   },
   {
     name: 'daily-hadiths:update',
     translations: {
-      ar: { title: 'تعديل الأحاديث اليومية', description: 'تحرير الأحاديث وتثبيتها على تواريخ معينة' },
-      en: { title: 'Update Daily Hadiths', description: 'Edit hadiths and pin specific ones to specific dates' },
-      fa: { title: 'ویرایش احادیث روزانه', description: 'ویرایش احادیث و سنجاق کردن آن‌ها به تاریخ خاص' },
+      ar: { title: 'تعديل الأحاديث اليومية', description: 'تحرير الأحاديث وتحديد تاريخ عرض كل حديث' },
+      en: { title: 'Update Daily Hadiths', description: 'Edit hadiths and change which day they\'re shown' },
+      fa: { title: 'ویرایش احادیث روزانه', description: 'ویرایش احادیث و تعیین تاریخ نمایش هر حدیث' },
     },
   },
   {
     name: 'daily-hadiths:delete',
     translations: {
-      ar: { title: 'حذف الأحاديث اليومية', description: 'إزالة الأحاديث من دورة العرض' },
-      en: { title: 'Delete Daily Hadiths', description: 'Remove hadiths from the rotation' },
-      fa: { title: 'حذف احادیث روزانه', description: 'حذف احادیث از چرخش نمایش' },
+      ar: { title: 'حذف الأحاديث اليومية', description: 'إزالة الأحاديث من الصفحة الرئيسية' },
+      en: { title: 'Delete Daily Hadiths', description: 'Remove hadiths from the homepage' },
+      fa: { title: 'حذف احادیث روزانه', description: 'حذف احادیث از صفحه اصلی' },
     },
   },
 
@@ -804,6 +806,29 @@ async function main() {
 
   // 2. Permissions + translations
   console.log('→ Permissions');
+  // Snapshot what existed BEFORE this run: role grants below are create-only,
+  // and "this run created it" is what lets a new permission reach the roles
+  // that list it without re-granting anything an admin removed. The same
+  // snapshot carries each permission's existing translations so the writes
+  // below (see planTranslationWrite) are create-only too — a
+  // title/description a CMS admin has since edited isn't clobbered by every
+  // reseed. SEED_RESET_ROLE_GRANTS=true is reused as the escape hatch for
+  // both: it's the same "reset to seed defaults" intent as the role grants.
+  const resetGrants = process.env.SEED_RESET_ROLE_GRANTS === 'true';
+  if (resetGrants) {
+    console.log('  ⚠  SEED_RESET_ROLE_GRANTS=true — re-applying every default grant and permission translation');
+  }
+  const permissionsBeforeRunRows = await prisma.permissions.findMany({
+    select: { name: true, permission_translations: { select: { lang: true, title: true, description: true } } },
+  });
+  const permissionsBeforeRun = new Set(permissionsBeforeRunRows.map((p) => p.name));
+  const existingTranslations = new Map(
+    permissionsBeforeRunRows.map((p) => [
+      p.name,
+      new Map(p.permission_translations.map((t) => [t.lang, { title: t.title, description: t.description }])),
+    ]),
+  );
+  const newPermissions = new Set(PERMISSIONS.map((p) => p.name).filter((n) => !permissionsBeforeRun.has(n)));
   const permMap: Record<string, string> = {};
   for (const perm of PERMISSIONS) {
     const p = await prisma.permissions.upsert({
@@ -814,17 +839,47 @@ async function main() {
     permMap[perm.name] = p.id;
 
     for (const [lang, t] of Object.entries(perm.translations) as [string, { title: string; description?: string }][]) {
+      const write = planTranslationWrite({
+        existing: existingTranslations.get(perm.name)?.get(lang) ?? null,
+        desired: t,
+        isNewRow: newPermissions.has(perm.name),
+        reset: resetGrants,
+      });
+      if (!write) continue;
+
       await prisma.permission_translations.upsert({
         where: { permission_id_lang: { permission_id: p.id, lang } },
-        create: { permission_id: p.id, lang, title: t.title, description: t.description },
-        update: { title: t.title, description: t.description },
+        create: { permission_id: p.id, lang, title: write.title, description: write.description },
+        update: { title: write.title, description: write.description },
       });
     }
   }
-  console.log(`  ✓ ${PERMISSIONS.length} permissions (${PERMISSIONS.length * 3} translations)`);
+  console.log(
+    `  ✓ ${PERMISSIONS.length} permissions (${PERMISSIONS.length * 3} translations)` +
+      (newPermissions.size > 0 ? ` — ${newPermissions.size} new: ${[...newPermissions].join(', ')}` : ''),
+  );
 
   // 3. Roles + translations + role_permissions
+  //
+  // Default grants are CREATE-ONLY (see planRoleGrants): a new role gets its
+  // full set, an existing role only gains permissions this run created, and a
+  // grant an administrator removed stays removed. SEED_RESET_ROLE_GRANTS=true
+  // deliberately re-applies every default — the escape hatch for a role that
+  // was stripped by mistake and can no longer be repaired through the API.
   console.log('→ Roles');
+  // Same create-only treatment as permission_translations above (see
+  // planTranslationWrite): a role title/description an admin has
+  // since edited must survive a reseed, not get clobbered every deploy.
+  const rolesBeforeRunRows = await prisma.roles.findMany({
+    select: { name: true, role_translations: { select: { lang: true, title: true, description: true } } },
+  });
+  const rolesBeforeRun = new Set(rolesBeforeRunRows.map((r) => r.name));
+  const existingRoleTranslations = new Map(
+    rolesBeforeRunRows.map((r) => [
+      r.name,
+      new Map(r.role_translations.map((t) => [t.lang, { title: t.title, description: t.description }])),
+    ]),
+  );
   for (const role of ROLES) {
     const r = await prisma.roles.upsert({
       where: { name: role.name },
@@ -832,24 +887,61 @@ async function main() {
       update: {},
     });
 
+    const roleIsNew = !rolesBeforeRun.has(role.name);
     for (const [lang, t] of Object.entries(role.translations) as [string, { title: string; description?: string }][]) {
+      const write = planTranslationWrite({
+        existing: existingRoleTranslations.get(role.name)?.get(lang) ?? null,
+        desired: t,
+        isNewRow: roleIsNew,
+        reset: resetGrants,
+      });
+      if (!write) continue;
+
       await prisma.role_translations.upsert({
         where: { role_id_lang: { role_id: r.id, lang } },
-        create: { role_id: r.id, lang, title: t.title, description: t.description },
-        update: { title: t.title, description: t.description },
+        create: { role_id: r.id, lang, title: write.title, description: write.description },
+        update: { title: write.title, description: write.description },
       });
     }
 
-    for (const permName of role.permissions) {
-      const permId = permMap[permName];
-      await prisma.role_permissions.upsert({
-        where: { role_id_permission_id: { role_id: r.id, permission_id: permId } },
-        create: { role_id: r.id, permission_id: permId },
-        update: {},
+    const held = await prisma.role_permissions.findMany({
+      where: { role_id: r.id },
+      select: { permissions: { select: { name: true } } },
+    });
+    const plan = planRoleGrants({
+      listed: role.permissions,
+      roleIsNew,
+      alreadyGranted: new Set(held.map((h) => h.permissions.name)),
+      newPermissions,
+      reset: resetGrants,
+    });
+
+    if (plan.grant.length > 0) {
+      await prisma.role_permissions.createMany({
+        data: plan.grant.map((permName) => ({ role_id: r.id, permission_id: permMap[permName] })),
+        skipDuplicates: true,
       });
+      // Grants that land on an EXISTING role change what live accounts can do,
+      // so leave the same trail the API would (actor NULL = the seed).
+      if (!roleIsNew) {
+        await prisma.audit_logs.createMany({
+          data: plan.grant.map((permName) => ({
+            user_id: null,
+            action: 'PERMISSION_ASSIGNED_TO_ROLE',
+            resource_type: 'role',
+            resource_id: r.id,
+            changes: { by: 'seed', permission: permName, reset: resetGrants },
+          })),
+        });
+      }
     }
 
-    console.log(`  ✓ ${role.name} (${role.permissions.length} permissions)`);
+    console.log(
+      `  ✓ ${role.name}${roleIsNew ? ' (created)' : ''}: ${plan.grant.length} granted` +
+        (plan.leftRemoved.length > 0
+          ? `, ${plan.leftRemoved.length} default(s) left removed — ${plan.leftRemoved.join(', ')}`
+          : ''),
+    );
   }
 
   // 4. Bootstrap super-admin user
@@ -903,6 +995,14 @@ async function main() {
     { key: 'social_twitter', value: '', description: 'X / Twitter URL (empty to hide).', is_public: true },
     { key: 'social_instagram', value: '', description: 'Instagram URL (empty to hide).', is_public: true },
     { key: 'social_youtube', value: '', description: 'YouTube channel URL (empty to hide).', is_public: true },
+    {
+      key: 'contest_open',
+      value: 'false',
+      type: 'boolean',
+      description:
+        'Whether the Qutuf Sajjadiya contest is accepting new attempts and submissions right now. The Qutuf Sajjadiya contest concluded in September 2026 (286 attempts, 120 submitted) — seeded closed. Set to "true" to run it (or a future contest reusing the same flow) again.',
+      is_public: true,
+    },
   ];
 
   for (const s of INITIAL_SETTINGS) {

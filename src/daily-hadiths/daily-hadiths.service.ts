@@ -1,9 +1,10 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Injectable, Logger, NotFoundException, OnModuleInit } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuditService } from '../common/audit/audit.service';
 import { AUDIT_ACTIONS, AuditAction } from '../common/audit/audit.actions';
-import { rethrowP2002AsConflict } from '../common/utils/prisma-error.util';
+import { isUniqueViolation, rethrowP2002AsConflict } from '../common/utils/prisma-error.util';
+import { getSiteTimezone, siteDate } from '../common/utils/site-time.util';
 import { resolveTranslation } from '../common/utils/translation.util';
 import { buildPaginationMeta, resolvePagination } from '../common/utils/pagination.util';
 import { PaginationDto } from '../common/dto/pagination.dto';
@@ -19,16 +20,26 @@ import { CreateDailyHadithDto, DailyHadithQueryDto, UpdateDailyHadithDto } from 
  * whole pool, so it cannot drift: adding, removing, or editing hadiths
  * never changes what any date is reported to show.
  *
+ * "Today" is the calendar day in the SITE time zone (`SITE_TIMEZONE`,
+ * default Asia/Baghdad) — the day the editors are scheduling in — not the
+ * UTC day.
+ *
  * When nothing is scheduled for today, the API falls back to a hadith
  * drawn uniformly at random from the unscheduled pool. The draw itself
  * (which hadith wins) never sets that hadith's own `display_date` — a
  * hadith is only ever scheduled to a date by deliberate editor action.
  * But the draw's *outcome* for the day is locked in `daily_hadith_
  * random_picks` the first time it's resolved, so every visitor sees the
- * same hadith for the rest of that UTC day regardless of which server
+ * same hadith for the rest of that site day regardless of which server
  * instance or CDN edge serves them. A new calendar day has no lock yet
  * and draws fresh. A schedule added for the day later always wins over
  * an existing lock, unconditionally, on every request.
+ *
+ * A lock that recorded an EMPTY draw (nothing to draw from at the time) is
+ * the one exception to "locked for the day": the moment a hadith enters the
+ * unscheduled pool (created, restored, or unscheduled) that empty lock is
+ * deleted, so the next `/today` draws again instead of hiding the new hadith
+ * until midnight. A lock holding an actual pick is never touched.
  *
  * A hadith already scheduled to some other date is never eligible as a
  * random filler — it's reserved for the occasion it was scheduled for.
@@ -38,17 +49,24 @@ import { CreateDailyHadithDto, DailyHadithQueryDto, UpdateDailyHadithDto } from 
  * else. Only `/today` can ever produce the random fallback.
  */
 @Injectable()
-export class DailyHadithsService {
+export class DailyHadithsService implements OnModuleInit {
+  private readonly logger = new Logger(DailyHadithsService.name);
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly audit: AuditService,
   ) {}
 
+  /** Resolve SITE_TIMEZONE at boot so a bad value is warned about once at startup, not on the first request. */
+  onModuleInit() {
+    getSiteTimezone();
+  }
+
   // ── Public ─────────────────────────────────────────────────────────────
 
   async getToday(lang: string | null) {
-    const today = startOfUtcDay(new Date());
-    const dateOnly = toDateOnly(today);
+    const dateOnly = siteDate(new Date());
+    const today = dateOnlyToDbDate(dateOnly);
 
     const scheduled = await this.prisma.daily_hadiths.findFirst({
       where: { deleted_at: null, display_date: today },
@@ -104,7 +122,13 @@ export class DailyHadithsService {
     const { page, limit, skip } = resolvePagination(query);
     const where: Prisma.daily_hadithsWhereInput = {
       deleted_at: null,
-      daily_hadith_translations: { some: {} },
+      // Only rows with a translation in a currently-active, non-deleted
+      // language: `some: {}` alone would count a hadith whose only
+      // translation is in a language an admin later retired, and
+      // resolveTranslation() (see toPublicItem) can then legitimately
+      // return null for it — excluding it here keeps such rows out of
+      // both the page and the pagination total in the first place.
+      daily_hadith_translations: { some: { languages: { is_active: true, deleted_at: null } } },
     };
     let orderBy: Prisma.daily_hadithsOrderByWithRelationInput[] = [{ created_at: 'desc' }, { id: 'asc' }];
 
@@ -127,7 +151,10 @@ export class DailyHadithsService {
     return {
       message: 'Hadiths fetched',
       data: {
-        items: items.map((h) => toPublicItem(h, lang)),
+        // toPublicItem can legitimately return null (see its own comment);
+        // filter rather than assert, even though the where clause above
+        // should already keep such rows out of `items`.
+        items: items.map((h) => toPublicItem(h, lang)).filter((item) => item !== null),
         pagination: buildPaginationMeta(page, limit, total),
       },
     };
@@ -180,6 +207,7 @@ export class DailyHadithsService {
   }
 
   async create(dto: CreateDailyHadithDto, userId: string) {
+    assertUniqueLanguages(dto.translations);
     const displayDate = dto.display_date ? parseDateOnly(dto.display_date, 'display_date') : null;
 
     let hadith;
@@ -200,6 +228,8 @@ export class DailyHadithsService {
       rethrowP2002AsConflict(err, 'Another hadith is already scheduled to that date');
     }
 
+    if (displayDate === null) await this.releaseEmptyPick();
+
     await this.writeAudit(userId, AUDIT_ACTIONS.DAILY_HADITH_CREATED, hadith.id, {
       method: 'POST',
       path: '/api/v1/daily-hadiths',
@@ -209,6 +239,7 @@ export class DailyHadithsService {
   }
 
   async update(id: string, dto: UpdateDailyHadithDto, userId: string) {
+    assertUniqueLanguages(dto.translations);
     const hadith = await this.prisma.daily_hadiths.findFirst({ where: { id, deleted_at: null } });
     if (!hadith) throw new NotFoundException('Hadith not found');
 
@@ -234,6 +265,11 @@ export class DailyHadithsService {
     } catch (err) {
       rethrowP2002AsConflict(err, 'Another hadith is already scheduled to that date');
     }
+
+    // Unscheduled after this write (newly unscheduled, or it already was) means
+    // it is in the pool the random fallback draws from.
+    const unscheduled = dto.display_date === undefined ? hadith.display_date === null : dto.display_date === null;
+    if (unscheduled) await this.releaseEmptyPick();
 
     await this.writeAudit(userId, AUDIT_ACTIONS.DAILY_HADITH_UPDATED, id, {
       method: 'PATCH',
@@ -292,25 +328,43 @@ export class DailyHadithsService {
     const hadith = await this.prisma.daily_hadiths.findFirst({ where: { id, deleted_at: { not: null } } });
     if (!hadith) throw new NotFoundException('Deleted hadith not found');
 
+    const restoredAt = new Date();
+    let unscheduled = false;
     try {
       await this.prisma.daily_hadiths.update({
         where: { id },
-        data: { deleted_at: null, updated_at: new Date() },
+        data: { deleted_at: null, updated_at: restoredAt },
       });
     } catch (err) {
-      // Only reachable if this hadith has a display_date AND another
-      // hadith has since claimed that same date while this one was
-      // trashed (soft-deleting frees a date for reuse — see migration
-      // 20260906120000).
-      rethrowP2002AsConflict(err, 'Cannot restore: another hadith has since been scheduled to the same date');
+      // display_date carries the only unique index besides the PK (partial:
+      // live rows only, migration 20260906120000), so a P2002 here means
+      // another hadith claimed this date while this one sat in the trash.
+      // Refusing would strand it: it is not editable while trashed, so the
+      // date could never be cleared. Restore it unscheduled instead.
+      if (!isUniqueViolation(err) || !hadith.display_date) throw err;
+      await this.prisma.daily_hadiths.update({
+        where: { id },
+        data: { deleted_at: null, display_date: null, updated_at: restoredAt },
+      });
+      unscheduled = true;
     }
+
+    const previousDisplayDate = unscheduled && hadith.display_date ? toDateOnly(hadith.display_date) : null;
+    if (unscheduled || !hadith.display_date) await this.releaseEmptyPick();
 
     await this.writeAudit(userId, AUDIT_ACTIONS.DAILY_HADITH_RESTORED, id, {
       method: 'POST',
       path: `/api/v1/daily-hadiths/${id}/restore`,
+      ...(unscheduled ? { unscheduled: true, previous_display_date: previousDisplayDate } : {}),
     });
 
-    return { message: 'Hadith restored', data: null };
+    return {
+      message: unscheduled
+        ? `Hadith restored without its schedule: ${previousDisplayDate} is now taken by another hadith`
+        : 'Hadith restored',
+      data: null,
+      meta: { unscheduled, previous_display_date: previousDisplayDate },
+    };
   }
 
   // ── Internals ──────────────────────────────────────────────────────────
@@ -323,6 +377,26 @@ export class DailyHadithsService {
       data: hadith ? formatPick(hadith, lang) : null,
       meta: { date: dateOnly, source },
     };
+  }
+
+  /**
+   * Called once a hadith has just entered the unscheduled pool. If today's
+   * lock recorded an EMPTY draw, drop it so the next `/today` draws again --
+   * otherwise the hadith would stay invisible until site midnight. A lock
+   * holding an actual pick is left alone (the same hadith all day, by design).
+   *
+   * Best effort: the write that triggered this is already committed, so a
+   * failure here must not turn it into an error the editor would retry (and
+   * duplicate). The empty lock then simply expires at midnight as before.
+   */
+  private async releaseEmptyPick() {
+    try {
+      await this.prisma.daily_hadith_random_picks.deleteMany({
+        where: { pick_date: dateOnlyToDbDate(siteDate(new Date())), hadith_id: null },
+      });
+    } catch (err) {
+      this.logger.warn(`Could not clear today's empty hadith pick: ${err instanceof Error ? err.message : String(err)}`);
+    }
   }
 
   /**
@@ -361,12 +435,36 @@ type TranslationRow = { lang: string; content: string; source: string | null };
 type HadithRow = { id: string; daily_hadith_translations: TranslationRow[] };
 type HadithRowWithDate = HadithRow & { display_date: Date | null };
 
-function startOfUtcDay(d: Date): Date {
-  return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()));
+/** Prisma reads and writes a `@db.Date` column as the UTC midnight of that date. */
+function dateOnlyToDbDate(dateOnly: string): Date {
+  return new Date(`${dateOnly}T00:00:00.000Z`);
 }
 
 function toDateOnly(d: Date): string {
   return d.toISOString().slice(0, 10);
+}
+
+/**
+ * One entry per language. Translations are unique per (hadith, lang), so a
+ * repeat either tripped that constraint (create, surfacing as a bogus "date
+ * already scheduled" 409) or silently overwrote the earlier entry (update).
+ * Compared case-insensitively: `ar` and `AR` are the same language to an editor.
+ */
+function assertUniqueLanguages(translations: { lang: string }[] | undefined): void {
+  if (!translations) return;
+  const seen = new Set<string>();
+  const duplicated = new Set<string>();
+  for (const { lang } of translations) {
+    const key = lang.toLowerCase();
+    if (seen.has(key)) duplicated.add(key);
+    seen.add(key);
+  }
+  if (duplicated.size > 0) {
+    throw new BadRequestException({
+      message: `translations lists the same language more than once (${[...duplicated].join(', ')}); send one entry per language`,
+      code: 'DUPLICATE_TRANSLATION_LANG',
+    });
+  }
 }
 
 /**
@@ -396,7 +494,14 @@ function formatPick(
 }
 
 function toPublicItem(hadith: HadithRowWithDate, lang: string | null) {
-  const t = resolveTranslation(hadith.daily_hadith_translations, lang)!;
+  // resolveTranslation is NOT total for a non-empty translations array once
+  // active-language filtering is in play (see translation.util.ts): a hadith
+  // whose only translation is in a language retired after it was created can
+  // legitimately resolve to null here. The old `!` assertion crashed the
+  // whole page's request for every visitor the moment that happened — mirror
+  // formatPick's guard above instead of assuming a translation always exists.
+  const t = resolveTranslation(hadith.daily_hadith_translations, lang);
+  if (!t) return null;
   return {
     id: hadith.id,
     display_date: hadith.display_date ? toDateOnly(hadith.display_date) : null,

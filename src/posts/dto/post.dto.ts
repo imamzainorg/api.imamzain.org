@@ -3,10 +3,10 @@ import { Transform, Type } from "class-transformer";
 import {
   ArrayMaxSize,
   ArrayMinSize,
+  ArrayUnique,
   IsArray,
   IsBoolean,
   IsEnum,
-  IsISO8601,
   IsOptional,
   IsString,
   IsUUID,
@@ -17,7 +17,11 @@ import {
   ValidateNested,
 } from "class-validator";
 import { PaginationDto } from "../../common/dto/pagination.dto";
+import { DTO_LIMITS, uuidIdentity } from "../../common/validators/dto-limits";
+import { IsIsoInstantWithOffset } from "../../common/validators/iso-instant-offset.validator";
 import { MaxBytes } from "../../common/validators/max-bytes.validator";
+import { toQueryBoolean } from "../../common/validators/query-boolean";
+import { SearchTerm } from "../../common/validators/search-term";
 
 export class PostTranslationDto {
   @ApiProperty({
@@ -30,14 +34,16 @@ export class PostTranslationDto {
   @Length(2, 2)
   lang!: string;
 
-  @ApiProperty({ example: "حياة الإمام زين العابدين" })
+  @ApiProperty({ example: "حياة الإمام زين العابدين", maxLength: DTO_LIMITS.title })
   @IsString()
   @MinLength(1)
+  @MaxLength(DTO_LIMITS.title)
   title!: string;
 
-  @ApiPropertyOptional({ example: "نبذة مختصرة عن سيرة الإمام" })
+  @ApiPropertyOptional({ example: "نبذة مختصرة عن سيرة الإمام", maxLength: DTO_LIMITS.summary })
   @IsOptional()
   @IsString()
+  @MaxLength(DTO_LIMITS.summary)
   summary?: string;
 
   @ApiProperty({
@@ -111,9 +117,11 @@ export class CreatePostDto {
   @ApiProperty({
     example: "hayat-al-imam-zain",
     description: "URL-friendly, language-agnostic canonical slug (lowercase, hyphens only). Sets the public /posts/{slug} URL.",
+    maxLength: DTO_LIMITS.slug,
   })
   @IsString()
   @Matches(/^[a-z0-9]+(?:-[a-z0-9]+)*$/)
+  @MaxLength(DTO_LIMITS.slug)
   slug!: string;
 
   @ApiPropertyOptional({ example: false, default: false })
@@ -133,29 +141,35 @@ export class CreatePostDto {
 
   @ApiPropertyOptional({
     example: "2025-01-15T10:00:00Z",
-    description: "ISO 8601 publish timestamp",
+    description:
+      "ISO 8601 publish timestamp. Must carry an explicit UTC offset (`Z` or `+03:00`) — a value without one would be read in the server's time zone and fire hours late.",
   })
   @IsOptional()
-  @IsISO8601()
+  @IsIsoInstantWithOffset()
   published_at?: string;
 
   @ApiProperty({
     type: [PostTranslationDto],
     description: "Must include exactly one translation with is_default: true",
+    maxItems: DTO_LIMITS.listItems,
   })
   @IsArray()
   @ValidateNested({ each: true })
   @Type(() => PostTranslationDto)
   @ArrayMinSize(1)
+  @ArrayMaxSize(DTO_LIMITS.listItems)
   translations!: PostTranslationDto[];
 
   @ApiPropertyOptional({
     type: [String],
     format: "uuid",
-    description: "Ordered list of media IDs to attach to the post",
+    description: "Ordered list of media IDs to attach to the post. No duplicates.",
+    maxItems: DTO_LIMITS.ids,
   })
   @IsOptional()
   @IsArray()
+  @ArrayMaxSize(DTO_LIMITS.ids)
+  @ArrayUnique(uuidIdentity)
   @IsUUID("all", { each: true })
   attachment_ids?: string[];
 }
@@ -171,10 +185,15 @@ export class UpdatePostDto {
   @IsUUID()
   cover_image_id?: string;
 
-  @ApiPropertyOptional({ example: "hayat-al-imam-zain", description: "URL-friendly, language-agnostic canonical slug (lowercase, hyphens only)." })
+  @ApiPropertyOptional({
+    example: "hayat-al-imam-zain",
+    description: "URL-friendly, language-agnostic canonical slug (lowercase, hyphens only).",
+    maxLength: DTO_LIMITS.slug,
+  })
   @IsOptional()
   @IsString()
   @Matches(/^[a-z0-9]+(?:-[a-z0-9]+)*$/)
+  @MaxLength(DTO_LIMITS.slug)
   slug?: string;
 
   @ApiPropertyOptional({ example: true })
@@ -187,21 +206,27 @@ export class UpdatePostDto {
   @IsBoolean()
   is_featured?: boolean;
 
-  @ApiPropertyOptional({ example: "2025-01-15T10:00:00Z" })
+  @ApiPropertyOptional({
+    example: "2025-01-15T10:00:00Z",
+    description: "Same rules as on create: an explicit UTC offset (`Z` or `+03:00`) is required.",
+  })
   @IsOptional()
-  @IsISO8601()
+  @IsIsoInstantWithOffset()
   published_at?: string;
 
-  @ApiPropertyOptional({ type: [PostTranslationDto] })
+  @ApiPropertyOptional({ type: [PostTranslationDto], maxItems: DTO_LIMITS.listItems })
   @IsOptional()
   @IsArray()
   @ValidateNested({ each: true })
   @Type(() => PostTranslationDto)
+  @ArrayMaxSize(DTO_LIMITS.listItems)
   translations?: PostTranslationDto[];
 
-  @ApiPropertyOptional({ type: [String], format: "uuid" })
+  @ApiPropertyOptional({ type: [String], format: "uuid", maxItems: DTO_LIMITS.ids, description: "No duplicates." })
   @IsOptional()
   @IsArray()
+  @ArrayMaxSize(DTO_LIMITS.ids)
+  @ArrayUnique(uuidIdentity)
   @IsUUID("all", { each: true })
   attachment_ids?: string[];
 }
@@ -217,12 +242,13 @@ export class BulkIdsDto {
     type: [String],
     format: 'uuid',
     minItems: 1,
-    maxItems: 200,
-    description: 'Post IDs to act on (1–200 per request).',
+    maxItems: DTO_LIMITS.ids,
+    description: 'Post IDs to act on (1–200 per request, no duplicates).',
   })
   @IsArray()
   @ArrayMinSize(1)
-  @ArrayMaxSize(200)
+  @ArrayMaxSize(DTO_LIMITS.ids)
+  @ArrayUnique(uuidIdentity)
   @IsUUID('all', { each: true })
   ids!: string[];
 }
@@ -260,19 +286,19 @@ export class PostQueryDto extends PaginationDto {
 
   @ApiPropertyOptional({
     example: "الإمام",
-    description: "Full-text search across title and body",
+    description: "Full-text search across title and body. 2–200 characters after trimming; a blank value is ignored.",
+    minLength: 2,
+    maxLength: 200,
   })
-  @IsOptional()
-  @IsString()
-  @MaxLength(200)
+  @SearchTerm()
   search?: string;
 
   @ApiPropertyOptional({
     description:
-      "When true, limits the result to posts flagged `is_featured=true`. Orthogonal to `sort` — use `?featured=true&sort=newest` for a featured-by-date rail.",
+      "When true, limits the result to posts flagged `is_featured=true`. Orthogonal to `sort` — use `?featured=true&sort=newest` for a featured-by-date rail. Only `true` / `false` are accepted; anything else is a 400.",
   })
   @IsOptional()
-  @Transform(({ value }) => value === "true" || value === true)
+  @Transform(toQueryBoolean)
   @IsBoolean()
   featured?: boolean;
 

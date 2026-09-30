@@ -23,11 +23,26 @@ class CampaignDto {
   @ApiPropertyOptional({ example: 1280, description: 'Snapshot at queue time' })
   recipient_count?: number;
 
-  @ApiProperty({ example: 1247 })
+  @ApiProperty({ example: 1247, description: 'Recipients the mail server accepted. Recomputed from the recipient rows, so it is always exact.' })
   delivered_count: number;
 
-  @ApiProperty({ example: 33 })
+  @ApiProperty({ example: 33, description: 'Recipients that will not be tried again (refused address, retries used up, or unsubscribed before their turn).' })
   failed_count: number;
+
+  @ApiPropertyOptional({
+    example: '2026-06-01T09:18:00.000Z',
+    nullable: true,
+    description:
+      'Set while the sender is holding this campaign back after a server-side problem (SMTP down, login refused, hourly quota hit). Delivery resumes by itself once the time has passed; show "paused" only while this is in the future. Cleared as soon as mail flows again.',
+  })
+  paused_until?: string | null;
+
+  @ApiPropertyOptional({
+    example: 'Connection timeout',
+    nullable: true,
+    description: 'Why the campaign is paused, or why it ended `failed` (e.g. "No active subscribers at the scheduled time"). Plain text for the CMS to show.',
+  })
+  last_error?: string | null;
 
   @ApiPropertyOptional({ example: 'post' })
   source_resource_type?: string;
@@ -58,7 +73,7 @@ class CampaignSendDataDto {
   @ApiProperty({
     example: 1280,
     description:
-      'Number of newsletter_campaign_recipients rows created — i.e. the number of active subscribers the campaign will attempt to reach. Watch the campaign detail endpoint to track delivered_count / failed_count as the cron processes the batch.',
+      'Number of newsletter_campaign_recipients rows the campaign will attempt to reach: the active subscribers at queue time (send), or the failed recipients put back in the queue (retry). Watch the campaign detail endpoint to track delivered_count / failed_count as the cron works through them.',
   })
   recipient_count: number;
 }

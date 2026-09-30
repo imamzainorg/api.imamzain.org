@@ -3,6 +3,7 @@ import { NotFoundException } from '@nestjs/common';
 import { LanguagesService } from './languages.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuditService } from '../common/audit/audit.service';
+import { isActiveLanguage, resolveTranslation, setActiveLanguages } from '../common/utils/translation.util';
 
 const baseLang = {
   code: 'ar',
@@ -26,7 +27,7 @@ describe('LanguagesService', () => {
           provide: PrismaService,
           useValue: {
             languages: {
-              findMany: jest.fn(),
+              findMany: jest.fn().mockResolvedValue([]),
               findFirst: jest.fn(),
               findUnique: jest.fn().mockResolvedValue(null),
               create: jest.fn(),
@@ -43,7 +44,13 @@ describe('LanguagesService', () => {
     prisma = module.get(PrismaService);
   });
 
-  afterEach(() => jest.clearAllMocks());
+  afterEach(() => {
+    jest.clearAllMocks();
+    jest.useRealTimers();
+    service.onModuleDestroy();
+    // The live-language snapshot is module state: never let it leak between specs.
+    setActiveLanguages(null);
+  });
 
   describe('findAll', () => {
     it('returns only active languages by default', async () => {
@@ -146,6 +153,91 @@ describe('LanguagesService', () => {
       prisma.languages.findFirst.mockResolvedValue(null);
 
       await expect(service.softDelete('xx', 'actor-1')).rejects.toThrow(NotFoundException);
+    });
+  });
+
+  describe('live-language snapshot (public translation filtering)', () => {
+    const liveRows = (...codes: string[]) => codes.map((code) => ({ code }));
+    const rows = [
+      { lang: 'ar', title: 'ar', is_default: true },
+      { lang: 'fa', title: 'fa', is_default: false },
+    ];
+
+    it('is not set until something loads it, so nothing is filtered', () => {
+      expect(isActiveLanguage('fa')).toBe(true);
+      expect(resolveTranslation(rows, 'fa')?.lang).toBe('fa');
+    });
+
+    it('loads only active, non-deleted languages', async () => {
+      prisma.languages.findMany.mockResolvedValue(liveRows('ar', 'en'));
+
+      await service.refreshActiveLanguages();
+
+      expect(prisma.languages.findMany).toHaveBeenCalledWith({
+        where: { deleted_at: null, is_active: true },
+        select: { code: true },
+      });
+      expect(isActiveLanguage('fa')).toBe(false);
+      expect(resolveTranslation(rows, 'fa')?.lang).toBe('ar');
+    });
+
+    it('is loaded at boot and refreshed on a 60 s timer for the other replicas', async () => {
+      jest.useFakeTimers();
+      prisma.languages.findMany.mockResolvedValue(liveRows('ar', 'fa'));
+
+      await service.onApplicationBootstrap();
+      expect(isActiveLanguage('fa')).toBe(true);
+
+      // Another replica retires Persian; this one only learns on the next tick.
+      prisma.languages.findMany.mockResolvedValue(liveRows('ar'));
+      expect(isActiveLanguage('fa')).toBe(true);
+      await jest.advanceTimersByTimeAsync(60_000);
+
+      expect(isActiveLanguage('fa')).toBe(false);
+    });
+
+    it('is refreshed at once when a language is deactivated on this replica', async () => {
+      prisma.languages.findMany.mockResolvedValue(liveRows('ar', 'fa'));
+      await service.refreshActiveLanguages();
+      prisma.languages.findFirst.mockResolvedValue({ ...baseLang, code: 'fa' });
+      prisma.languages.update.mockResolvedValue({ ...baseLang, code: 'fa', is_active: false });
+      prisma.languages.findMany.mockResolvedValue(liveRows('ar'));
+
+      await service.update('fa', { is_active: false }, 'actor-1');
+
+      expect(isActiveLanguage('fa')).toBe(false);
+    });
+
+    it('is refreshed at once when a language is soft-deleted', async () => {
+      prisma.languages.findMany.mockResolvedValue(liveRows('ar', 'fa'));
+      await service.refreshActiveLanguages();
+      prisma.languages.findFirst.mockResolvedValue({ ...baseLang, code: 'fa' });
+      prisma.languages.findMany.mockResolvedValue(liveRows('ar'));
+
+      await service.softDelete('fa', 'actor-1');
+
+      expect(isActiveLanguage('fa')).toBe(false);
+    });
+
+    it('is refreshed at once when a language is created or restored', async () => {
+      prisma.languages.findMany.mockResolvedValue(liveRows('ar'));
+      await service.refreshActiveLanguages();
+      prisma.languages.create.mockResolvedValue({ ...baseLang, code: 'fa' });
+      prisma.languages.findMany.mockResolvedValue(liveRows('ar', 'fa'));
+
+      await service.create({ code: 'fa', name: 'Persian', native_name: 'فارسی' }, 'actor-1');
+
+      expect(isActiveLanguage('fa')).toBe(true);
+    });
+
+    it('keeps the previous snapshot when a refresh fails', async () => {
+      prisma.languages.findMany.mockResolvedValue(liveRows('ar'));
+      await service.refreshActiveLanguages();
+      prisma.languages.findMany.mockRejectedValue(new Error('db down'));
+
+      await expect(service.refreshActiveLanguages()).resolves.toBeUndefined();
+
+      expect(isActiveLanguage('fa')).toBe(false);
     });
   });
 });

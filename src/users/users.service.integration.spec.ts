@@ -15,9 +15,14 @@ import { ConflictException, NotFoundException } from '@nestjs/common'
 import { UsersService } from './users.service'
 import { PrismaService } from '../prisma/prisma.service'
 import { AuditService } from '../common/audit/audit.service'
-import { prisma, cleanDatabase } from '../../test/db-helpers'
+import { prisma, cleanDatabase, settlePendingWrites } from '../../test/db-helpers'
 
 const describeIfDb = process.env.DATABASE_TEST_URL ? describe : describe.skip
+
+// Envelope-checked routes take the acting user's payload. An actor with no
+// permissions can still manage users whose roles grant nothing (the fixtures
+// here), and its non-UUID id never trips the self-delete guard.
+const actor = { id: 'actor', username: 'tester', permissions: [] as string[] }
 
 describeIfDb('UsersService (integration)', () => {
     let service: UsersService
@@ -57,12 +62,95 @@ describeIfDb('UsersService (integration)', () => {
 
         it('allows the same username to be reused after the first user is soft-deleted', async () => {
             const first = await service.create({ username: 'reusable', password: 'pass' }, 'actor')
-            await service.softDelete(first.data.id, 'actor')
+            await service.softDelete(first.data.id, actor)
 
             // Soft-deleted user should not block a new one with the same name
             await expect(
                 service.create({ username: 'reusable', password: 'newpass' }, 'actor'),
             ).resolves.toBeDefined()
+        })
+    })
+
+    // ─── usernames: trimmed on write, unique regardless of letter case ─────────
+
+    describe('username uniqueness (case-insensitive)', () => {
+        it('rejects a create that differs from a live username only in letter case', async () => {
+            await service.create({ username: 'Admin', password: 'first-password' }, 'actor')
+
+            for (const variant of ['admin', 'ADMIN', 'aDmIn']) {
+                await expect(service.create({ username: variant, password: 'second-password' }, 'actor')).rejects.toThrow(
+                    ConflictException,
+                )
+            }
+            expect(await prisma.users.count()).toBe(1)
+        })
+
+        it('stores the trimmed username and rejects a padded look-alike of an existing one', async () => {
+            const created = await service.create({ username: '  padded  ', password: 'first-password' }, 'actor')
+            expect(created.data.username).toBe('padded')
+
+            await expect(service.create({ username: 'padded ', password: 'second-password' }, 'actor')).rejects.toThrow(
+                ConflictException,
+            )
+        })
+
+        it('does not treat a soft-deleted account as a collision', async () => {
+            const first = await service.create({ username: 'Gone', password: 'first-password' }, 'actor')
+            await service.softDelete(first.data.id, actor)
+
+            await expect(service.create({ username: 'gone', password: 'second-password' }, 'actor')).resolves.toBeDefined()
+        })
+
+        it('rejects a rename onto another live account\'s name in a different case, but allows a case-only rename of your own', async () => {
+            const alice = await service.create({ username: 'alice', password: 'first-password' }, 'actor')
+            await service.create({ username: 'Bob', password: 'first-password' }, 'actor')
+
+            await expect(service.update(alice.data.id, { username: 'bob' }, actor)).rejects.toThrow(ConflictException)
+
+            const renamed = await service.update(alice.data.id, { username: 'Alice' }, actor)
+            expect(renamed.data.username).toBe('Alice')
+        })
+
+        it('audits the rename with before and after', async () => {
+            // audit_logs.user_id is a real foreign key, so the actor must exist.
+            const realActor = await prisma.users.create({ data: { username: 'auditor', password_hash: 'x' } })
+            const user = await service.create({ username: 'before-name', password: 'first-password' }, realActor.id)
+
+            await service.update(user.data.id, { username: 'after-name' }, { ...actor, id: realActor.id })
+            await settlePendingWrites()
+
+            const row = await prisma.audit_logs.findFirst({
+                where: { action: 'USER_UPDATED', resource_id: user.data.id },
+            })
+            expect((row!.changes as any).username).toEqual({ before: 'before-name', after: 'after-name' })
+        })
+
+        it('refuses to restore a user whose original name was reclaimed in another case', async () => {
+            const first = await service.create({ username: 'Reclaimed', password: 'first-password' }, 'actor')
+            await service.softDelete(first.data.id, actor)
+            await service.create({ username: 'reclaimed', password: 'second-password' }, 'actor')
+
+            await expect(service.restore(first.data.id, actor)).rejects.toThrow(ConflictException)
+        })
+    })
+
+    // ─── admin password reset ─────────────────────────────────────────────────
+
+    describe('adminResetPassword', () => {
+        it('flags the account must_change_password and ends its sessions', async () => {
+            const hash = await bcrypt.hash('old-password', 4)
+            const user = await prisma.users.create({ data: { username: 'forgetful', password_hash: hash } })
+            await prisma.refresh_tokens.create({
+                data: { user_id: user.id, token_hash: 'hash-1', expires_at: new Date(Date.now() + 86_400_000) },
+            })
+
+            await service.adminResetPassword(user.id, { new_password: 'temporary-password' }, actor)
+
+            const row = await prisma.users.findUnique({ where: { id: user.id } })
+            expect(row!.must_change_password).toBe(true)
+            expect(row!.token_version).toBe(2)
+            expect(await bcrypt.compare('temporary-password', row!.password_hash)).toBe(true)
+            expect(await prisma.refresh_tokens.count({ where: { user_id: user.id, revoked_at: null } })).toBe(0)
         })
     })
 
@@ -147,7 +235,7 @@ describeIfDb('UsersService (integration)', () => {
             const hash = await bcrypt.hash('pass', 4)
             const user = await prisma.users.create({ data: { username: 'beforerename', password_hash: hash } })
 
-            const result = await service.update(user.id, { username: 'afterrename' }, 'actor')
+            const result = await service.update(user.id, { username: 'afterrename' }, actor)
 
             expect(result.data.username).toBe('afterrename')
             expect(result.data).not.toHaveProperty('password_hash')
@@ -167,7 +255,7 @@ describeIfDb('UsersService (integration)', () => {
             const userA = await prisma.users.findFirst({ where: { username: 'userA' } })
 
             await expect(
-                service.update(userA!.id, { username: 'userB' }, 'actor'),
+                service.update(userA!.id, { username: 'userB' }, actor),
             ).rejects.toThrow(ConflictException)
         })
     })
@@ -179,7 +267,7 @@ describeIfDb('UsersService (integration)', () => {
             const hash = await bcrypt.hash('pass', 4)
             const user = await prisma.users.create({ data: { username: 'todelete', password_hash: hash } })
 
-            await service.softDelete(user.id, 'actor')
+            await service.softDelete(user.id, actor)
 
             const row = await prisma.users.findUnique({ where: { id: user.id } })
             expect(row).not.toBeNull()       // row still exists
@@ -190,14 +278,14 @@ describeIfDb('UsersService (integration)', () => {
             const hash = await bcrypt.hash('pass', 4)
             const user = await prisma.users.create({ data: { username: 'softdeleted', password_hash: hash } })
 
-            await service.softDelete(user.id, 'actor')
+            await service.softDelete(user.id, actor)
 
             await expect(service.findOne(user.id)).rejects.toThrow(NotFoundException)
         })
 
         it('throws NotFoundException for an unknown id', async () => {
             await expect(
-                service.softDelete('00000000-0000-0000-0000-000000000000', 'actor'),
+                service.softDelete('00000000-0000-0000-0000-000000000000', actor),
             ).rejects.toThrow(NotFoundException)
         })
     })

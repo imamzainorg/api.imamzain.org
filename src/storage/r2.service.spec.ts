@@ -1,5 +1,7 @@
 import { BadRequestException } from '@nestjs/common';
-import { R2Service } from './r2.service';
+import { PutObjectCommand } from '@aws-sdk/client-s3';
+import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
+import { isStorageNotFound, PENDING_UPLOAD_TTL_SECONDS, R2Service } from './r2.service';
 
 jest.mock('@aws-sdk/client-s3', () => ({
   S3Client: jest.fn().mockImplementation(() => ({
@@ -7,6 +9,7 @@ jest.mock('@aws-sdk/client-s3', () => ({
   })),
   PutObjectCommand: jest.fn(),
   DeleteObjectCommand: jest.fn(),
+  HeadObjectCommand: jest.fn(),
 }));
 
 jest.mock('@aws-sdk/s3-request-presigner', () => ({
@@ -58,6 +61,101 @@ describe('R2Service', () => {
     it('throws BadRequestException for video MIME types', async () => {
       await expect(service.generateUploadUrl('video.mp4', 'video/mp4')).rejects.toThrow(
         BadRequestException,
+      );
+    });
+  });
+
+  describe('presigned URL lifetime (S18)', () => {
+    const expiresInOfLastPresign = () => {
+      const calls = (getSignedUrl as jest.Mock).mock.calls;
+      return calls[calls.length - 1][2].expiresIn;
+    };
+
+    afterEach(() => {
+      delete process.env.R2_UPLOAD_URL_TTL_SECONDS;
+    });
+
+    it('caps an image upload URL at the pending-row lifetime even when the env asks for a day', async () => {
+      process.env.R2_UPLOAD_URL_TTL_SECONDS = '86400';
+
+      await new R2Service().generateUploadUrl('photo.jpg', 'image/jpeg');
+
+      expect(PENDING_UPLOAD_TTL_SECONDS).toBe(900);
+      expect(expiresInOfLastPresign()).toBe(PENDING_UPLOAD_TTL_SECONDS);
+    });
+
+    it('still honours a shorter env value', async () => {
+      process.env.R2_UPLOAD_URL_TTL_SECONDS = '300';
+
+      await new R2Service().generateUploadUrl('photo.jpg', 'image/jpeg');
+
+      expect(expiresInOfLastPresign()).toBe(300);
+    });
+
+    it('defaults to the pending-row lifetime when the env is unset or unusable', async () => {
+      delete process.env.R2_UPLOAD_URL_TTL_SECONDS;
+      await new R2Service().generateUploadUrl('photo.jpg', 'image/jpeg');
+      expect(expiresInOfLastPresign()).toBe(PENDING_UPLOAD_TTL_SECONDS);
+
+      process.env.R2_UPLOAD_URL_TTL_SECONDS = 'not-a-number';
+      await new R2Service().generateUploadUrl('photo.jpg', 'image/jpeg');
+      expect(expiresInOfLastPresign()).toBe(PENDING_UPLOAD_TTL_SECONDS);
+    });
+
+    it('leaves the audio and PDF presigns (no pending row to outlive) on the env value', async () => {
+      process.env.R2_UPLOAD_URL_TTL_SECONDS = '3600';
+      const svc = new R2Service();
+
+      await svc.presignAudioUpload('lecture.mp3', 'audio/mpeg');
+      expect(expiresInOfLastPresign()).toBe(3600);
+
+      await svc.presignDocumentUpload('book.pdf', 'books/pdf/', 1);
+      expect(expiresInOfLastPresign()).toBe(3600);
+    });
+  });
+
+  describe('isStorageNotFound', () => {
+    it('recognises the shapes S3/R2 use for a missing key', () => {
+      expect(isStorageNotFound(Object.assign(new Error('x'), { name: 'NoSuchKey' }))).toBe(true);
+      expect(isStorageNotFound(Object.assign(new Error('x'), { name: 'NotFound' }))).toBe(true);
+      expect(isStorageNotFound({ Code: 'NoSuchKey' })).toBe(true);
+      expect(isStorageNotFound({ $metadata: { httpStatusCode: 404 } })).toBe(true);
+    });
+
+    it('does not mistake other failures for a missing key', () => {
+      expect(isStorageNotFound(new Error('socket hang up'))).toBe(false);
+      expect(isStorageNotFound({ $metadata: { httpStatusCode: 503 } })).toBe(false);
+      expect(isStorageNotFound(null)).toBe(false);
+      expect(isStorageNotFound('NoSuchKey')).toBe(false);
+    });
+  });
+
+  describe('headObject', () => {
+    it('returns the stored Cache-Control next to the type and size', async () => {
+      (service as any).client.send.mockResolvedValueOnce({
+        ContentType: 'image/jpeg',
+        ContentLength: 2048,
+        CacheControl: 'public, max-age=31536000',
+      });
+
+      await expect(service.headObject('media/originals/x/photo.jpg')).resolves.toEqual({
+        contentType: 'image/jpeg',
+        contentLength: 2048,
+        cacheControl: 'public, max-age=31536000',
+      });
+    });
+  });
+
+  describe('putObjectBuffer', () => {
+    it('sends Cache-Control only when one is given', async () => {
+      await service.putObjectBuffer('media/variants/x/w320.webp', Buffer.from('a'), 'image/webp');
+      expect(PutObjectCommand).toHaveBeenLastCalledWith(
+        expect.not.objectContaining({ CacheControl: expect.anything() }),
+      );
+
+      await service.putObjectBuffer('media/originals/x/photo.jpg', Buffer.from('a'), 'image/jpeg', 'public, max-age=60');
+      expect(PutObjectCommand).toHaveBeenLastCalledWith(
+        expect.objectContaining({ ContentType: 'image/jpeg', CacheControl: 'public, max-age=60' }),
       );
     });
   });

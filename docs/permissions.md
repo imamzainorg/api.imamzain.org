@@ -9,6 +9,8 @@ the API emits.
 - [Permissions catalogue](#permissions-catalogue)
 - [Default roles](#default-roles)
 - [Permission → role matrix](#permission--role-matrix)
+- [Privilege envelope and the last-administrator guard](#privilege-envelope-and-the-last-administrator-guard)
+- [Forced password change (`must_change_password`)](#forced-password-change-must_change_password)
 - [Audit action vocabulary](#audit-action-vocabulary)
 
 ---
@@ -83,7 +85,7 @@ the category resources, the only admin-read surface (trash) is gated by
 
 | Permission | Action |
 | --- | --- |
-| `media:read` | List + read media records |
+| `media:read` | List + read media records, including `GET /media/:id/references` (what posts/books/static-pages/gallery items hold a reference to this file) |
 | `media:create` | Request upload URL + confirm upload |
 | `media:update` | Edit metadata + regenerate variants |
 | `media:delete` | Hard-delete media (removes R2 file too) |
@@ -145,8 +147,17 @@ the category resources, the only admin-read surface (trash) is gated by
 
 ## Default roles
 
-The seed creates four default roles. Re-running the seed is safe —
-upserts only.
+The seed creates four default roles. Re-running the seed is safe and
+**create-only for role grants**: a role that does not exist yet gets its
+permissions, and a permission that does not exist yet is granted to the
+roles that list it — but a grant an admin removed is **never re-added**.
+The seed used to re-grant everything it lists on every run, silently
+undoing removals made through `DELETE /roles/:id/permissions/:permissionId`
+(and the last-administrator guard is no help against that). Grants the seed
+does make on an existing role are audit-logged
+(`PERMISSION_ASSIGNED_TO_ROLE`, `changes.by = "seed"`), and it logs any
+grant it deliberately left removed. To force the old behaviour once, run
+the seed with `SEED_RESET_ROLE_GRANTS=true`.
 
 | Role | Description | Permission count |
 | --- | --- | --- |
@@ -160,7 +171,8 @@ Translations for each role title / description exist in `ar`, `en`,
 
 ### Editing the default mapping
 
-The seed mapping is just a starting state; the CMS can move
+The seed mapping is just a starting state — it never overrides what
+admins do afterwards; the CMS can move
 permissions between roles at runtime through `POST/DELETE
 /roles/:id/permissions` (requires `roles:update`). Custom roles can be
 created via `POST /roles`.
@@ -218,6 +230,62 @@ Legend: ✓ = has by default, — = does not.
 
 ---
 
+## Privilege envelope and the last-administrator guard
+
+Holding `users:update` / `users:delete` / `roles:update` is not enough on
+its own to act on *any* account or role. Two invariants are enforced by
+the API on top of the permission check:
+
+**Privilege envelope (403).** An actor may only manage a subject whose
+permissions are all within the actor's own. Concretely:
+
+| Route | Refused with 403 when… |
+| --- | --- |
+| `PATCH /users/:id`, `DELETE /users/:id`, `POST /users/:id/reset-password` | the target user holds any permission the caller does not |
+| `POST /users/:id/roles`, `DELETE /users/:id/roles/:roleId` | the role grants any permission the caller does not hold |
+| `POST /roles/:id/permissions`, `DELETE /roles/:id/permissions/:permissionId` | the caller does not hold the permission being granted / revoked |
+| `DELETE /users/:id` | the target is the caller's own account |
+
+Equal sets pass — two `admin` accounts can manage each other — only a
+strict superset is refused. A super-admin holds everything, so nothing
+changes for them. In the default seed this means an `admin` (62
+permissions) can no longer reset a `super-admin`'s password, rename or
+delete that account.
+
+**Last administrator (409).** At least one active user must always hold
+*every* permission in the system, otherwise nobody could ever grant a
+permission again (the envelope rule means you can only grant what you
+hold). `DELETE /users/:id`, `DELETE /users/:id/roles/:roleId` and
+`DELETE /roles/:id/permissions/:permissionId` return
+`409 This change would leave no active user holding every permission…`
+when the change would remove the last such account. The check is
+evaluated in the same transaction as the write.
+
+---
+
+## Forced password change (`must_change_password`)
+
+`POST /users/:id/reset-password` (permission `users:update`) now flags the
+target account `must_change_password: true`. The flag is cleared only when
+the user changes their own password via `PATCH /auth/me/password`, and that
+change is rejected (`400 PASSWORD_MUST_DIFFER`) while flagged if
+`newPassword` equals `currentPassword` — otherwise the flag could be cleared
+without actually replacing the admin-chosen password. The flag is returned
+on `POST /auth/login` (`data.user.must_change_password`) and `GET /auth/me`
+(`data.must_change_password`).
+
+**Enforcement is gated by an environment variable, off by default.** With
+`ENFORCE_PASSWORD_CHANGE_AFTER_RESET` unset (or anything other than the
+literal `true`), the flag is informational only — nothing is blocked. Once
+set to `true`, a flagged account gets `403 PASSWORD_CHANGE_REQUIRED` on
+every authenticated route **except** `GET /auth/me`, `PATCH /auth/me/password`,
+`POST /auth/logout` and `POST /auth/refresh` (which is unauthenticated
+anyway). This is a request-path gate, not a new permission — it applies
+regardless of which permissions the flagged account holds. Turn it on only
+after the CMS ships a change-password redirect on `PASSWORD_CHANGE_REQUIRED`.
+
+---
+
 ## Audit action vocabulary
 
 Every write operation records an `audit_logs` row with an
@@ -234,21 +302,25 @@ change.
 | Action | Trigger | Notes |
 | --- | --- | --- |
 | `USER_LOGIN` | `POST /auth/login` succeeds | Includes `ip_address` + `user_agent` |
-| `PASSWORD_CHANGED` | `PATCH /auth/me/password` | Self-service |
-| `USER_PASSWORD_RESET_BY_ADMIN` | `POST /users/:id/reset-password` | Admin-driven; the admin's id is in `user_id` |
+| `USER_LOGIN_FAILED` | `POST /auth/login` fails | `user_id` is null (`resource_id` is the account when the username exists). `changes.reason` is `bad_password`, `unknown_username` or `locked`, with `failed_count` and `locked_until`. The attempted username is deliberately never stored — it is often a mistyped password |
+| `PASSWORD_CHANGED` | `PATCH /auth/me/password` | Self-service; clears `must_change_password` |
+| `USER_PASSWORD_RESET_BY_ADMIN` | `POST /users/:id/reset-password` | Admin-driven; the admin's id is in `user_id`; sets `must_change_password: true` on the target |
+| `USER_LOGOUT` | `POST /auth/logout` with a `refresh_token` | `changes.revoked_tokens` — ends that token's whole session (family), not just the one row |
+| `USER_LOGOUT_ALL` | `POST /auth/logout` with no body | `changes.revoked_tokens` — ends every session of the caller |
+| `REFRESH_TOKEN_REUSE_DETECTED` | `POST /auth/refresh` presented with an already-rotated token, outside the reuse-grace window | `changes.family_id`, `changes.revoked_tokens`, `changes.rotated_seconds_ago`; `revoked_tokens: 0` means the session was already over (a stale device), not necessarily an attack |
 
 ### Users + roles
 
 | Action | Trigger |
 | --- | --- |
 | `USER_CREATED` | `POST /users` |
-| `USER_UPDATED` | `PATCH /users/:id` |
+| `USER_UPDATED` | `PATCH /users/:id` — a username rename adds `changes.username = { before, after }` |
 | `USER_DELETED` | `DELETE /users/:id` |
 | `USER_RESTORED` | `POST /users/:id/restore` |
 | `ROLE_ASSIGNED_TO_USER` | `POST /users/:id/roles` |
 | `ROLE_REMOVED_FROM_USER` | `DELETE /users/:id/roles/:roleId` |
 | `ROLE_CREATED` | `POST /roles` |
-| `ROLE_UPDATED` | `PATCH /roles/:id` |
+| `ROLE_UPDATED` | `PATCH /roles/:id` — a name rename adds `changes.name = { before, after }` |
 | `ROLE_DELETED` | `DELETE /roles/:id` |
 | `PERMISSION_ASSIGNED_TO_ROLE` | `POST /roles/:id/permissions` |
 | `PERMISSION_REMOVED_FROM_ROLE` | `DELETE /roles/:id/permissions/:permissionId` |
@@ -297,7 +369,7 @@ Four category resources emit parallel sets:
 | --- | --- |
 | `MEDIA_CREATED` | `POST /media/confirm` |
 | `MEDIA_UPDATED` | `PATCH /media/:id` |
-| `MEDIA_VARIANTS_REGENERATED` | `POST /media/:id/regenerate-variants` |
+| `MEDIA_VARIANTS_REGENERATED` | `POST /media/:id/regenerate-variants` — `changes` now also records `variants_status` |
 | `MEDIA_DELETED` | `DELETE /media/:id` |
 
 ### Hadiths
@@ -319,17 +391,20 @@ need to investigate why a video is or isn't present, check the
 
 | Action | Trigger |
 | --- | --- |
-| `NEWSLETTER_SUBSCRIBED` | `POST /newsletter/subscribe` (new email) — `user_id` is null (public action) |
-| `NEWSLETTER_RESUBSCRIBED` | `POST /newsletter/subscribe` reactivating a previously-deleted record — public action |
+| `NEWSLETTER_SUBSCRIBE_REQUESTED` | `POST /newsletter/subscribe` for an address not seen before (a pending row is created and a confirmation e-mail queued) — `user_id` is null (public action) |
+| `NEWSLETTER_SUBSCRIBED` | `POST /newsletter/confirm` — the first confirmation of an address — public action |
+| `NEWSLETTER_RESUBSCRIBED` | `POST /newsletter/confirm` — an address that had been confirmed before (unsubscribed or deleted, now back) — public action |
 | `NEWSLETTER_UNSUBSCRIBED` | `POST /newsletter/unsubscribe` — public action |
 | `NEWSLETTER_UNSUBSCRIBED_BY_ADMIN` | `POST /newsletter/subscribers/:id/unsubscribe` |
 | `NEWSLETTER_RESUBSCRIBED_BY_ADMIN` | `POST /newsletter/subscribers/:id/resubscribe` |
 | `NEWSLETTER_SUBSCRIBER_DELETED` | `DELETE /newsletter/subscribers/:id` |
-| `NEWSLETTER_SUBSCRIBER_RESTORED` | `POST /newsletter/subscribers/:id/restore` |
+| `NEWSLETTER_SUBSCRIBER_RESTORED` | `POST /newsletter/subscribers/:id/restore` — `changes.is_active` says whether the subscriber is active again (an explicit opt-out survives a restore) |
 | `NEWSLETTER_CAMPAIGN_CREATED` | `POST /newsletter/campaigns` |
 | `NEWSLETTER_CAMPAIGN_UPDATED` | `PATCH /newsletter/campaigns/:id` |
 | `NEWSLETTER_CAMPAIGN_SEND_QUEUED` | `POST /newsletter/campaigns/:id/send` |
 | `NEWSLETTER_CAMPAIGN_CANCELLED` | `POST /newsletter/campaigns/:id/cancel` |
+| `NEWSLETTER_CAMPAIGN_RETRIED` | `POST /newsletter/campaigns/:id/retry` — `changes.requeued` is how many recipients went back in the queue |
+| `NEWSLETTER_CAMPAIGN_COMPLETED` | Written by the sender (`user_id` null) when a campaign finishes as `sent` or `failed`; `changes` carry the final counts |
 | `NEWSLETTER_CAMPAIGN_DELETED` | `DELETE /newsletter/campaigns/:id` |
 
 ### Forms

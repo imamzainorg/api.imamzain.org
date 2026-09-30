@@ -179,10 +179,11 @@ describe("GalleryCategoriesService", () => {
         "actor-1",
       );
 
-      expect(mockTx.gallery_categories.create).toHaveBeenCalled();
-      expect(
-        mockTx.gallery_category_translations.createMany,
-      ).toHaveBeenCalled();
+      // The translation write is where a bug would actually corrupt data —
+      // check the exact row, not just "createMany was called somehow".
+      expect(mockTx.gallery_category_translations.createMany).toHaveBeenCalledWith({
+        data: [{ category_id: "cat-1", lang: "ar", title: "معرض", slug: "maared", description: null }],
+      });
       expect(result.data.id).toBe("cat-1");
       expect(result.data.gallery_category_translations).toHaveLength(1);
       expect(result.data.translation).toBeDefined();
@@ -199,7 +200,13 @@ describe("GalleryCategoriesService", () => {
         "actor-1",
       );
 
-      expect(prisma.gallery_category_translations.upsert).toHaveBeenCalled();
+      // The upsert's where/create/update payload is what actually decides
+      // which row gets touched and what it ends up containing.
+      expect(prisma.gallery_category_translations.upsert).toHaveBeenCalledWith({
+        where: { category_id_lang: { category_id: "cat-1", lang: "ar" } },
+        create: { category_id: "cat-1", lang: "ar", title: "معرض", slug: "maared", description: null },
+        update: { title: "معرض", slug: "maared", description: null },
+      });
       expect(result.message).toBe("Category updated");
     });
 

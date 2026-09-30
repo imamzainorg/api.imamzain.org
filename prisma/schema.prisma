@@ -142,6 +142,13 @@ model books {
   pages             Int?
   publish_year      String?
   pdf_url           String?
+  // Set together or not at all, and part_number <= parts — CHECK
+  // chk_books_parts (migration 20260917110000; mirrored in books.service.ts so
+  // the editor gets a readable 400). Among the LIVE parts of one series
+  // part_number is unique: partial index uq_books_parent_part_number
+  // (parent_id, part_number) WHERE parent_id IS NOT NULL AND part_number IS
+  // NOT NULL AND deleted_at IS NULL — not expressible in Prisma's DSL, so it
+  // lives in that migration only.
   part_number       Int?
   parts             Int?
   // Content-slug consolidation complete (Phase A: migration 20260818130000;
@@ -199,6 +206,10 @@ model contact_submissions {
   notes                  String?
   deleted_at             DateTime?      @db.Timestamptz(6)
   notification_failed_at DateTime?      @db.Timestamptz(6)
+  // When the admin team was told about this row (migration 20260917120000).
+  // NULL = still waiting in the notification outbox; see
+  // src/forms/form-notifications.service.ts.
+  notified_at            DateTime?      @db.Timestamptz(6)
   users                  users?         @relation(fields: [responded_by], references: [id], onUpdate: NoAction)
 
   @@index([responded_by], map: "idx_contact_responded_by")
@@ -345,6 +356,16 @@ model newsletter_subscribers {
   subscribed_at                  DateTime                         @default(now()) @db.Timestamptz(6)
   unsubscribed_at                DateTime?                        @db.Timestamptz(6)
   deleted_at                     DateTime?                        @db.Timestamptz(6)
+  // Double opt-in (migration 20260917130000). confirmed_at is when the CURRENT
+  // consent was given — the subscriber clicking the link in the confirmation
+  // e-mail — and is re-stamped on every re-confirmation. NULL with is_active =
+  // false and unsubscribed_at NULL means "signed up, never confirmed".
+  // confirmation_sent_at is the last time that e-mail was claimed for sending;
+  // it drives the resend cool-down, the global hourly cap and the token.
+  // CHECK chk_newsletter_subscriber_active: is_active implies unsubscribed_at
+  // IS NULL AND deleted_at IS NULL (replaces the untracked chk_subscriber_state).
+  confirmed_at                   DateTime?                        @db.Timestamptz(6)
+  confirmation_sent_at           DateTime?                        @db.Timestamptz(6)
   newsletter_campaign_recipients newsletter_campaign_recipients[]
 }
 
@@ -462,6 +483,8 @@ model proxy_visit_requests {
   notes                  String?
   deleted_at             DateTime?          @db.Timestamptz(6)
   notification_failed_at DateTime?          @db.Timestamptz(6)
+  // See contact_submissions.notified_at.
+  notified_at            DateTime?          @db.Timestamptz(6)
   users                  users?             @relation(fields: [processed_by], references: [id], onUpdate: NoAction)
 
   @@index([processed_by], map: "idx_proxy_visit_processed_by")
@@ -513,6 +536,10 @@ model users {
   updated_at            DateTime                @default(now()) @db.Timestamptz(6)
   deleted_at            DateTime?               @db.Timestamptz(6)
   token_version         Int                     @default(1)
+  // Set by an admin password reset, cleared when the user changes their own
+  // password. Surfaced on login and /auth/me; enforced server-side only when
+  // ENFORCE_PASSWORD_CHANGE_AFTER_RESET=true (migration 20260924100000).
+  must_change_password  Boolean                 @default(false)
   academic_papers       academic_papers[]
   audios                audios[]
   audit_logs            audit_logs[]
@@ -545,7 +572,7 @@ model daily_hadiths {
   daily_hadith_translations daily_hadith_translations[]
 }
 
-// One row per UTC calendar day that had nothing scheduled, recording which
+// One row per site-timezone calendar day (SITE_TIMEZONE, default Asia/Baghdad) that had nothing scheduled, recording which
 // hadith the random fallback drew that day. Written once, the first time
 // that day's /today is resolved with no scheduled hadith; every later
 // request the same day reads this instead of drawing again, so all
@@ -558,6 +585,8 @@ model daily_hadith_random_picks {
   hadith_id     String?        @db.Uuid
   locked_at     DateTime       @default(now()) @db.Timestamptz(6)
   daily_hadiths daily_hadiths? @relation(fields: [hadith_id], references: [id], onDelete: SetNull, onUpdate: NoAction)
+
+  @@index([hadith_id], map: "idx_daily_hadith_random_picks_hadith")
 }
 
 model daily_hadith_translations {
@@ -677,17 +706,42 @@ model pending_media_uploads {
   @@index([expires_at], map: "idx_pending_media_expires")
 }
 
+// One row per issued refresh token. Rotation keeps a session's tokens together
+// in a "family" (family_id): login mints a new family, every rotation inherits
+// it, and reuse of an already-rotated token revokes THAT family only (migration
+// 20260924100000). replaced_by_id is set on the old row when it is rotated; a
+// revoked row without it was ended by logout / a password change, not rotated.
+// It is deliberately not a foreign key: the daily sweep deletes rows
+// independently and a dangling pointer must not block it.
 model refresh_tokens {
-  id         String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  user_id    String    @db.Uuid
-  token_hash String    @unique(map: "uq_refresh_tokens_hash")
-  expires_at DateTime  @db.Timestamptz(6)
-  created_at DateTime  @default(now()) @db.Timestamptz(6)
-  revoked_at DateTime? @db.Timestamptz(6)
-  users      users     @relation(fields: [user_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  id             String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  user_id        String    @db.Uuid
+  token_hash     String    @unique(map: "uq_refresh_tokens_hash")
+  expires_at     DateTime  @db.Timestamptz(6)
+  created_at     DateTime  @default(now()) @db.Timestamptz(6)
+  revoked_at     DateTime? @db.Timestamptz(6)
+  family_id      String    @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  replaced_by_id String?   @db.Uuid
+  users          users     @relation(fields: [user_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
 
   @@index([expires_at], map: "idx_refresh_tokens_expires_at")
+  @@index([family_id], map: "idx_refresh_tokens_family_id")
   @@index([user_id], map: "idx_refresh_tokens_user_id")
+}
+
+// Per-username login back-off (migration 20260917100000). Keyed by the
+// SHA-256 of the lower-cased username — never the attempted string itself,
+// which is often a mistyped password — and kept for unknown usernames too so
+// lockout behaviour can't be used to enumerate accounts. See
+// src/auth/login-throttle.service.ts.
+model login_attempts {
+  username_key    String    @id
+  failed_count    Int       @default(0)
+  first_failed_at DateTime  @default(now()) @db.Timestamptz(6)
+  last_failed_at  DateTime  @default(now()) @db.Timestamptz(6)
+  locked_until    DateTime? @db.Timestamptz(6)
+
+  @@index([last_failed_at], map: "idx_login_attempts_last_failed")
 }
 
 model newsletter_campaign_recipients {
@@ -696,6 +750,13 @@ model newsletter_campaign_recipients {
   sent_at                DateTime?              @db.Timestamptz(6)
   failed_at              DateTime?              @db.Timestamptz(6)
   error_message          String?
+  // Delivery bookkeeping (migration 20260917130000). A row is PENDING while
+  // sent_at and failed_at are both NULL. attempts / next_retry_at implement
+  // back-off for transient SMTP failures; claimed_until is a short lease the
+  // sender takes before each SMTP call so no two workers mail the same row.
+  attempts               Int                    @default(0)
+  next_retry_at          DateTime?              @db.Timestamptz(6)
+  claimed_until          DateTime?              @db.Timestamptz(6)
   newsletter_campaigns   newsletter_campaigns   @relation(fields: [campaign_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
   newsletter_subscribers newsletter_subscribers @relation(fields: [subscriber_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
 
@@ -715,6 +776,10 @@ model newsletter_campaigns {
   source_resource_type           String?
   source_resource_id             String?                          @db.Uuid
   created_by                     String?                          @db.Uuid
+  // Set by the sender's circuit breaker when SMTP looks down / over quota:
+  // the campaign is skipped until then. last_error says why (shown in the CMS).
+  paused_until                   DateTime?                        @db.Timestamptz(6)
+  last_error                     String?
   created_at                     DateTime                         @default(now()) @db.Timestamptz(6)
   updated_at                     DateTime                         @default(now()) @db.Timestamptz(6)
   newsletter_campaign_recipients newsletter_campaign_recipients[]

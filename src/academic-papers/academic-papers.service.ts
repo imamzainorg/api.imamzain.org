@@ -11,14 +11,15 @@ import { ACADEMIC_PAPER_PDF_PREFIX, DOCUMENT_PDF_BYTES, R2Service } from '../sto
 import { RequestPdfUploadUrlDto } from '../common/dto/request-pdf-upload-url.dto';
 import { AcademicPaperQueryDto, CreateAcademicPaperDto, UpdateAcademicPaperDto } from './dto/academic-paper.dto';
 
-// List queries drop the abstract (heavy free-text) from translations.
+// List queries drop the abstract (heavy free-text) from translations. This is
+// the PUBLIC shape: `uploaded_by` (a staff user id) is admin-only, see
+// PAPER_ADMIN_LIST_SELECT.
 const PAPER_LIST_SELECT = {
   id: true,
   category_id: true,
   published_year: true,
   pdf_url: true,
   document_languages: true,
-  uploaded_by: true,
   views: true,
   is_published: true,
   created_at: true,
@@ -45,6 +46,30 @@ const PAPER_LIST_SELECT = {
       },
     },
   },
+} satisfies Prisma.academic_papersSelect;
+
+// CMS lists and trash keep the uploader column they always returned.
+const PAPER_ADMIN_LIST_SELECT = { ...PAPER_LIST_SELECT, uploaded_by: true } satisfies Prisma.academic_papersSelect;
+
+const PAPER_DETAIL_RELATIONS = {
+  academic_paper_translations: true,
+  academic_paper_categories: { include: { academic_paper_category_translations: true } },
+} satisfies Prisma.academic_papersInclude;
+
+// Public detail is an allow-list so `uploaded_by` stays server-side; a column
+// added to `academic_papers` later is NOT public until it is listed here.
+const PAPER_PUBLIC_DETAIL_SELECT = {
+  id: true,
+  category_id: true,
+  published_year: true,
+  pdf_url: true,
+  document_languages: true,
+  views: true,
+  is_published: true,
+  created_at: true,
+  updated_at: true,
+  deleted_at: true,
+  ...PAPER_DETAIL_RELATIONS,
 } satisfies Prisma.academic_papersSelect;
 
 @Injectable()
@@ -82,7 +107,7 @@ export class AcademicPapersService {
     const [items, total] = await Promise.all([
       this.prisma.academic_papers.findMany({
         where,
-        select: PAPER_LIST_SELECT,
+        select: isAdmin ? PAPER_ADMIN_LIST_SELECT : PAPER_LIST_SELECT,
         orderBy: [{ created_at: 'desc' }, { id: 'asc' }],
         skip,
         take: limit,
@@ -98,13 +123,11 @@ export class AcademicPapersService {
     const where: Prisma.academic_papersWhereInput = { id, deleted_at: null };
     if (!isAdmin) where.is_published = true;
 
-    const paper = await this.prisma.academic_papers.findFirst({
-      where,
-      include: {
-        academic_paper_translations: true,
-        academic_paper_categories: { include: { academic_paper_category_translations: true } },
-      },
-    });
+    // Two literal query shapes rather than one conditional: the admin `include`
+    // (every column) and the public allow-list `select` type differently in Prisma.
+    const paper = isAdmin
+      ? await this.prisma.academic_papers.findFirst({ where, include: PAPER_DETAIL_RELATIONS })
+      : await this.prisma.academic_papers.findFirst({ where, select: PAPER_PUBLIC_DETAIL_SELECT });
     if (!paper) throw new NotFoundException('Paper not found');
     return { message: 'Paper fetched', data: { ...paper, translation: resolveTranslation(paper.academic_paper_translations, lang) } };
   }
@@ -198,7 +221,9 @@ export class AcademicPapersService {
       changes: { method: 'POST', path: '/api/v1/academic-papers' },
     });
 
-    const { data } = await this.findOne(paper.id, lang);
+    // Hydrate with the admin flag: a draft (is_published=false) is filtered out
+    // by the public overload, and the write has already committed.
+    const { data } = await this.findOne(paper.id, lang, true);
     return { message: 'Paper created', data };
   }
 
@@ -264,7 +289,7 @@ export class AcademicPapersService {
       changes: { method: 'PATCH', path: `/api/v1/academic-papers/${id}` },
     });
 
-    const { data } = await this.findOne(id, lang);
+    const { data } = await this.findOne(id, lang, true);
     return { message: 'Paper updated', data };
   }
 
@@ -276,7 +301,7 @@ export class AcademicPapersService {
     const [items, total] = await Promise.all([
       this.prisma.academic_papers.findMany({
         where,
-        select: PAPER_LIST_SELECT,
+        select: PAPER_ADMIN_LIST_SELECT,
         orderBy: [{ deleted_at: 'desc' }, { id: 'asc' }],
         skip,
         take: limit,

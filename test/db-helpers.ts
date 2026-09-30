@@ -37,6 +37,7 @@ export async function cleanDatabase() {
     await settlePendingWrites()
 
     await prisma.audit_logs.deleteMany()
+    await prisma.login_attempts.deleteMany()
     await prisma.contact_submissions.deleteMany()
     await prisma.proxy_visit_requests.deleteMany()
     await prisma.user_roles.deleteMany()

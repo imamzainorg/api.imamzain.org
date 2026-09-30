@@ -28,6 +28,9 @@ jobs:
       - name: Type check
         run: npm run type-check
 
+      # `npm run test:cov` runs this same suite with coverage locally (and
+      # enforces jest.config.js's coverageThreshold ratchet); left out of CI
+      # because coverage instrumentation roughly doubles the suite's run time.
       - name: Unit tests
         run: npm test
 
@@ -71,6 +74,17 @@ jobs:
         env:
           DATABASE_URL: postgresql://postgres:postgres@localhost:5432/imamzain_test
           DIRECT_URL: postgresql://postgres:postgres@localhost:5432/imamzain_test
+
+      # schema.prisma has drifted from the actual migrations before (a
+      # daily_hadith_random_picks index existed in the migration history but was
+      # missing from schema.prisma for weeks) — this catches that class of bug
+      # before it reaches prod. Partial indexes and CHECK constraints can't be
+      # expressed in schema.prisma at all, so they never show up as a diff here;
+      # if this step ever does fail, check prisma/INTENTIONAL_DRIFT.md first.
+      - name: Check schema.prisma against applied migrations
+        run: npx prisma migrate diff --from-url "$DATABASE_URL" --to-schema-datamodel prisma/schema.prisma --exit-code
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/imamzain_test
 
       - name: Integration tests
         run: npm run test:integration

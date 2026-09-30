@@ -1,6 +1,7 @@
 import { ApiPropertyOptional, ApiProperty } from '@nestjs/swagger';
 import { Transform, Type } from 'class-transformer';
 import { ArrayUnique, IsArray, IsEnum, IsInt, IsOptional, IsString, Max, MaxLength, Min, MinLength } from 'class-validator';
+import { SEARCH_MAX_LENGTH, SEARCH_MIN_LENGTH, toTrimmedString } from '../../common/validators/search-term';
 
 export enum SearchResourceType {
   Post = 'post',
@@ -11,10 +12,11 @@ export enum SearchResourceType {
 }
 
 export class SearchQueryDto {
-  @ApiProperty({ example: 'الإمام', minLength: 2, maxLength: 200, description: 'Term to search for across selected resources' })
+  @ApiProperty({ example: 'الإمام', minLength: SEARCH_MIN_LENGTH, maxLength: SEARCH_MAX_LENGTH, description: 'Term to search for across selected resources. Trimmed before the length check.' })
+  @Transform(toTrimmedString)
   @IsString()
-  @MinLength(2)
-  @MaxLength(200)
+  @MinLength(SEARCH_MIN_LENGTH)
+  @MaxLength(SEARCH_MAX_LENGTH)
   q!: string;
 
   @ApiPropertyOptional({

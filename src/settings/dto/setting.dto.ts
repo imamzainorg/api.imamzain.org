@@ -1,6 +1,16 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { site_setting_type } from '@prisma/client';
-import { IsBoolean, IsEnum, IsOptional, IsString, MaxLength } from 'class-validator';
+import { IsBoolean, IsEnum, IsOptional, IsString, MaxLength, MinLength } from 'class-validator';
+import { DTO_LIMITS } from '../../common/validators/dto-limits';
+
+/** Path parameter of GET/PUT/DELETE /settings/:key — bounds the primary key a caller can create. */
+export class SettingKeyParamDto {
+  @ApiProperty({ example: 'site_name', minLength: 1, maxLength: DTO_LIMITS.settingKey })
+  @IsString()
+  @MinLength(1)
+  @MaxLength(DTO_LIMITS.settingKey)
+  key!: string;
+}
 
 export class UpsertSettingDto {
   @ApiProperty({

@@ -1,6 +1,21 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { SearchResourceType } from './search.dto';
 
+/** One pre-generated WebP rendition of a cover image, ordered by width — feed these to `srcset`. */
+class SearchImageVariantDto {
+  @ApiProperty({ format: 'uuid' })
+  id!: string;
+
+  @ApiProperty({ example: 768, description: 'Output width in pixels' })
+  width!: number;
+
+  @ApiProperty({ example: 'https://cdn.imamzain.org/media/variants/uuid/w768.webp' })
+  url!: string;
+
+  @ApiProperty({ example: 'webp' })
+  format!: string;
+}
+
 export class SearchHitDto {
   @ApiProperty({ enum: SearchResourceType, example: SearchResourceType.Post })
   type!: SearchResourceType;
@@ -25,6 +40,12 @@ export class SearchHitDto {
 
   @ApiPropertyOptional({ format: 'uri', example: 'https://cdn.imamzain.org/media/abc.jpg' })
   cover_image_url?: string | null;
+
+  @ApiProperty({
+    type: [SearchImageVariantDto],
+    description: 'WebP variants of `cover_image_url`, width ascending. Empty when the hit has no image or none was generated — fall back to `cover_image_url` then.',
+  })
+  cover_image_variants!: SearchImageVariantDto[];
 }
 
 class SearchTypeBucketDto {
