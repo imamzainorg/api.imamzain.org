@@ -51,6 +51,10 @@ export async function cleanDatabase() {
  * Yield long enough for already-scheduled fire-and-forget writes to reach the
  * database. setImmediate alone only clears the scheduling tick, not the query
  * round-trip, so this also waits on a trivial query.
+ *
+ * Best effort only — it does NOT guarantee a write has landed (that query can
+ * finish before the INSERT on a busy runner). Use it to reduce cross-test
+ * noise, never before asserting on an audit row: use waitForRow for that.
  */
 export async function settlePendingWrites(): Promise<void> {
     await new Promise((resolve) => setImmediate(resolve))

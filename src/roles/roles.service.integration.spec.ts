@@ -14,7 +14,7 @@ import { ConflictException } from '@nestjs/common'
 import { RolesService } from './roles.service'
 import { PrismaService } from '../prisma/prisma.service'
 import { AuditService } from '../common/audit/audit.service'
-import { prisma, cleanDatabase, settlePendingWrites } from '../../test/db-helpers'
+import { prisma, cleanDatabase, waitForRow } from '../../test/db-helpers'
 
 const describeIfDb = process.env.DATABASE_TEST_URL ? describe : describe.skip
 
@@ -128,9 +128,12 @@ describeIfDb('RolesService (integration)', () => {
             const role = await service.create({ name: 'old-name', translations }, actorId, null)
 
             await service.update(role.data.id, { name: 'new-name' }, actorId, null)
-            await settlePendingWrites()
 
-            const row = await prisma.audit_logs.findFirst({ where: { action: 'ROLE_UPDATED', resource_id: role.data.id } })
+            // audit.write() is fire-and-forget (see audit.service.ts) — poll instead
+            // of asserting the row exists the instant update() resolves.
+            const row = await waitForRow(() =>
+                prisma.audit_logs.findFirst({ where: { action: 'ROLE_UPDATED', resource_id: role.data.id } }),
+            )
             expect((row!.changes as any).name).toEqual({ before: 'old-name', after: 'new-name' })
         })
     })
