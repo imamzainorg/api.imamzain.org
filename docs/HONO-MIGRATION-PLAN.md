@@ -100,7 +100,7 @@ These features could be **dropped entirely**, but only on the strength of Phase 
 | API traffic, 30 days | 24.6k requests (≈ 0.01 req/s), 5% cache hit, 98 MB. Origin 5xx 151 (≈ 0.6%, mostly 503 = 109), 4xx 15k (mostly 404 from bot scans of `/signin`, `/register`, `/login`) |
 | Top API routes | `/api/v1/health` 4.75k, `/api/v1/books` 814, `/api/v1/book-categories` 764, `/api/v1/daily-hadiths/today` 477 |
 | Whole zone `imamzain.org` | 975k requests, 327k to origin (website included, not API) |
-| p95 latency baseline | **not captured yet** |
+| p95 latency baseline | **API: not captured yet.** Website only (Cloudflare Web Analytics, 30 d, bots excluded): LCP p50 531 ms / p75 1,204 ms / p90 2,296 ms / p99 11,852 ms; INP 95% good; CLS 94% good. Take the API baseline with a TTFB script in Phase 1 |
 | Source / test lines | `src/` 27,537 (non-spec) · specs 19,930 · `prisma/` scripts 3,323 |
 
 Production DB counts:
@@ -124,15 +124,15 @@ Surprises:
 | D1 | Email transport | `worker-mailer` over Hostinger 465 for now; move to Cloudflare Email Service later, once the Worker is stable and on a paid plan | Confirmed |
 | D2 | Newsletter campaigns | **Drop** the campaigns module and its CMS screens. Keep subscribe / confirm / unsubscribe | Confirmed |
 | D3 | YouTube sync | Keep | Confirmed |
-| D4 | OpenAPI + `/docs` | **Drop.** Zod for validation only: no `@hono/zod-openapi`, no Scalar, no generated spec. `docs/integration.md` and the CMS notes stay the only API docs | Pending: this reverses my earlier "keep"; confirm |
-| D5 | Validation error text | Envelope keys **and the `error` message text stay identical**, because the CMS shows them to users when a transaction fails. The Zod hook maps to the Nest messages | Pending: changed from "text may change" |
+| D4 | OpenAPI + `/docs` | `@hono/zod-openapi` so Scalar at `/docs` is generated from the same Zod schemas that validate requests. The schemas are the only documentation code: request schemas required, response schemas only where cheap, no hand-written descriptions. `defineRoute()` wraps `createRoute`. Dropped if the generated docs turn out to need more than that | Confirmed |
+| D5 | Validation error text | Envelope keys **and the `error` message text stay identical**, because the CMS shows them to users when a transaction fails. The Zod hook maps to the Nest messages | Confirmed |
 | D6 | Rate limits | Binding with 60 s windows, DB limits unchanged, no Turnstile | Confirmed |
 | D7 | View dedup | Binding keyed on `ip:resource`; the website does call the view routes | Confirmed |
-| D8 | Caching public reads | None at first; add a cached Hyperdrive binding for public GETs only if p95 misses the target | Pending: explained |
-| D9 | Worker placement | Smart Placement on; Phase 1 measures it on and off | Pending: explained |
+| D8 | Caching public reads | None at first; add a cached Hyperdrive binding for public GETs only if API p95 misses the target in Phase 1 | Confirmed |
+| D9 | Worker placement | Smart Placement on; Phase 1 measures it on and off | Confirmed |
 | D10 | Prisma version | 6.x (≥ 6.16) until Nest is gone | Confirmed |
 | D11 | Origin during the migration | Render, via the `onrender.com` URL; nothing moves until the Hono app fully works | Confirmed |
-| D12 | Images above the binding's input cap | Every file stays in R2 untouched; images over the cap just get no WebP variants (the original is served). Phase 1 checks whether a larger cap is possible | Pending: explained |
+| D12 | Images above the binding's input cap | No image above 20 MB exists (the 29 large files are audio and PDF books), so nothing to do. If one is ever uploaded, keep the original and skip variants | Confirmed |
 | D13 | Sentry | **Drop**, rely on Workers Logs | Confirmed |
 
 Answers received:
