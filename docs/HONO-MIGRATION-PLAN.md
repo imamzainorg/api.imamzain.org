@@ -85,23 +85,66 @@ These features could be **dropped entirely**, but only on the strength of Phase 
 - view counting
 - dashboard stats
 
-## 4. Decisions (filled in during Phase 0)
+## 4. Phase 0 facts and decisions
 
-| # | Decision | Default | Decided by |
+### Facts recorded 2026-10-01
+
+| Item | Value |
+|---|---|
+| Origin host | Render, single instance, service URL `api-imamzain-org-0fiv.onrender.com` |
+| Proxying | `api.imamzain.org` is a proxied CNAME to the Render URL. Cache Rule: bypass for every `api.imamzain.org/*` URL |
+| Health check | `GET /api/v1/health`; an external cron-job.org ping hits it (≈ 4.7k of the 24.6k requests) |
+| `TRUST_PROXY_HOPS` | unset (= 1) while traffic is client → Cloudflare → Render. Throttle buckets and `audit_logs.ip_address` are therefore Cloudflare edge IPs today; CMS notes say `=2` is still open |
+| Redis | `REDIS_URL` never set in prod; in-process fallbacks are what runs |
+| `DISABLE_CRON` | unset. Crons fire: YouTube sync last ran 2026-10-01 00:00:57 |
+| API traffic, 30 days | 24.6k requests (≈ 0.01 req/s), 5% cache hit, 98 MB. Origin 5xx 151 (≈ 0.6%, mostly 503 = 109), 4xx 15k (mostly 404 from bot scans of `/signin`, `/register`, `/login`) |
+| Top API routes | `/api/v1/health` 4.75k, `/api/v1/books` 814, `/api/v1/book-categories` 764, `/api/v1/daily-hadiths/today` 477 |
+| Whole zone `imamzain.org` | 975k requests, 327k to origin (website included, not API) |
+| p95 latency baseline | **not captured yet** |
+| Source / test lines | `src/` 27,537 (non-spec) · specs 19,930 · `prisma/` scripts 3,323 |
+
+Production DB counts:
+- **Content:** audios 309, books 147, posts 79, speakers 63, stores 2 (4 locations), YouTube 314 videos / 25 playlists, users 1.
+- **Newsletter:** 1 subscriber (confirmed). 0 campaigns and 0 recipients ever.
+- **Forms:** contact 22 (4 in last 30 d), proxy visits 296 (295 PENDING, latest 2026-10-01).
+- **Contest:** 286 attempts, last 2026-09-03.
+- **Media:** 910 rows, but `file_size` holds a 1-byte placeholder (media was never hydrated), so image size is unknown.
+
+Surprises:
+- **Admin notification mail is mostly failing:** `notification_failed_at` is set on 309 of 318 form rows.
+- **Scheduled publishing has never been used:** 0 `POST_PUBLISHED` rows with `scheduled: true`.
+- **Views are not being counted:** `posts.views` sums to 0.
+
+### Decisions
+
+Status: recommended, awaiting confirmation.
+
+| # | Decision | Recommendation | Why |
 |---|---|---|---|
-| D1 | Email transport | Cloudflare Email Service (binding, no SMTP) for transactional mail. Fallback: `worker-mailer` over Hostinger port 465 | monthly volume (form notifications + subscribers × campaigns); Hostinger delivery record |
-| D2 | Newsletter campaigns | Keep only if campaigns were sent or are planned within 3 months: port the tick + lease model without the advisory lock. Otherwise drop the module and its CMS screens | counts in `newsletter_campaigns` and `newsletter_campaign_recipients` |
-| D3 | YouTube sync | keep | traffic on the public video/playlist routes |
-| D4 | OpenAPI + `/docs` | keep | — |
-| D5 | Validation error text | envelope keys identical; message text may change if the CMS only displays it | grep the CMS for error parsing |
-| D6 | Rate limits | binding with 60 s windows (limits generous, because Iraqi mobile networks share IPs); DB limits unchanged; Turnstile later only if abused | — |
-| D7 | View dedup | binding keyed on `ip:resource` | — |
-| D8 | Caching public reads | none; add a second, cached Hyperdrive binding for public GETs only if p95 misses the target | Phase 1 numbers |
-| D9 | Worker placement | Smart Placement on | Phase 1 numbers |
-| D10 | Prisma version | 6.x (≥ 6.16) until Nest is gone; Prisma 7 afterwards, optional | — |
-| D11 | Origin during the migration | the current host; Cloudflare Containers only if it's unreliable | current uptime |
-| D12 | Images above the binding's input cap (20 MB cap vs 25 MB uploads) | keep the original only, or lower the upload cap to 20 MB | largest rows in `media` |
-| D13 | Sentry | keep only if someone watches its alerts | — |
+| D1 | Email transport | Cloudflare Email Service; fallback `worker-mailer` over Hostinger 465 | volume is a handful of mails a month; but see the 309 failed notifications, which need explaining first (Q1) |
+| D2 | Newsletter campaigns | **Drop** the campaigns module and its CMS screens. Keep subscribe / confirm / unsubscribe | 0 campaigns ever, 1 subscriber (Q2) |
+| D3 | YouTube sync | Keep | synced daily, 314 videos, 25 playlists |
+| D4 | OpenAPI + `/docs` | Keep | the CMS handbook links it |
+| D5 | Validation error text | Keep envelope keys; message text may change | needs a grep of the CMS for error parsing (Q3) |
+| D6 | Rate limits | Binding with 60 s windows, DB limits unchanged, no Turnstile | traffic is tiny; bots only hit 404s |
+| D7 | View dedup | Keep the `POST …/view` routes, dedup with the binding on `ip:resource` | all views are 0 today, so either the site never calls them or they fail (Q4) |
+| D8 | Caching public reads | None | ≈ 0.01 req/s and Cloudflare bypasses the cache anyway |
+| D9 | Worker placement | Smart Placement on, confirm in Phase 1 | users are in Iraq; Supabase region unknown (Q5) |
+| D10 | Prisma version | 6.x (≥ 6.16) | — |
+| D11 | Origin during the migration | Render, via the `onrender.com` URL (not `api.imamzain.org`, which would loop through the Worker route) | 0.6% 5xx, mostly 503 (Q6) |
+| D12 | Images above 20 MB | Keep the original only, no contract change | sizes unknown until media is hydrated or R2 is listed (Q7) |
+| D13 | Sentry | **Drop**, rely on Workers Logs | not set up properly, nobody is watching |
+
+Open questions:
+- **Q1.** Do the "new form submission" emails reach `info@imamzain.org`? The DB says 309 of 318 were flagged failed.
+- **Q2.** Any newsletter campaign planned within 3 months?
+- **Q3.** Does the CMS display the API's `error` text or parse it?
+- **Q4.** Does the website call the `POST …/view` routes?
+- **Q5.** Which region is the Supabase project in?
+- **Q6.** Is Render on a free plan, so the 503s are cold starts?
+- **Q7.** What is the largest file in R2 and how many are over 20 MB?
+
+Not yet in hand: p95 latency baseline (Cloudflare → Analytics → Performance) and the full path list for the remaining route groups.
 
 ## 5. Phases
 
