@@ -8,9 +8,10 @@ interface Env {
   HYPERDRIVE: Hyperdrive;
 }
 
-// One client per request, as the real Worker will do.
+// One client per request, as the real Worker will do. max: 1 = one Hyperdrive connection
+// per request; the default pool opened several for parallel relation queries.
 function db(env: Env) {
-  const adapter = new PrismaPg({ connectionString: env.HYPERDRIVE.connectionString });
+  const adapter = new PrismaPg({ connectionString: env.HYPERDRIVE.connectionString, max: 1 });
   return new PrismaClient({ adapter });
 }
 

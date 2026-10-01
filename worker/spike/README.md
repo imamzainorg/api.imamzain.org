@@ -29,7 +29,7 @@ npx wrangler deploy      # runs on Workers Free; bundle is 876 KiB gzip (limit 3
 ./check.sh https://imamzain-spike.<your-subdomain>.workers.dev
 ```
 
-Expected output: every check route prints `"pass": true`, and `/ping` returns a Postgres 17 version.
+Expected output: every check route prints `"pass": true`. `/ping` has no pass field; it returns the Postgres version.
 CPU per request is in the dashboard under Workers → imamzain-spike → Observability (`cpuTimeMs`).
 
 ## Results (2026-10-01)
@@ -67,9 +67,33 @@ Where the cost goes: about **8.5 ms per request is Prisma client setup**. On eve
 
 **Every Prisma route is over the Free plan's 10 ms in this measurement.** Confirm with the deployed numbers.
 
-### Check 1: Hyperdrive → Supabase
+### Deployed: `imamzain-spike.imamzainalabdeen1.workers.dev` → Hyperdrive → Supabase prod
 
-Not exercised from this session: the cloud environment's network policy blocks `api.cloudflare.com` and `*.workers.dev`. What is known:
+**Check 1: pass, with a connection-limit problem.**
+- The Worker reaches prod through the Supavisor session pooler (`aws-1-eu-north-1.pooler.supabase.com:5432`). `/ping` returns Postgres 17.6, and `/tx-error` counts 79 posts, which matches prod.
+- **Problem:** under load, Supavisor rejects connections with `EMAXCONNSESSION: max clients reached in session mode, limited to pool_size: 15`. A related error is `Connection terminated unexpectedly`. Two changes reduce it but don't remove it:
+  - The adapter now uses `max: 1`, so each request opens one connection. Before, Prisma's parallel relation queries opened several.
+  - Hyperdrive's `origin_connection_limit` was lowered from 20 to 10. It is a soft limit, applied per Hyperdrive location.
+  - Result: 25/25 sequential `/find-many` calls passed. Under 10-way concurrency, 44 of 50 passed.
+- **Fix:** give Hyperdrive more origin headroom than session mode's 15. Use the direct connection (bounded by `max_connections` = 60), or raise the pool size.
 
-- Hyperdrive `imamzain-db` points at the **Supavisor session pooler**, `aws-1-eu-north-1.pooler.supabase.com:5432`, user `postgres.rvvemsbkencpoltrhqyb`. Caching is off and the origin connection limit is 20. Hyperdrive tests the origin connection when it creates the config, so the pooler accepted it.
-- Supabase project `rvvemsbkencpoltrhqyb` is in **eu-north-1 (Stockholm)**, not Frankfurt. It runs Postgres 17 with pg_trgm 1.6. `max_connections` is 60, with 29 in use when checked.
+**Check 2: all five routes pass against prod data.** prisma/orm#30374 did not reproduce in 25 sequential runs.
+
+**CPU per request, production** (from `wrangler tail`, 25 requests per route, ms):
+
+| Route | min | median | p90 | max | wall median |
+|---|---|---|---|---|---|
+| `pg-select1` (no Prisma) | 2 | 2 | 5 | 16 | 113 |
+| `connect-only` | 9 | 12 | 21 | 50 | 13 |
+| `select1` | 12 | 16 | 32 | 99 | 126 |
+| `select1x5` | 15 | 20 | 30 | 45 | 554 |
+| `ping` | 11 | 14 | 18 | 84 | 126 |
+| `similarity` | 12 | 14 | 20 | 38 | 147 |
+| `bigint` | 15 | 20 | 36 | 57 | 345 |
+| `tx` | 18 | 25 | 49 | 67 | 783 |
+| `find-many` (n=187) | 11 | 24 | 95 | 208 | 449 |
+| `tx-error` | 31 | 37 | 63 | 71 | 1739 |
+
+- **CPU:** every Prisma route is over 10 ms at the median. About 10–12 ms of that is Prisma's per-request setup (`connect-only`); plain `pg` costs 2 ms.
+- **No kills:** none of the roughly 440 requests ended as `exceededCpu`; every tail outcome was `ok`.
+- **Wall time:** about 110 ms per round trip to Stockholm without Smart Placement, so the interactive transactions take 0.8–1.7 s. Check 6 measures placement.
