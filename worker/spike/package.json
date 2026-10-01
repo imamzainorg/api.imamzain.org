@@ -1,0 +1,19 @@
+{
+  "name": "imamzain-spike",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "generate": "prisma generate",
+    "dev": "wrangler dev",
+    "deploy": "prisma generate && wrangler deploy"
+  },
+  "dependencies": {
+    "@prisma/adapter-pg": "6.19.3",
+    "@prisma/client": "6.19.3",
+    "pg": "8.23.1"
+  },
+  "devDependencies": {
+    "prisma": "6.19.3",
+    "wrangler": "4.145.0"
+  }
+}

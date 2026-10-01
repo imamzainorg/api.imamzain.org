@@ -1,0 +1,959 @@
+// Spike-only copy of ../../prisma/schema.prisma with a Workers generator.
+generator client {
+  provider   = "prisma-client"
+  output     = "../src/generated/prisma"
+  runtime    = "cloudflare"
+  engineType = "client"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+model academic_paper_categories {
+  id                                   String                                 @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  created_at                           DateTime                               @default(now()) @db.Timestamptz(6)
+  deleted_at                           DateTime?                              @db.Timestamptz(6)
+  academic_paper_category_translations academic_paper_category_translations[]
+  academic_papers                      academic_papers[]
+}
+
+model academic_paper_category_translations {
+  category_id               String                    @db.Uuid
+  lang                      String                    @db.Char(2)
+  title                     String
+  slug                      String
+  description               String?
+  academic_paper_categories academic_paper_categories @relation(fields: [category_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  languages                 languages                 @relation(fields: [lang], references: [code], onDelete: Cascade, onUpdate: NoAction)
+
+  @@id([category_id, lang])
+  @@unique([lang, slug])
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+model academic_paper_translations {
+  paper_id          String          @db.Uuid
+  lang              String          @db.Char(2)
+  title             String
+  abstract          String?
+  authors           String[]        @default([])
+  keywords          String[]        @default([])
+  publication_venue String?
+  page_count        Int?
+  is_default        Boolean         @default(false)
+  languages         languages       @relation(fields: [lang], references: [code], onDelete: Cascade, onUpdate: NoAction)
+  academic_papers   academic_papers @relation(fields: [paper_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@id([paper_id, lang])
+  @@index([abstract(ops: raw("gin_trgm_ops"))], map: "idx_academic_paper_translations_abstract_trgm", type: Gin)
+  @@index([title(ops: raw("gin_trgm_ops"))], map: "idx_academic_paper_translations_title_trgm", type: Gin)
+}
+
+model academic_papers {
+  id                          String                        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  category_id                 String                        @db.Uuid
+  published_year              String?
+  pdf_url                     String?
+  uploaded_by                 String?                       @db.Uuid
+  views                       BigInt                        @default(0)
+  // What language the actual PDF is written in (migration 20260819120000) —
+  // distinct from academic_paper_translations.lang (the title text's
+  // language). See the books.document_languages comment for the full split.
+  document_languages          String[]                      @default([])
+  is_published                Boolean                       @default(true)
+  created_at                  DateTime                      @default(now()) @db.Timestamptz(6)
+  updated_at                  DateTime                      @default(now()) @db.Timestamptz(6)
+  deleted_at                  DateTime?                     @db.Timestamptz(6)
+  academic_paper_translations academic_paper_translations[]
+  academic_paper_categories   academic_paper_categories     @relation(fields: [category_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  users                       users?                        @relation(fields: [uploaded_by], references: [id], onUpdate: NoAction)
+
+  @@index([category_id], map: "idx_academic_papers_category")
+  @@index([uploaded_by], map: "idx_academic_papers_uploaded")
+}
+
+model audit_logs {
+  id            String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  user_id       String?  @db.Uuid
+  action        String
+  resource_type String
+  resource_id   String?
+  changes       Json?
+  ip_address    String?  @db.Inet
+  user_agent    String?
+  created_at    DateTime @default(now()) @db.Timestamptz(6)
+  users         users?   @relation(fields: [user_id], references: [id], onUpdate: NoAction)
+
+  @@index([action], map: "idx_audit_logs_action")
+  @@index([created_at(sort: Desc)], map: "idx_audit_logs_created_at")
+  @@index([resource_type, resource_id], map: "idx_audit_logs_resource")
+  @@index([user_id], map: "idx_audit_logs_user_id")
+}
+
+model book_categories {
+  id                         String                       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  created_at                 DateTime                     @default(now()) @db.Timestamptz(6)
+  deleted_at                 DateTime?                    @db.Timestamptz(6)
+  book_category_translations book_category_translations[]
+  books                      books[]
+}
+
+model book_category_translations {
+  category_id     String          @db.Uuid
+  lang            String          @db.Char(2)
+  title           String
+  slug            String
+  description     String?
+  book_categories book_categories @relation(fields: [category_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  languages       languages       @relation(fields: [lang], references: [code], onDelete: Cascade, onUpdate: NoAction)
+
+  @@id([category_id, lang])
+  @@unique([lang, slug])
+}
+
+model book_translations {
+  book_id          String    @db.Uuid
+  lang             String    @db.Char(2)
+  title            String
+  author           String?
+  publisher        String?
+  description      String?
+  series           String?
+  is_default       Boolean   @default(false)
+  meta_title       String?
+  meta_description String?
+  og_image_id      String?   @db.Uuid
+  books            books     @relation(fields: [book_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  languages        languages @relation(fields: [lang], references: [code], onDelete: Cascade, onUpdate: NoAction)
+  og_image         media?    @relation("book_translation_og_image", fields: [og_image_id], references: [id], onUpdate: NoAction)
+
+  @@id([book_id, lang])
+  @@index([og_image_id], map: "idx_book_translations_og_image")
+  @@index([author(ops: raw("gin_trgm_ops"))], map: "idx_book_translations_author_trgm", type: Gin)
+  @@index([description(ops: raw("gin_trgm_ops"))], map: "idx_book_translations_description_trgm", type: Gin)
+  @@index([title(ops: raw("gin_trgm_ops"))], map: "idx_book_translations_title_trgm", type: Gin)
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+model books {
+  id                String              @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  category_id       String              @db.Uuid
+  cover_image_id    String              @db.Uuid
+  isbn              String?             @unique
+  pages             Int?
+  publish_year      String?
+  pdf_url           String?
+  // Set together or not at all, and part_number <= parts — CHECK
+  // chk_books_parts (migration 20260917110000; mirrored in books.service.ts so
+  // the editor gets a readable 400). Among the LIVE parts of one series
+  // part_number is unique: partial index uq_books_parent_part_number
+  // (parent_id, part_number) WHERE parent_id IS NOT NULL AND part_number IS
+  // NOT NULL AND deleted_at IS NULL — not expressible in Prisma's DSL, so it
+  // lives in that migration only.
+  part_number       Int?
+  parts             Int?
+  // Content-slug consolidation complete (Phase A: migration 20260818130000;
+  // Phase B unique index: migration 20260819100000; Phase C cutover + drop of the
+  // old book_translations.slug column: migration 20260819110000). Single,
+  // language-agnostic, optional editor slug — see uq_books_slug.
+  slug              String?
+  views             BigInt              @default(0)
+  is_published      Boolean             @default(true)
+  // What language(s) the actual PDF is written in (migration 20260819120000)
+  // — distinct from book_translations.lang, which is the title/author text's
+  // language. Array: bilingual editions are real in this library.
+  document_languages String[]           @default([])
+  // Multi-part series support (migration 20260908120000). NULL for a normal
+  // standalone book. When set, this row is one part of the series whose
+  // "cover" record (title/author/category/cover image, no PDF of its own) is
+  // the parent — see the self-relation below. Exactly one level deep: a part
+  // can never itself be a parent (enforced in books.service.ts, not the DB).
+  parent_id          String?             @db.Uuid
+  // True when this book belongs to the institution's "الإصدارات" (flagship
+  // Publications) release list — a cross-cutting flag, independent of
+  // category_id's topical classification. Added because the legacy source
+  // data lets a book carry BOTH a topic and "الإصدارات" (e.g. a Sahifa
+  // Sajjadiya commentary that is also one of the institution's Publications),
+  // which category_id alone can't represent.
+  is_publication     Boolean             @default(false)
+  created_at        DateTime            @default(now()) @db.Timestamptz(6)
+  updated_at        DateTime            @default(now()) @db.Timestamptz(6)
+  added_by          String?             @db.Uuid
+  deleted_at        DateTime?           @db.Timestamptz(6)
+  book_translations book_translations[]
+  users             users?              @relation(fields: [added_by], references: [id], onUpdate: NoAction)
+  book_categories   book_categories     @relation(fields: [category_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  media             media               @relation(fields: [cover_image_id], references: [id], onUpdate: NoAction)
+  parent            books?              @relation("BookParts", fields: [parent_id], references: [id], onDelete: SetNull, onUpdate: NoAction)
+  parts_rel         books[]             @relation("BookParts")
+
+  @@index([added_by], map: "idx_books_added_by")
+  @@index([category_id], map: "idx_books_category")
+  @@index([parent_id], map: "idx_books_parent_id")
+  @@index([is_publication], map: "idx_books_is_publication")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+model contact_submissions {
+  id                     String         @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name                   String
+  email                  String         @db.Citext
+  country                String?        @db.Char(2)
+  message                String
+  status                 contact_status @default(NEW)
+  submitted_at           DateTime       @default(now()) @db.Timestamptz(6)
+  responded_at           DateTime?      @db.Timestamptz(6)
+  responded_by           String?        @db.Uuid
+  notes                  String?
+  deleted_at             DateTime?      @db.Timestamptz(6)
+  notification_failed_at DateTime?      @db.Timestamptz(6)
+  // When the admin team was told about this row (migration 20260917120000).
+  // NULL = still waiting in the notification outbox; see
+  // src/forms/form-notifications.service.ts.
+  notified_at            DateTime?      @db.Timestamptz(6)
+  users                  users?         @relation(fields: [responded_by], references: [id], onUpdate: NoAction)
+
+  @@index([responded_by], map: "idx_contact_responded_by")
+  @@index([status], map: "idx_contact_status")
+}
+
+model gallery_categories {
+  id                            String                          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  created_at                    DateTime                        @default(now()) @db.Timestamptz(6)
+  deleted_at                    DateTime?                       @db.Timestamptz(6)
+  gallery_category_translations gallery_category_translations[]
+  gallery_images                gallery_images[]
+}
+
+model gallery_category_translations {
+  category_id        String             @db.Uuid
+  lang               String             @db.Char(2)
+  title              String
+  slug               String
+  description        String?
+  gallery_categories gallery_categories @relation(fields: [category_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  languages          languages          @relation(fields: [lang], references: [code], onDelete: Cascade, onUpdate: NoAction)
+
+  @@id([category_id, lang])
+  @@unique([lang, slug])
+}
+
+model gallery_image_translations {
+  media_id         String         @db.Uuid
+  lang             String         @db.Char(2)
+  title            String
+  description      String?
+  meta_title       String?
+  meta_description String?
+  og_image_id      String?        @db.Uuid
+  languages        languages      @relation(fields: [lang], references: [code], onDelete: Cascade, onUpdate: NoAction)
+  og_image         media?         @relation("gallery_image_translation_og_image", fields: [og_image_id], references: [id], onUpdate: NoAction)
+  gallery_images   gallery_images @relation(fields: [media_id], references: [media_id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@id([media_id, lang])
+  @@index([og_image_id], map: "idx_gallery_image_translations_og_image")
+  @@index([description(ops: raw("gin_trgm_ops"))], map: "idx_gallery_image_translations_description_trgm", type: Gin)
+  @@index([title(ops: raw("gin_trgm_ops"))], map: "idx_gallery_image_translations_title_trgm", type: Gin)
+}
+
+model gallery_images {
+  media_id                   String                       @id @db.Uuid
+  category_id                String?                      @db.Uuid
+  taken_at                   DateTime?                    @db.Date
+  author                     String?
+  tags                       String[]                     @default([])
+  locations                  String[]                     @default([])
+  views                      BigInt                       @default(0)
+  is_published               Boolean                      @default(true)
+  created_at                 DateTime                     @default(now()) @db.Timestamptz(6)
+  updated_at                 DateTime                     @default(now()) @db.Timestamptz(6)
+  added_by                   String?                      @db.Uuid
+  deleted_at                 DateTime?                    @db.Timestamptz(6)
+  gallery_image_translations gallery_image_translations[]
+  users                      users?                       @relation(fields: [added_by], references: [id], onUpdate: NoAction)
+  gallery_categories         gallery_categories?          @relation(fields: [category_id], references: [id], onUpdate: NoAction)
+  media                      media                        @relation(fields: [media_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@index([added_by], map: "idx_gallery_images_added_by")
+  @@index([category_id], map: "idx_gallery_images_category")
+  @@index([locations], map: "idx_gallery_images_locations_gin", type: Gin)
+  @@index([tags], map: "idx_gallery_images_tags_gin", type: Gin)
+  @@index([taken_at], map: "idx_gallery_images_taken_at")
+}
+
+model languages {
+  code                                 String                                 @id @db.Char(2)
+  name                                 String
+  native_name                          String
+  is_active                            Boolean                                @default(true)
+  deleted_at                           DateTime?                              @db.Timestamptz(6)
+  academic_paper_category_translations academic_paper_category_translations[]
+  academic_paper_translations          academic_paper_translations[]
+  audio_translations                   audio_translations[]
+  book_category_translations           book_category_translations[]
+  book_translations                    book_translations[]
+  daily_hadith_translations            daily_hadith_translations[]
+  gallery_category_translations        gallery_category_translations[]
+  gallery_image_translations           gallery_image_translations[]
+  permission_translations              permission_translations[]
+  post_category_translations           post_category_translations[]
+  post_translations                    post_translations[]
+  role_translations                    role_translations[]
+  speaker_translations                 speaker_translations[]
+  static_page_translations             static_page_translations[]
+  store_location_translations          store_location_translations[]
+  store_translations                   store_translations[]
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+model media {
+  id                           String                       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  filename                     String
+  alt_text                     String?
+  url                          String                       @unique
+  mime_type                    String
+  file_size                    BigInt
+  width                        Int?
+  height                       Int?
+  created_at                   DateTime                     @default(now()) @db.Timestamptz(6)
+  uploaded_by                  String?                      @db.Uuid
+  book_translation_og          book_translations[]          @relation("book_translation_og_image")
+  books                        books[]
+  gallery_images               gallery_images?
+  gallery_image_translation_og gallery_image_translations[] @relation("gallery_image_translation_og_image")
+  users                        users?                       @relation(fields: [uploaded_by], references: [id], onUpdate: NoAction)
+  media_variants               media_variants[]
+  post_attachments             post_attachments[]
+  post_translation_og          post_translations[]          @relation("post_translation_og_image")
+  posts                        posts[]
+  static_page_translation_og   static_page_translations[]   @relation("static_page_translation_og_image")
+
+  @@index([uploaded_by], map: "idx_media_uploaded_by")
+  @@index([alt_text(ops: raw("gin_trgm_ops"))], map: "idx_media_alt_text_trgm", type: Gin)
+  @@index([filename(ops: raw("gin_trgm_ops"))], map: "idx_media_filename_trgm", type: Gin)
+  @@index([mime_type], map: "idx_media_mime_type")
+  @@index([created_at(sort: Desc)], map: "idx_media_created_at")
+}
+
+model media_variants {
+  id         String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  media_id   String   @db.Uuid
+  width      Int
+  url        String
+  file_size  BigInt
+  format     String   @default("webp")
+  created_at DateTime @default(now()) @db.Timestamptz(6)
+  media      media    @relation(fields: [media_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@unique([media_id, width])
+  @@index([media_id], map: "idx_media_variants_media_id")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+model newsletter_subscribers {
+  id                             String                           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  email                          String                           @unique @db.Citext
+  is_active                      Boolean                          @default(true)
+  subscribed_at                  DateTime                         @default(now()) @db.Timestamptz(6)
+  unsubscribed_at                DateTime?                        @db.Timestamptz(6)
+  deleted_at                     DateTime?                        @db.Timestamptz(6)
+  // Double opt-in (migration 20260917130000). confirmed_at is when the CURRENT
+  // consent was given — the subscriber clicking the link in the confirmation
+  // e-mail — and is re-stamped on every re-confirmation. NULL with is_active =
+  // false and unsubscribed_at NULL means "signed up, never confirmed".
+  // confirmation_sent_at is the last time that e-mail was claimed for sending;
+  // it drives the resend cool-down, the global hourly cap and the token.
+  // CHECK chk_newsletter_subscriber_active: is_active implies unsubscribed_at
+  // IS NULL AND deleted_at IS NULL (replaces the untracked chk_subscriber_state).
+  confirmed_at                   DateTime?                        @db.Timestamptz(6)
+  confirmation_sent_at           DateTime?                        @db.Timestamptz(6)
+  newsletter_campaign_recipients newsletter_campaign_recipients[]
+}
+
+model permission_translations {
+  permission_id String      @db.Uuid
+  lang          String      @db.Char(2)
+  title         String
+  description   String?
+  languages     languages   @relation(fields: [lang], references: [code], onDelete: Cascade, onUpdate: NoAction)
+  permissions   permissions @relation(fields: [permission_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@id([permission_id, lang])
+}
+
+model permissions {
+  id                      String                    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name                    String                    @unique
+  permission_translations permission_translations[]
+  role_permissions        role_permissions[]
+}
+
+model post_attachments {
+  post_id       String @db.Uuid
+  media_id      String @db.Uuid
+  display_order Int    @default(0)
+  media         media  @relation(fields: [media_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  posts         posts  @relation(fields: [post_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@id([post_id, media_id])
+  @@index([post_id, display_order], map: "idx_post_attachments_order")
+  @@index([post_id], map: "idx_post_attachments_post")
+}
+
+model post_categories {
+  id                         String                       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  created_at                 DateTime                     @default(now()) @db.Timestamptz(6)
+  deleted_at                 DateTime?                    @db.Timestamptz(6)
+  post_category_translations post_category_translations[]
+  posts                      posts[]
+}
+
+model post_category_translations {
+  category_id     String          @db.Uuid
+  lang            String          @db.Char(2)
+  title           String
+  slug            String
+  description     String?
+  post_categories post_categories @relation(fields: [category_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  languages       languages       @relation(fields: [lang], references: [code], onDelete: Cascade, onUpdate: NoAction)
+
+  @@id([category_id, lang])
+  @@unique([lang, slug])
+}
+
+model post_translations {
+  post_id          String    @db.Uuid
+  lang             String    @db.Char(2)
+  title            String
+  summary          String?
+  body             String
+  is_default       Boolean   @default(false)
+  meta_title       String?
+  meta_description String?
+  og_image_id      String?   @db.Uuid
+  languages        languages @relation(fields: [lang], references: [code], onDelete: Cascade, onUpdate: NoAction)
+  og_image         media?    @relation("post_translation_og_image", fields: [og_image_id], references: [id], onUpdate: NoAction)
+  posts            posts     @relation(fields: [post_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@id([post_id, lang])
+  @@index([og_image_id], map: "idx_post_translations_og_image")
+  @@index([body(ops: raw("gin_trgm_ops"))], map: "idx_post_translations_body_trgm", type: Gin)
+  @@index([title(ops: raw("gin_trgm_ops"))], map: "idx_post_translations_title_trgm", type: Gin)
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+model posts {
+  id                String              @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  category_id       String              @db.Uuid
+  cover_image_id    String?             @db.Uuid
+  published_at      DateTime?           @db.Timestamptz(6)
+  is_published      Boolean             @default(false)
+  // Content-slug consolidation complete (Phase A: migration 20260818130000;
+  // Phase B unique index: migration 20260819100000; Phase C cutover + drop of the
+  // old post_translations.slug column: migration 20260819110000). This is the
+  // single, language-agnostic canonical slug — see uq_posts_slug.
+  slug              String
+  views             BigInt              @default(0)
+  created_at        DateTime            @default(now()) @db.Timestamptz(6)
+  updated_at        DateTime            @default(now()) @db.Timestamptz(6)
+  created_by        String?             @db.Uuid
+  deleted_at        DateTime?           @db.Timestamptz(6)
+  is_featured       Boolean             @default(false)
+  post_attachments  post_attachments[]
+  post_translations post_translations[]
+  post_categories   post_categories     @relation(fields: [category_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  media             media?              @relation(fields: [cover_image_id], references: [id], onUpdate: NoAction)
+  users             users?              @relation(fields: [created_by], references: [id], onUpdate: NoAction)
+
+  @@index([category_id], map: "idx_posts_category")
+  @@index([created_by], map: "idx_posts_created_by")
+  @@index([is_published, published_at], map: "idx_posts_published")
+  @@index([cover_image_id], map: "idx_posts_cover_image")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+model proxy_visit_requests {
+  id                     String             @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name                   String
+  phone                  String?
+  country                String?            @db.Char(2)
+  status                 proxy_visit_status @default(PENDING)
+  submitted_at           DateTime           @default(now()) @db.Timestamptz(6)
+  processed_at           DateTime?          @db.Timestamptz(6)
+  processed_by           String?            @db.Uuid
+  notes                  String?
+  deleted_at             DateTime?          @db.Timestamptz(6)
+  notification_failed_at DateTime?          @db.Timestamptz(6)
+  // See contact_submissions.notified_at.
+  notified_at            DateTime?          @db.Timestamptz(6)
+  users                  users?             @relation(fields: [processed_by], references: [id], onUpdate: NoAction)
+
+  @@index([processed_by], map: "idx_proxy_visit_processed_by")
+  @@index([status], map: "idx_proxy_visit_status")
+}
+
+model role_permissions {
+  role_id       String      @db.Uuid
+  permission_id String      @db.Uuid
+  permissions   permissions @relation(fields: [permission_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  roles         roles       @relation(fields: [role_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@id([role_id, permission_id])
+}
+
+model role_translations {
+  role_id     String    @db.Uuid
+  lang        String    @db.Char(2)
+  title       String
+  description String?
+  languages   languages @relation(fields: [lang], references: [code], onDelete: Cascade, onUpdate: NoAction)
+  roles       roles     @relation(fields: [role_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@id([role_id, lang])
+}
+
+model roles {
+  id                String              @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name              String              @unique
+  role_permissions  role_permissions[]
+  role_translations role_translations[]
+  user_roles        user_roles[]
+}
+
+model user_roles {
+  user_id String @db.Uuid
+  role_id String @db.Uuid
+  roles   roles  @relation(fields: [role_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  users   users  @relation(fields: [user_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@id([user_id, role_id])
+}
+
+model users {
+  id                    String                  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  username              String                  @unique
+  password_hash         String
+  created_at            DateTime                @default(now()) @db.Timestamptz(6)
+  updated_at            DateTime                @default(now()) @db.Timestamptz(6)
+  deleted_at            DateTime?               @db.Timestamptz(6)
+  token_version         Int                     @default(1)
+  // Set by an admin password reset, cleared when the user changes their own
+  // password. Surfaced on login and /auth/me; enforced server-side only when
+  // ENFORCE_PASSWORD_CHANGE_AFTER_RESET=true (migration 20260924100000).
+  must_change_password  Boolean                 @default(false)
+  academic_papers       academic_papers[]
+  audios                audios[]
+  audit_logs            audit_logs[]
+  books                 books[]
+  contact_submissions   contact_submissions[]
+  gallery_images        gallery_images[]
+  media                 media[]
+  newsletter_campaigns  newsletter_campaigns[]
+  pending_media_uploads pending_media_uploads[]
+  posts                 posts[]
+  proxy_visit_requests  proxy_visit_requests[]
+  refresh_tokens        refresh_tokens[]
+  site_settings_updated site_settings[]         @relation("site_settings_updated_by")
+  user_roles            user_roles[]
+}
+
+model daily_hadiths {
+  id                        String                      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  // Uniqueness enforced at the DB level by a PARTIAL index (WHERE
+  // display_date IS NOT NULL AND deleted_at IS NULL) so a soft-deleted
+  // hadith frees its date for reuse -- see migration 20260906120000.
+  // Not annotated @unique here: Prisma's schema DSL can't express a
+  // partial index, and no code path needs a Prisma-level findUnique on
+  // this column (lookups use findFirst).
+  display_date              DateTime?                   @db.Date
+  created_at                DateTime                    @default(now()) @db.Timestamptz(6)
+  updated_at                DateTime                    @default(now()) @db.Timestamptz(6)
+  deleted_at                DateTime?                   @db.Timestamptz(6)
+  daily_hadith_random_picks daily_hadith_random_picks[]
+  daily_hadith_translations daily_hadith_translations[]
+}
+
+// One row per site-timezone calendar day (SITE_TIMEZONE, default Asia/Baghdad) that had nothing scheduled, recording which
+// hadith the random fallback drew that day. Written once, the first time
+// that day's /today is resolved with no scheduled hadith; every later
+// request the same day reads this instead of drawing again, so all
+// visitors see the same random pick. Deliberately separate from
+// display_date: this is a system-recorded fact about a day, never an
+// editor's scheduling decision, and being drawn here never sets a
+// hadith's own display_date.
+model daily_hadith_random_picks {
+  pick_date     DateTime       @id @db.Date
+  hadith_id     String?        @db.Uuid
+  locked_at     DateTime       @default(now()) @db.Timestamptz(6)
+  daily_hadiths daily_hadiths? @relation(fields: [hadith_id], references: [id], onDelete: SetNull, onUpdate: NoAction)
+
+  @@index([hadith_id], map: "idx_daily_hadith_random_picks_hadith")
+}
+
+model daily_hadith_translations {
+  id            String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  hadith_id     String        @db.Uuid
+  lang          String        @db.Char(2)
+  content       String
+  source        String?
+  daily_hadiths daily_hadiths @relation(fields: [hadith_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  languages     languages     @relation(fields: [lang], references: [code], onDelete: Cascade, onUpdate: NoAction)
+
+  @@unique([hadith_id, lang])
+}
+
+model youtube_videos {
+  id                     String                   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  video_id               String                   @unique
+  title                  String
+  description            String?
+  thumbnail_url          String?
+  channel_id             String
+  channel_title          String?
+  published_at           DateTime?                @db.Timestamptz(6)
+  duration               String?
+  view_count             BigInt?
+  like_count             BigInt?
+  last_synced_at         DateTime                 @default(now()) @db.Timestamptz(6)
+  youtube_playlist_items youtube_playlist_items[]
+
+  @@index([published_at(sort: Desc)], map: "idx_youtube_videos_published")
+}
+
+model youtube_playlists {
+  id                     String                   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  playlist_id            String                   @unique
+  title                  String
+  description            String?
+  thumbnail_url          String?
+  item_count             Int?
+  channel_id             String
+  published_at           DateTime?                @db.Timestamptz(6)
+  last_synced_at         DateTime                 @default(now()) @db.Timestamptz(6)
+  youtube_playlist_items youtube_playlist_items[]
+
+  @@index([published_at(sort: Desc)], map: "idx_youtube_playlists_published")
+}
+
+model youtube_playlist_items {
+  playlist_id       String            @db.Uuid
+  video_id          String            @db.Uuid
+  position          Int
+  youtube_playlists youtube_playlists @relation(fields: [playlist_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  youtube_videos    youtube_videos    @relation(fields: [video_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@id([playlist_id, video_id])
+  @@index([playlist_id, position], map: "idx_youtube_playlist_items_position")
+}
+
+model site_settings {
+  key         String            @id
+  value       String
+  type        site_setting_type @default(string)
+  description String?
+  is_public   Boolean           @default(false)
+  updated_at  DateTime          @default(now()) @db.Timestamptz(6)
+  updated_by  String?           @db.Uuid
+  users       users?            @relation("site_settings_updated_by", fields: [updated_by], references: [id], onUpdate: NoAction)
+}
+
+model qutuf_sajjadiya_contest_attempts {
+  id                           String                            @id(map: "contest_entries_pkey") @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name                         String?
+  email                        String?
+  started_at                   DateTime?                         @db.Timestamptz(6)
+  submitted_at                 DateTime?                         @default(now()) @db.Timestamptz(6)
+  ip                           String?
+  user_agent                   String?
+  final_score                  Int?
+  phone                        String?
+  qutufSajjadiyaContestAnswers qutuf_sajjadiya_contest_answers[]
+
+  @@index([started_at(sort: Desc)], map: "idx_contest_attempts_started_at")
+}
+
+model qutuf_sajjadiya_contest_questions {
+  id                              String                            @id(map: "contest_questions_pkey")
+  question                        String
+  option_a                        String
+  option_b                        String
+  option_c                        String
+  option_d                        String
+  correct_answer                  String
+  qutuf_sajjadiya_contest_answers qutuf_sajjadiya_contest_answers[]
+}
+
+model qutuf_sajjadiya_contest_answers {
+  id                                String                            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  attempt_id                        String                            @db.Uuid
+  question_id                       String
+  selected                          String
+  is_correct                        Boolean
+  attempt                           qutuf_sajjadiya_contest_attempts  @relation(fields: [attempt_id], references: [id], onDelete: Cascade, map: "qutuf_answers_attempt_id_fkey")
+  qutuf_sajjadiya_contest_questions qutuf_sajjadiya_contest_questions @relation(fields: [question_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "qutuf_answers_question_id_fkey")
+
+  @@unique([attempt_id, question_id], map: "qutuf_answers_unique_attempt_question")
+  @@index([attempt_id], map: "idx_qutuf_answers_attempt_id")
+}
+
+model pending_media_uploads {
+  id           String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  key          String   @unique(map: "uq_pending_media_key")
+  requested_by String?  @db.Uuid
+  requested_at DateTime @default(now()) @db.Timestamptz(6)
+  expires_at   DateTime @default(dbgenerated("(now() + '00:15:00'::interval)")) @db.Timestamptz(6)
+  users        users?   @relation(fields: [requested_by], references: [id], onUpdate: NoAction)
+
+  @@index([expires_at], map: "idx_pending_media_expires")
+}
+
+// One row per issued refresh token. Rotation keeps a session's tokens together
+// in a "family" (family_id): login mints a new family, every rotation inherits
+// it, and reuse of an already-rotated token revokes THAT family only (migration
+// 20260924100000). replaced_by_id is set on the old row when it is rotated; a
+// revoked row without it was ended by logout / a password change, not rotated.
+// It is deliberately not a foreign key: the daily sweep deletes rows
+// independently and a dangling pointer must not block it.
+model refresh_tokens {
+  id             String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  user_id        String    @db.Uuid
+  token_hash     String    @unique(map: "uq_refresh_tokens_hash")
+  expires_at     DateTime  @db.Timestamptz(6)
+  created_at     DateTime  @default(now()) @db.Timestamptz(6)
+  revoked_at     DateTime? @db.Timestamptz(6)
+  family_id      String    @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  replaced_by_id String?   @db.Uuid
+  users          users     @relation(fields: [user_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@index([expires_at], map: "idx_refresh_tokens_expires_at")
+  @@index([family_id], map: "idx_refresh_tokens_family_id")
+  @@index([user_id], map: "idx_refresh_tokens_user_id")
+}
+
+// Per-username login back-off (migration 20260917100000). Keyed by the
+// SHA-256 of the lower-cased username — never the attempted string itself,
+// which is often a mistyped password — and kept for unknown usernames too so
+// lockout behaviour can't be used to enumerate accounts. See
+// src/auth/login-throttle.service.ts.
+model login_attempts {
+  username_key    String    @id
+  failed_count    Int       @default(0)
+  first_failed_at DateTime  @default(now()) @db.Timestamptz(6)
+  last_failed_at  DateTime  @default(now()) @db.Timestamptz(6)
+  locked_until    DateTime? @db.Timestamptz(6)
+
+  @@index([last_failed_at], map: "idx_login_attempts_last_failed")
+}
+
+model newsletter_campaign_recipients {
+  campaign_id            String                 @db.Uuid
+  subscriber_id          String                 @db.Uuid
+  sent_at                DateTime?              @db.Timestamptz(6)
+  failed_at              DateTime?              @db.Timestamptz(6)
+  error_message          String?
+  // Delivery bookkeeping (migration 20260917130000). A row is PENDING while
+  // sent_at and failed_at are both NULL. attempts / next_retry_at implement
+  // back-off for transient SMTP failures; claimed_until is a short lease the
+  // sender takes before each SMTP call so no two workers mail the same row.
+  attempts               Int                    @default(0)
+  next_retry_at          DateTime?              @db.Timestamptz(6)
+  claimed_until          DateTime?              @db.Timestamptz(6)
+  newsletter_campaigns   newsletter_campaigns   @relation(fields: [campaign_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  newsletter_subscribers newsletter_subscribers @relation(fields: [subscriber_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@id([campaign_id, subscriber_id])
+}
+
+model newsletter_campaigns {
+  id                             String                           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  subject                        String
+  body_html                      String
+  status                         newsletter_campaign_status       @default(draft)
+  scheduled_at                   DateTime?                        @db.Timestamptz(6)
+  sent_at                        DateTime?                        @db.Timestamptz(6)
+  recipient_count                Int?
+  delivered_count                Int                              @default(0)
+  failed_count                   Int                              @default(0)
+  source_resource_type           String?
+  source_resource_id             String?                          @db.Uuid
+  created_by                     String?                          @db.Uuid
+  // Set by the sender's circuit breaker when SMTP looks down / over quota:
+  // the campaign is skipped until then. last_error says why (shown in the CMS).
+  paused_until                   DateTime?                        @db.Timestamptz(6)
+  last_error                     String?
+  created_at                     DateTime                         @default(now()) @db.Timestamptz(6)
+  updated_at                     DateTime                         @default(now()) @db.Timestamptz(6)
+  newsletter_campaign_recipients newsletter_campaign_recipients[]
+  users                          users?                           @relation(fields: [created_by], references: [id], onUpdate: NoAction)
+
+  @@index([created_at(sort: Desc)], map: "idx_newsletter_campaigns_created_at")
+  @@index([status], map: "idx_newsletter_campaigns_status")
+}
+
+model static_pages {
+  id                       String                     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  display_order            Int                        @default(0)
+  is_published             Boolean                    @default(true)
+  // Content-slug consolidation complete (Phase A: migration 20260818130000;
+  // Phase B unique index: migration 20260819100000; Phase C cutover + drop of the
+  // old static_page_translations.slug column: migration 20260819110000). The
+  // single, language-agnostic canonical slug — see uq_static_pages_slug.
+  slug                     String
+  created_at               DateTime                   @default(now()) @db.Timestamptz(6)
+  updated_at               DateTime                   @default(now()) @db.Timestamptz(6)
+  deleted_at               DateTime?                  @db.Timestamptz(6)
+  static_page_translations static_page_translations[]
+}
+
+model static_page_translations {
+  page_id          String       @db.Uuid
+  lang             String       @db.Char(2)
+  title            String
+  body             String
+  is_default       Boolean      @default(false)
+  meta_title       String?
+  meta_description String?
+  og_image_id      String?      @db.Uuid
+  languages        languages    @relation(fields: [lang], references: [code], onDelete: Cascade, onUpdate: NoAction)
+  og_image         media?       @relation("static_page_translation_og_image", fields: [og_image_id], references: [id], onUpdate: NoAction)
+  static_pages     static_pages @relation(fields: [page_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@id([page_id, lang])
+  @@index([og_image_id], map: "idx_static_page_translations_og_image")
+}
+
+model stores {
+  id                 String               @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  display_order      Int                  @default(0)
+  created_at         DateTime             @default(now()) @db.Timestamptz(6)
+  updated_at         DateTime             @default(now()) @db.Timestamptz(6)
+  deleted_at         DateTime?            @db.Timestamptz(6)
+  store_locations    store_locations[]
+  store_translations store_translations[]
+}
+
+model store_translations {
+  store_id  String    @db.Uuid
+  lang      String    @db.Char(2)
+  city_name String
+  languages languages @relation(fields: [lang], references: [code], onDelete: Cascade, onUpdate: NoAction)
+  stores    stores    @relation(fields: [store_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@id([store_id, lang])
+}
+
+model store_locations {
+  id                          String                        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  store_id                    String                        @db.Uuid
+  phone                       String?
+  gps_embed_url               String?
+  gps_link                    String?
+  display_order               Int                           @default(0)
+  created_at                  DateTime                      @default(now()) @db.Timestamptz(6)
+  updated_at                  DateTime                      @default(now()) @db.Timestamptz(6)
+  deleted_at                  DateTime?                     @db.Timestamptz(6)
+  store_location_translations store_location_translations[]
+  stores                      stores                        @relation(fields: [store_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@index([store_id], map: "idx_store_locations_store")
+}
+
+model store_location_translations {
+  location_id     String          @db.Uuid
+  lang            String          @db.Char(2)
+  name            String
+  address         String
+  languages       languages       @relation(fields: [lang], references: [code], onDelete: Cascade, onUpdate: NoAction)
+  store_locations store_locations @relation(fields: [location_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@id([location_id, lang])
+}
+
+model audios {
+  id                 String               @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  speaker_id         String?              @db.Uuid
+  audio_url          String               @unique(map: "uq_audios_audio_url")
+  pdf_url            String?
+  slug               String?
+  duration_seconds   Int?
+  size_mb            Float?
+  peaks              Json?
+  is_published       Boolean              @default(true)
+  views              BigInt               @default(0)
+  created_at         DateTime             @default(now()) @db.Timestamptz(6)
+  updated_at         DateTime             @default(now()) @db.Timestamptz(6)
+  deleted_at         DateTime?            @db.Timestamptz(6)
+  added_by           String?              @db.Uuid
+  audio_translations audio_translations[]
+  speakers           speakers?            @relation(fields: [speaker_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  users              users?               @relation(fields: [added_by], references: [id], onUpdate: NoAction)
+
+  @@index([is_published, deleted_at], map: "idx_audios_published")
+  @@index([speaker_id], map: "idx_audios_speaker_id")
+  @@index([added_by], map: "idx_audios_added_by")
+}
+
+model audio_translations {
+  audio_id   String    @db.Uuid
+  lang       String    @db.Char(2)
+  title      String
+  is_default Boolean   @default(false)
+  audios     audios    @relation(fields: [audio_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  languages  languages @relation(fields: [lang], references: [code], onDelete: Cascade, onUpdate: NoAction)
+
+  @@id([audio_id, lang])
+  @@index([title(ops: raw("gin_trgm_ops"))], map: "idx_audio_translations_title_trgm", type: Gin)
+}
+
+model speakers {
+  id                   String                 @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  created_at           DateTime               @default(now()) @db.Timestamptz(6)
+  updated_at           DateTime               @default(now()) @db.Timestamptz(6)
+  deleted_at           DateTime?              @db.Timestamptz(6)
+  audios               audios[]
+  speaker_translations speaker_translations[]
+}
+
+model speaker_translations {
+  speaker_id String    @db.Uuid
+  lang       String    @db.Char(2)
+  name       String
+  is_default Boolean   @default(false)
+  languages  languages @relation(fields: [lang], references: [code], onDelete: Cascade, onUpdate: NoAction)
+  speakers   speakers  @relation(fields: [speaker_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@id([speaker_id, lang])
+  @@index([name(ops: raw("gin_trgm_ops"))], map: "idx_speaker_translations_name_trgm", type: Gin)
+}
+
+enum site_setting_type {
+  string
+  number
+  boolean
+  json
+}
+
+enum contact_status {
+  NEW
+  RESPONDED
+  SPAM
+}
+
+enum proxy_visit_status {
+  PENDING
+  APPROVED
+  REJECTED
+  COMPLETED
+}
+
+enum newsletter_campaign_status {
+  draft
+  scheduled
+  sending
+  sent
+  failed
+  cancelled
+}

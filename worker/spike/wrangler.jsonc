@@ -1,0 +1,9 @@
+{
+  "name": "imamzain-spike",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-09-01",
+  "compatibility_flags": ["nodejs_compat"],
+  "workers_dev": true,
+  "observability": { "enabled": true },
+  "hyperdrive": [{ "binding": "HYPERDRIVE", "id": "c81bd672682b4d7c8ee2661b0d0f7f08" }]
+}
