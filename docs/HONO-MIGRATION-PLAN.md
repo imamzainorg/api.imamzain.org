@@ -117,32 +117,32 @@ Surprises:
 
 ### Decisions
 
-Status: recommended, awaiting confirmation.
+**Confirmed** = you agreed. **Pending** = changed or explained, waiting on you.
 
-| # | Decision | Recommendation | Why |
+| # | Decision | Value | Status |
 |---|---|---|---|
-| D1 | Email transport | Cloudflare Email Service; fallback `worker-mailer` over Hostinger 465 | volume is a handful of mails a month; but see the 309 failed notifications, which need explaining first (Q1) |
-| D2 | Newsletter campaigns | **Drop** the campaigns module and its CMS screens. Keep subscribe / confirm / unsubscribe | 0 campaigns ever, 1 subscriber (Q2) |
-| D3 | YouTube sync | Keep | synced daily, 314 videos, 25 playlists |
-| D4 | OpenAPI + `/docs` | Keep | the CMS handbook links it |
-| D5 | Validation error text | Keep envelope keys; message text may change | needs a grep of the CMS for error parsing (Q3) |
-| D6 | Rate limits | Binding with 60 s windows, DB limits unchanged, no Turnstile | traffic is tiny; bots only hit 404s |
-| D7 | View dedup | Keep the `POST …/view` routes, dedup with the binding on `ip:resource` | all views are 0 today, so either the site never calls them or they fail (Q4) |
-| D8 | Caching public reads | None | ≈ 0.01 req/s and Cloudflare bypasses the cache anyway |
-| D9 | Worker placement | Smart Placement on, confirm in Phase 1 | users are in Iraq; Supabase region unknown (Q5) |
-| D10 | Prisma version | 6.x (≥ 6.16) | — |
-| D11 | Origin during the migration | Render, via the `onrender.com` URL (not `api.imamzain.org`, which would loop through the Worker route) | 0.6% 5xx, mostly 503 (Q6) |
-| D12 | Images above 20 MB | Keep the original only, no contract change | sizes unknown until media is hydrated or R2 is listed (Q7) |
-| D13 | Sentry | **Drop**, rely on Workers Logs | not set up properly, nobody is watching |
+| D1 | Email transport | `worker-mailer` over Hostinger 465 for now; move to Cloudflare Email Service later, once the Worker is stable and on a paid plan | Confirmed |
+| D2 | Newsletter campaigns | **Drop** the campaigns module and its CMS screens. Keep subscribe / confirm / unsubscribe | Confirmed |
+| D3 | YouTube sync | Keep | Confirmed |
+| D4 | OpenAPI + `/docs` | **Drop.** Zod for validation only: no `@hono/zod-openapi`, no Scalar, no generated spec. `docs/integration.md` and the CMS notes stay the only API docs | Pending: this reverses my earlier "keep"; confirm |
+| D5 | Validation error text | Envelope keys **and the `error` message text stay identical**, because the CMS shows them to users when a transaction fails. The Zod hook maps to the Nest messages | Pending: changed from "text may change" |
+| D6 | Rate limits | Binding with 60 s windows, DB limits unchanged, no Turnstile | Confirmed |
+| D7 | View dedup | Binding keyed on `ip:resource`; the website does call the view routes | Confirmed |
+| D8 | Caching public reads | None at first; add a cached Hyperdrive binding for public GETs only if p95 misses the target | Pending: explained |
+| D9 | Worker placement | Smart Placement on; Phase 1 measures it on and off | Pending: explained |
+| D10 | Prisma version | 6.x (≥ 6.16) until Nest is gone | Confirmed |
+| D11 | Origin during the migration | Render, via the `onrender.com` URL; nothing moves until the Hono app fully works | Confirmed |
+| D12 | Images above the binding's input cap | Every file stays in R2 untouched; images over the cap just get no WebP variants (the original is served). Phase 1 checks whether a larger cap is possible | Pending: explained |
+| D13 | Sentry | **Drop**, rely on Workers Logs | Confirmed |
 
-Open questions:
-- **Q1.** Do the "new form submission" emails reach `info@imamzain.org`? The DB says 309 of 318 were flagged failed.
-- **Q2.** Any newsletter campaign planned within 3 months?
-- **Q3.** Does the CMS display the API's `error` text or parse it?
-- **Q4.** Does the website call the `POST …/view` routes?
-- **Q5.** Which region is the Supabase project in?
-- **Q6.** Is Render on a free plan, so the 503s are cold starts?
-- **Q7.** What is the largest file in R2 and how many are over 20 MB?
+Answers received:
+- Admin form-notification mail is failing in prod: 309 of 318 rows are flagged. Render's free plan blocks outbound SMTP ports; this is the likely cause and still to be verified.
+- No newsletter campaign is planned.
+- The CMS displays the API's `error` text to users when a transaction fails.
+- The website currently uses only the forms endpoints; once the API is fully ported it will use most endpoints and the CMS all of them.
+- Supabase is in Frankfurt.
+- Render is on the free plan, so the 503s are probably cold starts.
+- R2 files over 20 MB: 29. Over 25 MB: 21. Over 50 MB: 13. Over 100 MB: 1.
 
 Not yet in hand: p95 latency baseline (Cloudflare → Analytics → Performance) and the full path list for the remaining route groups.
 
