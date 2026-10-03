@@ -40,7 +40,7 @@ Cron Triggers (Phase 5) ──► worker/src/jobs/*
 | Rate limits | Redis or in-memory throttler; 15-min and 1-h windows | Rate Limiting binding (60 s windows) + the existing DB-backed login and confirm limits |
 | Storage | AWS SDK against R2 | R2 binding; `aws4fetch` for presigned PUT URLs |
 | Image variants | sharp | Images binding (`env.IMAGES`) inside `waitUntil`; the regenerate endpoint stays as the retry path |
-| Email | nodemailer → Hostinger SMTP | decision D1 |
+| Email | nodemailer → Hostinger SMTP | Cloudflare Email Service (D1) |
 | WhatsApp | Twilio SDK | `fetch` to the Twilio REST API |
 | Background work | `setImmediate`, `p-limit` | `c.executionCtx.waitUntil` |
 | Crons | `@nestjs/schedule`: 8 jobs, 4 of them behind advisory locks | 3 Cron Triggers with no locks (they fire once); existing row leases kept |
@@ -121,7 +121,7 @@ Surprises:
 
 | # | Decision | Value | Status |
 |---|---|---|---|
-| D1 | Email transport | `worker-mailer` over Hostinger 465 for now; move to Cloudflare Email Service later, once the Worker is stable and on a paid plan | Confirmed |
+| D1 | Email transport | ~~`worker-mailer` over Hostinger 465~~: Workers can't reach Hostinger SMTP (it sits on Cloudflare IPs, Phase 1 check 5). **Cloudflare Email Service, deferred** to group 4g, once everything else works on the Worker. Until then, email-sending routes stay on Nest | Confirmed |
 | D2 | Newsletter campaigns | **Drop** the campaigns module and its CMS screens. Keep subscribe / confirm / unsubscribe | Confirmed |
 | D3 | YouTube sync | Keep | Confirmed |
 | D4 | OpenAPI + `/docs` | `@hono/zod-openapi` so Scalar at `/docs` is generated from the same Zod schemas that validate requests. The schemas are the only documentation code: request schemas required, response schemas only where cheap, no hand-written descriptions. `defineRoute()` wraps `createRoute`. Dropped if the generated docs turn out to need more than that | Confirmed |
@@ -129,7 +129,7 @@ Surprises:
 | D6 | Rate limits | Binding with 60 s windows, DB limits unchanged, no Turnstile | Confirmed |
 | D7 | View dedup | Binding keyed on `ip:resource`; the website does call the view routes | Confirmed |
 | D8 | Caching public reads | None at first; add a cached Hyperdrive binding for public GETs only if API p95 misses the target in Phase 1 | Confirmed |
-| D9 | Worker placement | Smart Placement on; Phase 1 measures it on and off | Confirmed |
+| D9 | Worker placement | ~~Smart Placement on~~. Phase 1 check 6: Smart Placement never places at our traffic. **`placement.region = "aws:eu-north-1"`** (DB time for 3 queries 182 → 28 ms) | Confirmed |
 | D10 | Prisma version | 6.x (≥ 6.16) until Nest is gone | Confirmed |
 | D11 | Origin during the migration | Render, via the `onrender.com` URL; nothing moves until the Hono app fully works | Confirmed |
 | D12 | Images above the binding's input cap | No image above 20 MB exists (the 29 large files are audio and PDF books), so nothing to do. If one is ever uploaded, keep the original and skip variants | Confirmed |
@@ -140,7 +140,7 @@ Answers received:
 - No newsletter campaign is planned.
 - The CMS displays the API's `error` text to users when a transaction fails.
 - The website currently uses only the forms endpoints; once the API is fully ported it will use most endpoints and the CMS all of them.
-- Supabase is in Frankfurt.
+- Supabase is in ~~Frankfurt~~ **`eu-north-1` (Stockholm)**: Supabase project `imamzain-api-db`, pooler `aws-1-eu-north-1`.
 - Render is on the free plan, so the 503s are probably cold starts.
 - R2 files over 20 MB: 29. Over 25 MB: 21. Over 50 MB: 13. Over 100 MB: 1.
 
@@ -174,6 +174,21 @@ A throwaway Worker in `worker/spike/`, never attached to the API route.
 6. **Latency:** p50/p95 of a 3-query endpoint with and without Smart Placement, measured from the region users are in.
 
 **Exit:** all six pass, or each failure has a documented workaround. **If 1 or 2 fails with no workaround, stop here.** The fallback is the current Docker image on Cloudflare Containers, or staying where you are.
+
+#### Phase 1 result (2026-10-03): **Go**
+
+Details and raw numbers: `worker/spike/README.md`. The spike ran on Workers Free against prod Supabase (`eu-north-1`).
+
+| # | Check | Result | Verdict | Workaround / condition |
+|---|---|---|---|---|
+| 1 | Hyperdrive → Supabase | Reaches prod (Postgres 17.6) through the Supavisor **session** pooler (5432), which allows 15 clients. With Hyperdrive's limit at 10, about 50% of requests failed with `EMAXCONNSESSION` once the Worker moved to ARN. Hyperdrive can open a second pool while the first still holds sessions (10 + 10 > 15). **With the limit at 5:** `/three` passed 50/50 sequential and 50/50 at 10-way concurrency | **Go** | Keep Hyperdrive's origin connection limit at **5** while Supavisor's session pool is 15. Prod Nest is unaffected (it uses the transaction pooler, 6543) |
+| 2 | Prisma client engine + adapter-pg | All five sub-checks pass on prod data; prisma/orm#30374 does not reproduce on 6.19.3. About 10–12 ms CPU per request is Prisma setup | **Go** | Needs Workers Paid: 9 of 845 `/three` requests were killed by Free's 10 ms CPU limit |
+| 3 | bcryptjs cost 12 | One compare takes 306 / **343** / 480 / 588 ms CPU (min / median / p90 / max, n=25). A double compare was killed once on Free | **Go on Paid only** | Workers Paid (30 s default CPU). Keep cost 12 so existing hashes stay valid |
+| 4 | Images binding, 4 WebP widths + `.info()` | A 19.9 MB 7000×4850 JPEG gives correct `.info()` and 320/768/1280/1920 WebP (8–231 KB). 6.5 s wall, 1.3 s CPU. A 29 MB input fails fast with a catchable error | **Go** | Run in `waitUntil` (as planned). Over 20 MB: skip variants (D12) |
+| 5 | Email via the D1 choice | **Fails.** `smtp.hostinger.com` (and Hostinger's MX) are Cloudflare Spectrum IPs, and Worker sockets can't connect to Cloudflare IPs. SPF/DKIM/DMARC untested. `_dmarc.imamzain.org` has two TXT records, so DMARC is void | **No-go for D1; deferred** | Cloudflare Email Service, set up in group 4g (D1). Then onboard `imamzain.org` in Email Sending, re-run check 5 and verify SPF/DKIM/DMARC. Delete one DMARC record whenever convenient |
+| 6 | Latency, 3-query route, placement on/off | Smart Placement never placed the Worker (`INSUFFICIENT_INVOCATIONS` after 30 min at 0.5 req/s, 50× prod traffic). `placement.region = "aws:eu-north-1"` takes effect at once. From a Baghdad probe: TTFB p50 **289 → 203 ms**, DB time p50 **182 → 28 ms**. From the US: TTFB p50 538 → 306 ms | **Go, with the region hint** | Use `placement.region` instead of Smart Placement (D9). Re-run with Hyperdrive at 5: Baghdad TTFB p50 211 ms, DB time p50 31 ms, 0 errors |
+
+**Before Phase 2:** move to Workers Paid, which login (bcrypt) and Prisma CPU need. It is already budgeted in section 8. Email (check 5) is deferred to group 4g.
 
 ### Phase 2 — Skeleton and safety net (2–3 sessions)
 1. **Project setup.**

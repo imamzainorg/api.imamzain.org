@@ -1,8 +1,14 @@
-# Phase 1 spike: checks 1 and 2 (DB)
+# Phase 1 spike: checks 1–6
 
-Throwaway Worker for `docs/HONO-MIGRATION-PLAN.md`, Phase 1 checks 1 and 2: Prisma 6.19.3 with
-`engineType = "client"`, `@prisma/adapter-pg`, one client per request, through Hyperdrive
-`c81bd672682b4d7c8ee2661b0d0f7f08`. It is never attached to the API route. Delete it after Phase 1.
+Throwaway Worker for `docs/HONO-MIGRATION-PLAN.md`, Phase 1:
+- **Checks 1–2:** Prisma 6.19.3 with `engineType = "client"`, `@prisma/adapter-pg`, one client per request,
+  through Hyperdrive `c81bd672682b4d7c8ee2661b0d0f7f08`.
+- **Check 3:** bcryptjs.
+- **Check 4:** Images binding.
+- **Check 5:** worker-mailer.
+- **Check 6:** latency with and without placement.
+
+It is never attached to the API route. Delete it after Phase 1. The go/no-go table is in the plan under Phase 1.
 
 `prisma/schema.prisma` is a copy of `../../prisma/schema.prisma` with only the generator swapped.
 
@@ -19,6 +25,10 @@ Every route is read-only or rolls back. `/tx` writes `views + 0`, which is a no-
 | `/tx` | 2d: interactive `$transaction` (read, update, raw query); checks one txid throughout |
 | `/tx-error` | 2e: prisma/orm#30374 steps: warm-up, JS rollback, duplicate-key `INSERT` in a tx (P2002), then `findUnique`, `count` and another tx on the same client |
 | `/pg-select1`, `/connect-only`, `/select1`, `/select1x5` | CPU breakdown: plain `pg` vs Prisma setup vs per-query cost |
+| `/bcrypt` (`?miss` adds a failing compare) | 3: one `bcryptjs.compare` against a cost-12 hash |
+| `POST /images` (JPEG body) | 4: `IMAGES.info()`, then WebP at 320/768/1280/1920 q82 (the Nest `VARIANT_WIDTHS`), each re-checked with `.info()` |
+| `POST /email` | 5: one message via `worker-mailer`, SMTPS 465, only ever to `EMAIL_TO`. Needs the `SMTP_HOST/PORT/USER/PASS`, `EMAIL_FROM` and `EMAIL_TO` vars (removed after the test; add `"keep_vars": true` to wrangler.jsonc if you set them in the dashboard again) |
+| `/three` | 6: three sequential queries shaped like `GET /books` (count, page of 20, categories) |
 
 ## Deploy and verify
 
@@ -26,13 +36,18 @@ Every route is read-only or rolls back. `/tx` writes `views + 0`, which is a no-
 cd worker/spike
 npm ci
 npx wrangler deploy      # runs on Workers Free; bundle is 876 KiB gzip (limit 3 MB)
-./check.sh https://imamzain-spike.<your-subdomain>.workers.dev
+./check.sh https://imamzain-spike.<your-subdomain>.workers.dev [a-jpeg-under-20MB.jpg]
+curl -X POST https://imamzain-spike.<your-subdomain>.workers.dev/email
+./latency.sh https://imamzain-spike.<your-subdomain>.workers.dev/three 40 label    # from where you are
+./latency-iq.py label 40                                                          # from a Globalping probe in Iraq
 ```
+
+`wrangler.jsonc` currently has `placement.region = "aws:eu-north-1"`. Remove `placement` to measure without it.
 
 Expected output: every check route prints `"pass": true`. `/ping` has no pass field; it returns the Postgres version.
 CPU per request is in the dashboard under Workers → imamzain-spike → Observability (`cpuTimeMs`).
 
-## Results (2026-10-01)
+## Results, checks 1–2 (2026-10-01)
 
 ### Local workerd + Postgres 16 (prod schema from `prisma/migrations`, seeded rows)
 
@@ -97,3 +112,72 @@ Where the cost goes: about **8.5 ms per request is Prisma client setup**. On eve
 - **CPU:** every Prisma route is over 10 ms at the median. About 10–12 ms of that is Prisma's per-request setup (`connect-only`); plain `pg` costs 2 ms.
 - **No kills:** none of the roughly 440 requests ended as `exceededCpu`; every tail outcome was `ok`.
 - **Wall time:** about 110 ms per round trip to Stockholm without Smart Placement, so the interactive transactions take 0.8–1.7 s. Check 6 measures placement.
+
+## Results, checks 3–6 (2026-10-03)
+
+Deployed to `imamzain-spike.imamzainalabdeen1.workers.dev` on **Workers Free**. CPU comes from `wrangler tail --format json` (`cpuTime`).
+
+### Check 3: bcryptjs cost 12
+
+| | n | CPU min | median | p90 | max | outcome |
+|---|---|---|---|---|---|---|
+| 1 compare (`/bcrypt`) | 25 | 306 | 343 | 480 | 588 | 25 ok |
+| 2 compares (`/bcrypt?miss`) | 5 | 180 | 671 | 1021 | 1021 | 4 ok, 1 `exceededCpu` |
+
+- **Correctness:** the compare passes.
+- **CPU:** one compare costs about 340 ms. That is 34× the Free plan's 10 ms.
+- **Free plan:** it let most of these through, but not all, so login on Free would fail at random.
+- **Paid plan:** the default limit is 30 s, so this is fine.
+
+### Check 4: Images binding
+
+Input: a 19.9 MB, 7000×4850 JPEG (ImageMagick noise; `D12`'s cap is 20 MB for `.input()`).
+
+- **`.info()`:** returns `{ format: image/jpeg, width: 7000, height: 4850, fileSize: 19892344 }`.
+- **Variants:** all four come out as `image/webp`, at the requested widths:
+
+| Width | Height | Bytes |
+|---|---|---|
+| 320 | 221 | 8,508 |
+| 768 | 532 | 37,618 |
+| 1280 | 886 | 91,980 |
+| 1920 | 1,330 | 230,744 |
+
+- **Time:** 6.5 s wall for `.info()`, the four transforms and four `.info()` re-checks, so it belongs in `waitUntil`. CPU was 1.34 s, most of it copying the 20 MB body into `Blob`s in JS. The real pipeline can pass R2 streams straight to the binding instead.
+- **Over the cap:** a 29 MB JPEG fails after 170 ms with a catchable `Error: Network connection lost`. D12's "keep the original, skip variants" works as written.
+
+### Check 5: email via worker-mailer → Hostinger 465: **fails**
+
+- **Error:** `/email` fails in 6 ms with `proxy request failed, cannot connect to the specified address`.
+- **Cause:** `smtp.hostinger.com` resolves to `172.65.255.143` / `2606:4700:90::…`. Those are Cloudflare addresses (Hostinger fronts SMTP with Spectrum), and Workers' `connect()` refuses Cloudflare IP ranges ([docs](https://developers.cloudflare.com/workers/runtime-apis/tcp-sockets/#considerations)). `mx1/mx2.hostinger.com` are also Cloudflare addresses. No Worker can talk SMTP to Hostinger.
+- **SPF / DKIM / DMARC:** not tested, because nothing was sent.
+- **DNS found along the way:** `_dmarc.imamzain.org` has **two** TXT records (`p=none` and `p=none; rua=…`). Receivers treat more than one DMARC record as no DMARC at all. Delete one.
+
+### Check 6: latency of `/three`, with and without placement
+
+Successful requests only (see the errors below).
+- **Iraq:** one Globalping probe in Baghdad, on a hosting network. It reaches Cloudflare at **SOF** (Sofia). Every Globalping request opens a new TLS connection; `firstByte` is TTFB after the handshake.
+- **IAD:** this container, in the US. Its edge is IAD.
+- **Server wall:** the Worker's own `wallMs` for the three queries.
+
+| Where | Config | n | TTFB p50 | TTFB p95 | Server wall p50 | Server wall p95 |
+|---|---|---|---|---|---|---|
+| Baghdad → SOF | no placement | 39 | 289 | 384 | 182 | 197 |
+| Baghdad → SOF | `placement.region = aws:eu-north-1` (runs in ARN) | 35 | 203 | 509 | 28 | 33 |
+| US → IAD | no placement | 32 | 538 | 759 | 334 | 379 |
+| US → IAD | `placement.region = aws:eu-north-1` (runs in ARN) | 34 | 306 | 413 | 28 | 31 |
+
+- **Smart Placement:** it never placed the Worker. It ran from 05:07 to 05:40 UTC with about 0.5 req/s from IAD plus about 80 Globalping requests from Europe, Asia, Africa and South America. It stayed at `INSUFFICIENT_INVOCATIONS` and every response was `cf-placement: local-…`, so it behaves exactly like "off". Production API traffic is about 0.01 req/s, 50× less, so Smart Placement will not place the real Worker either.
+- **Region hint:** `placement.region = "aws:eu-north-1"` (the Supabase project's region; the pooler is `aws-1-eu-north-1`) takes effect immediately: `cf-placement: remote-ARN`.
+- **DB time:** the three queries drop from 182 ms (SOF) or 334 ms (IAD) to 28 ms.
+- **Baghdad TTFB:** the p50 improves by 86 ms. The p95 is noisier because of the errors below.
+- **Errors:** with the Worker in ARN, about half of the requests failed, even when sent one at a time (35 of 70 from Baghdad, 36 of 70 from IAD). The error was `EMAXCONNSESSION ... pool_size: 15`, the session-mode limit from check 1. Without placement, only 9 of about 850 failed, and those were `exceededCpu` on Free, not DB errors.
+- **Production:** not affected. Nest uses the transaction pooler (6543). But `prisma migrate deploy` uses the session pooler (`DIRECT_URL`) and would hit the same limit while Hyperdrive holds the 15 sessions.
+- **Free plan CPU:** `/three` used a median 21 ms and p90 88 ms of CPU. 9 of 845 requests were killed with `exceededCpu`.
+
+**Fix (later the same day):** Hyperdrive's `origin_connection_limit` went from 10 to 5. Hyperdrive can open a second pool while the first still holds its sessions, and 2 × 10 > 15. With the limit at 5, with the hint, from IAD:
+- **Sequential:** 50 of 50 OK.
+- **10-way concurrency:** 50 of 50 OK.
+- **Latency:** server wall p50 31 ms, p95 79 ms; TTFB p50 357 ms.
+
+From Baghdad, the 17 probes that ran all returned 200: TTFB p50 211 ms, server wall p50 31 ms. The other 23 were Globalping errors that never reached the Worker.
