@@ -5,5 +5,7 @@
   "compatibility_flags": ["nodejs_compat"],
   "workers_dev": true,
   "observability": { "enabled": true },
+  "placement": { "region": "aws:eu-north-1" },
+  "images": { "binding": "IMAGES" },
   "hyperdrive": [{ "binding": "HYPERDRIVE", "id": "c81bd672682b4d7c8ee2661b0d0f7f08" }]
 }

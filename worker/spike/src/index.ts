@@ -1,12 +1,28 @@
-// Phase 1 spike (checks 1 + 2): Prisma client engine + adapter-pg through Hyperdrive.
-// Throwaway. Every route is read-only or rolls back; nothing persists in the DB.
+// Phase 1 spike (checks 1-6): Prisma client engine + adapter-pg through Hyperdrive, bcryptjs,
+// Images binding, worker-mailer, latency. Throwaway. Every DB route is read-only or rolls back.
 import { PrismaPg } from '@prisma/adapter-pg';
 import { PrismaClient } from './generated/prisma/client';
 import pg from 'pg';
+import bcrypt from 'bcryptjs';
+import { WorkerMailer } from 'worker-mailer';
 
 interface Env {
   HYPERDRIVE: Hyperdrive;
+  IMAGES: ImagesBinding;
+  // Check 5 (secrets): Hostinger SMTP, same names as the Nest env.
+  SMTP_HOST?: string;
+  SMTP_PORT?: string;
+  SMTP_USER?: string;
+  SMTP_PASS?: string;
+  EMAIL_FROM?: string;
+  EMAIL_TO?: string; // the only recipient /email will ever send to
 }
+
+// Check 3: bcryptjs.hashSync('spike-password-123', 12), made offline.
+const BCRYPT_HASH = '$2b$12$UaB3Q7t1R/k2WYFUhihmjekdA70iVcqyY1k0JUnaYgPjZncGKgu6i';
+// Check 4: same widths and quality as src/media (VARIANT_WIDTHS, VARIANT_QUALITY).
+const VARIANT_WIDTHS = [320, 768, 1280, 1920];
+const VARIANT_QUALITY = 82;
 
 // One client per request, as the real Worker will do. max: 1 = one Hyperdrive connection
 // per request; the default pool opened several for parallel relation queries.
@@ -119,6 +135,19 @@ const routes: Record<string, (p: Prisma, url: URL) => Promise<unknown>> = {
     return { pass: out.sameTxid && out.before.views === out.updated.views, ...out };
   },
 
+  // Check 6: a 3-query read shaped like GET /books (count + page + categories), each its own round trip.
+  async '/three'(p) {
+    const total = await p.books.count({ where: { deleted_at: null } });
+    const books = await p.books.findMany({
+      where: { deleted_at: null },
+      orderBy: { created_at: 'desc' },
+      take: 20,
+      select: { id: true, category_id: true, pages: true, publish_year: true },
+    });
+    const categories = await p.book_categories.findMany({ where: { deleted_at: null }, select: { id: true } });
+    return { pass: total > 0 && books.length > 0, total, books: books.length, categories: categories.length };
+  },
+
   // Check 2e: prisma/orm#30374. Same steps as the issue, on prod-safe data:
   // warm-up, a JS-error rollback, then a duplicate-key INSERT inside a tx (P2002),
   // then findUnique + count on the same client. Bug = wrong/missing rows or P2023.
@@ -197,6 +226,61 @@ export default {
       const r = await c.query('SELECT 1 AS one');
       ctx.waitUntil(c.end());
       return json({ route: url.pathname, result: r.rows });
+    }
+    // Check 3: one bcrypt compare at cost 12 (CPU ms comes from wrangler tail / Observability).
+    if (url.pathname === '/bcrypt') {
+      const ok = await bcrypt.compare('spike-password-123', BCRYPT_HASH);
+      const bad = url.searchParams.has('miss') ? await bcrypt.compare('wrong', BCRYPT_HASH) : undefined;
+      return json({ route: url.pathname, pass: ok && bad !== true, ok, bad });
+    }
+    // Check 4: POST a JPEG; .info() plus the 4 WebP variants the Nest pipeline makes.
+    if (url.pathname === '/images' && req.method === 'POST') {
+      const bytes = new Uint8Array(await req.arrayBuffer());
+      const stream = () => new Blob([bytes]).stream();
+      const t0 = Date.now();
+      try {
+        const info = await env.IMAGES.info(stream());
+        const variants = [];
+        for (const width of VARIANT_WIDTHS) {
+          const out = await env.IMAGES.input(stream())
+            .transform({ width, fit: 'scale-down' })
+            .output({ format: 'image/webp', quality: VARIANT_QUALITY });
+          const buf = await out.response().arrayBuffer();
+          const dims = await env.IMAGES.info(new Blob([buf]).stream());
+          variants.push({ width, contentType: out.contentType(), bytes: buf.byteLength, info: dims });
+        }
+        const pass = variants.every((v, i) => v.contentType === 'image/webp' && 'width' in v.info && v.info.width === VARIANT_WIDTHS[i]);
+        return json({ route: url.pathname, pass, inputBytes: bytes.byteLength, info, variants, wallMs: Date.now() - t0 });
+      } catch (e) {
+        return json({ route: url.pathname, inputBytes: bytes.byteLength, wallMs: Date.now() - t0, error: errInfo(e) }, 500);
+      }
+    }
+    // Check 5: one message via worker-mailer over SMTPS, only ever to EMAIL_TO.
+    if (url.pathname === '/email' && req.method === 'POST') {
+      if (!env.SMTP_HOST || !env.SMTP_USER || !env.SMTP_PASS || !env.EMAIL_TO)
+        return json({ route: url.pathname, error: 'SMTP_* / EMAIL_TO not set' }, 500);
+      const t0 = Date.now();
+      try {
+        await WorkerMailer.send(
+          {
+            host: env.SMTP_HOST,
+            port: Number(env.SMTP_PORT ?? 465),
+            secure: true,
+            credentials: { username: env.SMTP_USER, password: env.SMTP_PASS },
+            authType: ['plain', 'login'],
+          },
+          {
+            from: { name: 'Imam Zain spike', email: env.EMAIL_FROM || env.SMTP_USER },
+            to: env.EMAIL_TO,
+            subject: `Phase 1 spike check 5 (${new Date().toISOString()})`,
+            text: 'Test message from the imamzain-spike Worker via worker-mailer over SMTPS 465.',
+            html: '<p>Test message from the <b>imamzain-spike</b> Worker via worker-mailer over SMTPS 465.</p>',
+          },
+        );
+        return json({ route: url.pathname, pass: true, wallMs: Date.now() - t0 });
+      } catch (e) {
+        return json({ route: url.pathname, wallMs: Date.now() - t0, error: errInfo(e) }, 500);
+      }
     }
     if (url.pathname === '/connect-only') {
       const p = db(env);
