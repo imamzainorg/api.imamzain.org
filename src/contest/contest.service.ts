@@ -11,6 +11,7 @@ import {
 import { Prisma } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
 import { buildPaginationMeta } from "../common/utils/pagination.util";
+import { isUniqueViolation } from "../common/utils/prisma-error.util";
 import { hmacHex, HmacKeyring, KEY_INFO, resolveHmacKeyring, verifyHmacHex } from "../common/utils/derive-key.util";
 import { StartContestDto, SubmitContestDto } from "./dto/contest.dto";
 import { canonicalContact, identityVariants, scoreIsRevealed } from "./contest.util";
@@ -256,9 +257,10 @@ export class ContestService implements OnApplicationBootstrap {
       `;
     } catch (err) {
       // Concurrent /start with the same identity (a double click is the usual
-      // cause): the partial unique index rejects the loser with P2002. It then
-      // takes the winner's attempt, exactly as if it had arrived a moment later.
-      if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === "P2002") {
+      // cause): the partial unique index rejects the loser (a raw query, so
+      // P2010 / 23505, not P2002). It then takes the winner's attempt, exactly
+      // as if it had arrived a moment later.
+      if (isUniqueViolation(err)) {
         const winner = await this.findAttemptByIdentity(variants);
         if (winner) return this.resumeOrReject(winner);
         throw new ConflictException(ALREADY_PARTICIPATED);
