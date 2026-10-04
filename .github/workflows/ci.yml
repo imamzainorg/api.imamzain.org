@@ -120,3 +120,72 @@ jobs:
 
       - name: Unit tests
         run: npm test
+
+  # docs/HONO-MIGRATION-PLAN.md, Phase 2 task 5: the same black-box suite against Nest and against the
+  # Worker (wrangler dev, whose unported routes fall through to that Nest), on a migrated + seeded DB.
+  contract:
+    name: Contract tests (Nest and Worker)
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: imamzain_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/imamzain_test
+      DIRECT_URL: postgresql://postgres:postgres@localhost:5432/imamzain_test
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+          cache-dependency-path: |
+            package-lock.json
+            worker/package-lock.json
+
+      - name: Install dependencies (Nest)
+        run: npm ci
+
+      - name: Install dependencies (Worker)
+        run: npm ci
+        working-directory: worker
+
+      - name: Build Nest
+        run: npm run build
+
+      # The seed creates the languages, permissions, roles and the super-admin the suite mints its token for.
+      - name: Migrate and seed the database
+        run: npm run prisma:deploy && npm run prisma:seed
+        env:
+          SEED_ADMIN_PASSWORD: ci-only-password-not-secret
+          BCRYPT_ROUNDS: '4'
+
+      - name: Generate the Worker Prisma client and types
+        run: npm run gen
+        working-directory: worker
+
+      - name: Contract tests against Nest, then the Worker
+        run: npm run contract
+        working-directory: worker
+        env:
+          CONTRACT_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/imamzain_test
+
+      - name: Server and test logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: contract-logs
+          path: worker/test/.work/logs/

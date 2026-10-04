@@ -9,8 +9,13 @@
     "gen": "prisma generate --schema ../prisma/schema.prisma --generator worker && wrangler types",
     "dev": "npm run gen && wrangler dev",
     "deploy": "npm run gen && wrangler deploy",
-    "typecheck": "npm run gen && tsc --noEmit",
-    "test": "vitest run"
+    "typecheck": "npm run gen && tsc --noEmit && tsc --noEmit -p tsconfig.node.json",
+    "test": "vitest run",
+    "test:contract": "vitest run --config vitest.contract.config.ts",
+    "contract": "tsx test/contract/run.ts",
+    "diff": "tsx test/diff/run.ts",
+    "check": "tsx test/check.ts",
+    "check:health": "tsx test/check.ts health"
   },
   "dependencies": {
     "@hono/zod-openapi": "^1.6.3",
@@ -21,8 +26,10 @@
     "zod": "^4.6.5"
   },
   "devDependencies": {
+    "@types/node": "^22.20.5",
     "@types/pg": "^8.23.1",
     "prisma": "6.19.3",
+    "tsx": "^4.23.15",
     "typescript": "^6.0.3",
     "vitest": "^5.0.3",
     "wrangler": "^4.147.0"

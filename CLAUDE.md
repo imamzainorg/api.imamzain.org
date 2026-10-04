@@ -31,7 +31,9 @@ Worker (`cd worker`):
 npm run typecheck   # generates the Prisma client + wrangler types, then tsc
 npm test            # vitest
 npm run dev         # wrangler dev; Hyperdrive uses localConnectionString (local Postgres)
+npm run check:<group>  # typecheck + diff + contract tests on Nest and the Worker (needs Docker)
 ```
+How the harness works and what to add when porting a group: `worker/test/README.md`.
 
 ## Rules
 - Same contract: URLs, envelopes, status codes, error `code`s and `error` text stay identical

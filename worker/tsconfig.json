@@ -10,5 +10,7 @@
     "isolatedModules": true,
     "noEmit": true
   },
-  "include": ["src", "test", "worker-configuration.d.ts"]
+  "include": ["src", "test", "worker-configuration.d.ts"],
+  // Node-side test code: tsconfig.node.json.
+  "exclude": ["test/harness", "test/diff", "test/contract", "test/check.ts"]
 }
