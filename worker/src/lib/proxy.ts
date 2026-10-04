@@ -13,5 +13,7 @@ export async function proxyToOrigin(c: Context<AppEnv>): Promise<Response> {
   const headers = new Headers(c.req.raw.headers);
   const clientIp = headers.get('cf-connecting-ip');
   if (clientIp) headers.set('x-forwarded-for', clientIp);
+  // Phase 6 switches Nest off only after 7 days with none of these in Workers Logs. Path only: no query.
+  console.log({ event: 'fallthrough', method: c.req.method, path: incoming.pathname });
   return fetch(target, { method: c.req.method, headers, body: c.req.raw.body, redirect: 'manual', duplex: 'half' } as RequestInit);
 }

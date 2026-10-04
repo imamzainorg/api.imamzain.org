@@ -40,7 +40,9 @@ export const authenticate = createMiddleware<AppEnv>(async (c, next) => {
 
   let payload: AccessTokenPayload;
   try {
-    payload = (await verify(token, c.env.JWT_SECRET, JWT_ALGORITHM)) as AccessTokenPayload;
+    // iat: false because passport-jwt never rejects a future `iat`: a token Nest signs on Render must
+    // work here at once, even if Render's clock is a second ahead.
+    payload = (await verify(token, c.env.JWT_SECRET, { alg: JWT_ALGORITHM, iat: false })) as AccessTokenPayload;
   } catch {
     throw unauthorized();
   }

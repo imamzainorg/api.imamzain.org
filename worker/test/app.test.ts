@@ -1,5 +1,10 @@
+import { Hono } from 'hono';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { app } from '../src/app';
+import { createApp } from '../src/lib/create-app';
+import { defineRoute } from '../src/lib/define-route';
+import { proxyToOrigin } from '../src/lib/proxy';
+import type { AppEnv } from '../src/lib/types';
 
 const env = { ORIGIN_URL: 'https://origin.test' } as unknown as Env;
 
@@ -31,5 +36,54 @@ describe('fallthrough', () => {
 
     expect(fetchMock.mock.calls[0][1].method).toBe('POST');
     expect(await res.text()).toBe('{"a":1}');
+  });
+});
+
+describe('ported prefix', () => {
+  const limit = vi.fn(async () => ({ success: true }));
+  const groupEnv = { ...env, ALLOWED_ORIGINS: 'https://imamzain.org', RL_GLOBAL: { limit } } as unknown as Env;
+
+  function withGroup() {
+    const group = createApp();
+    defineRoute(group, { method: 'get', path: '/' }, () => ({ message: 'ok', data: 1 }));
+    const a = new Hono<AppEnv>();
+    a.route('/api/v1/g', group);
+    a.all('*', proxyToOrigin);
+    return a;
+  }
+
+  it('serves its routes with the shared middleware', async () => {
+    limit.mockClear();
+    const res = await withGroup().request('/api/v1/g', {}, groupEnv);
+    expect(await res.json()).toMatchObject({ message: 'ok', data: 1, success: true });
+    expect(limit).toHaveBeenCalledTimes(1);
+  });
+
+  it('proxies an unmatched path without wrapping the reply in group middleware', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('{}', { headers: { vary: 'Origin' } })));
+    limit.mockClear();
+    const res = await withGroup().request('/api/v1/g/not-ported', { headers: { origin: 'https://imamzain.org' } }, groupEnv);
+    expect(res.headers.get('vary')).toBe('Origin');
+    expect(res.headers.get('etag')).toBeNull();
+    expect(limit).not.toHaveBeenCalled();
+  });
+
+  it('answers preflights itself', async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+    const res = await withGroup().request('/api/v1/g/anything', { method: 'OPTIONS', headers: { origin: 'https://imamzain.org' } }, groupEnv);
+    expect(res.status).toBe(200);
+    expect(res.headers.get('access-control-allow-origin')).toBe('https://imamzain.org');
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+});
+
+describe('fallthrough log', () => {
+  it('logs each fallthrough as `fallthrough`, path only', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('')));
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+    await app.request('/api/v1/books?token=secret', {}, env);
+    expect(log).toHaveBeenCalledWith({ event: 'fallthrough', method: 'GET', path: '/api/v1/books' });
+    log.mockRestore();
   });
 });

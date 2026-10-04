@@ -2,7 +2,7 @@ import { createRoute, z, type OpenAPIHono } from '@hono/zod-openapi';
 import type { Context } from 'hono';
 import { requirePermission, authenticate } from './auth';
 import { respond } from './envelope';
-import { rateLimit, type RateTier } from './rate-limit';
+import { rateLimit, tierFor, type RateTier } from './rate-limit';
 import type { AppEnv } from './types';
 
 type Schema = z.ZodType | undefined;
@@ -15,8 +15,8 @@ interface RouteConfig<Q extends Schema, P extends Schema, B extends Schema> {
   summary?: string;
   /** Omit for a public route; `true` = any signed-in user (`@AuthOnly`); a list = `@Auth(...perms)`. */
   auth?: true | string[];
-  /** Per-route throttle tier (the global tier is applied app-wide). */
-  limit?: RateTier;
+  /** Per-route throttle: Nest's `@Throttle` limit (mapped by `tierFor`), or a tier. RL_GLOBAL is app-wide. */
+  limit?: number | RateTier;
   query?: Q;
   params?: P;
   body?: B;
@@ -28,11 +28,14 @@ interface RouteConfig<Q extends Schema, P extends Schema, B extends Schema> {
 
 type Input<Q, P, B> = { query: Infer<Q>; params: Infer<P>; body: Infer<B> };
 
+const strict = (s: z.ZodType): z.ZodType => (s instanceof z.ZodObject ? s.strict() : s);
+
 /**
  * One route in ~5 lines: declares the OpenAPI route (so Zod validates AND documents it), wires the
  * throttle and auth guards in Nest's order, and wraps whatever the handler returns in the success
  * envelope. The handler returns what the Nest service returned, `{ message, data, ... }`.
- * Use `z.strictObject` for query/body (Nest's `forbidNonWhitelisted`).
+ * Top-level query and body objects are made strict here (Nest's `forbidNonWhitelisted`); nested
+ * objects still need `z.strictObject`.
  */
 export function defineRoute<Q extends Schema = undefined, P extends Schema = undefined, B extends Schema = undefined>(
   app: OpenAPIHono<AppEnv>,
@@ -40,8 +43,9 @@ export function defineRoute<Q extends Schema = undefined, P extends Schema = und
   handler: (c: Context<AppEnv>, input: Input<Q, P, B>) => unknown | Promise<unknown>,
 ): void {
   const status = cfg.status ?? (cfg.method === 'post' ? 201 : 200);
+  const tier = typeof cfg.limit === 'number' ? tierFor(cfg.limit) : cfg.limit;
   const middleware = [
-    ...(cfg.limit ? [rateLimit(cfg.limit)] : []),
+    ...(tier ? [rateLimit(tier)] : []),
     ...(cfg.auth === true ? [authenticate] : Array.isArray(cfg.auth) ? [requirePermission(...cfg.auth)] : []),
   ];
   const envelope = z.object({
@@ -58,9 +62,9 @@ export function defineRoute<Q extends Schema = undefined, P extends Schema = und
     ...(cfg.auth ? { security: [{ jwt: [] }] } : {}),
     middleware,
     request: {
-      ...(cfg.query ? { query: cfg.query as z.ZodObject } : {}),
+      ...(cfg.query ? { query: strict(cfg.query) as z.ZodObject } : {}),
       ...(cfg.params ? { params: cfg.params as z.ZodObject } : {}),
-      ...(cfg.body ? { body: { content: { 'application/json': { schema: cfg.body } }, required: true } } : {}),
+      ...(cfg.body ? { body: { content: { 'application/json': { schema: strict(cfg.body) } }, required: true } } : {}),
     },
     responses: { [status]: { description: 'OK', content: { 'application/json': { schema: envelope } } } },
   });

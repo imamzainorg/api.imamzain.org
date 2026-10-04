@@ -1,21 +1,21 @@
 import { createMiddleware } from 'hono/factory';
 import type { AppEnv } from './types';
 
-// helmet 8 defaults merged with the directives in Nest's main.ts, in helmet's output order.
+// Exactly what helmet 8 emits for the directives in Nest's main.ts: those first, then its remaining defaults.
 const CSP = [
   "default-src 'self'",
-  "base-uri 'self'",
+  "script-src 'self' https://cdn.jsdelivr.net",
+  "style-src 'self' 'unsafe-inline'",
+  "img-src 'self' data: https:",
+  "connect-src 'self'",
   "font-src 'self' https:",
+  "object-src 'none'",
+  "frame-src 'none'",
+  "base-uri 'self'",
   "form-action 'self'",
   "frame-ancestors 'self'",
-  "img-src 'self' data: https:",
-  "object-src 'none'",
-  "script-src 'self' https://cdn.jsdelivr.net",
   "script-src-attr 'none'",
-  "style-src 'self' 'unsafe-inline'",
   'upgrade-insecure-requests',
-  "connect-src 'self'",
-  "frame-src 'none'",
 ].join(';');
 
 const HEADERS: Record<string, string> = {

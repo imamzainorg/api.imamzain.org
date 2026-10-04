@@ -21,5 +21,7 @@ export type AppEnv = {
     lang: string | null;
     /** Client IP from CF-Connecting-IP (Nest's `req.ip`). */
     ip: string;
+    /** Background work started with `defer`; closeDb waits for it before closing the pool. */
+    deferred: Promise<unknown>[];
   };
 };

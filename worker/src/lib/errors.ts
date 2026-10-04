@@ -42,6 +42,12 @@ type PrismaLike = { name?: string; code?: string; message?: string; meta?: { tar
 const isKnownPrisma = (e: unknown): e is PrismaLike & { code: string } =>
   typeof e === 'object' && e !== null && (e as PrismaLike).name === 'PrismaClientKnownRequestError' && typeof (e as PrismaLike).code === 'string';
 
+/**
+ * A non-UUID string reaching a @db.Uuid column (in practice a bad `:id` param). Nest's Rust engine
+ * raised P2023; through adapter-pg it is Postgres 22P02 with no Prisma code, only this text.
+ */
+const isInvalidUuid = (e: unknown) => e instanceof Error && /invalid input syntax for type uuid/i.test(e.message);
+
 /** CHECK-constraint violation (SQLSTATE 23514): always the client's fault, a 400. */
 function asCheckViolation(e: unknown): { constraint: string | null } | null {
   const text = e instanceof Error ? e.message : '';
@@ -80,6 +86,11 @@ export function errorHandler(err: unknown, c: Context<AppEnv>): Response {
     if (err.opts.retryAfterSeconds && err.opts.retryAfterSeconds > 0) retryAfter = Math.ceil(err.opts.retryAfterSeconds);
   } else if (client) {
     ({ status, message } = client);
+  } else if (isInvalidUuid(err) || (isKnownPrisma(err) && err.code === 'P2023')) {
+    // Before the CHECK branch: a bad id like "x23514" must not read as a constraint violation.
+    status = 400;
+    message = 'Invalid identifier format';
+    code = 'INVALID_IDENTIFIER';
   } else if (check) {
     status = 400;
     message = check.constraint
@@ -98,10 +109,6 @@ export function errorHandler(err: unknown, c: Context<AppEnv>): Response {
       status = 400;
       message = 'Foreign key constraint failed — referenced record does not exist';
       code = 'FK_CONSTRAINT_VIOLATION';
-    } else if (err.code === 'P2023') {
-      status = 400;
-      message = 'Invalid identifier format';
-      code = 'INVALID_IDENTIFIER';
     } else {
       console.error(`Unhandled Prisma error ${err.code}`, err);
     }

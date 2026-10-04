@@ -1,14 +1,15 @@
 import { sign } from 'hono/jwt';
 import { describe, expect, it, vi } from 'vitest';
 import { z } from '@hono/zod-openapi';
-import { stripSensitive } from '../src/lib/audit';
-import { createApp } from '../src/lib/create-app';
+import { audit, stripSensitive } from '../src/lib/audit';
+import { createApp, JSON_BODY_LIMIT } from '../src/lib/create-app';
 import { defineRoute } from '../src/lib/define-route';
 import { envelope } from '../src/lib/envelope';
 import { conflict } from '../src/lib/errors';
 import { envelopeEtag } from '../src/lib/etag';
 import { parseAcceptLanguage, resolveTranslation } from '../src/lib/i18n';
 import { buildPaginationMeta, paginationShape, resolvePagination } from '../src/lib/pagination';
+import { tierFor } from '../src/lib/rate-limit';
 import type { AppBindings } from '../src/lib/types';
 
 const SECRET = 'test-only-secret-not-for-production-0123456789';
@@ -261,5 +262,117 @@ describe('i18n, pagination, audit helpers', () => {
 
   it('strips secrets from audit changes recursively', () => {
     expect(stripSensitive({ a: 1, password: 'x', nested: [{ Token: 't', ok: true }] })).toEqual({ a: 1, nested: [{ ok: true }] });
+  });
+});
+
+describe('review fixes', () => {
+  const thrower = (err: Error) => {
+    const app = createApp();
+    app.get('/x', () => {
+      throw err;
+    });
+    return app.request('/x', {}, makeEnv());
+  };
+
+  it('a non-UUID id reaching Postgres is 400 INVALID_IDENTIFIER, even if it contains 23514', async () => {
+    const res = await thrower(Object.assign(new Error('invalid input syntax for type uuid: "x23514"'), { name: 'DriverAdapterError' }));
+    expect(res.status).toBe(400);
+    expect(await res.json()).toMatchObject({ code: 'INVALID_IDENTIFIER', error: 'Invalid identifier format' });
+  });
+
+  it('a CHECK violation from adapter-pg is 400 with the constraint name', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const res = await thrower(new Error('new row for relation "books" violates check constraint "books_part_number_check"'));
+    expect(res.status).toBe(400);
+    expect(await res.json()).toMatchObject({
+      code: 'CHECK_CONSTRAINT_VIOLATION',
+      error: 'The submitted values violate a data rule (books_part_number_check)',
+    });
+  });
+
+  it('accepts a token whose iat is slightly in the future (clock skew with Render)', async () => {
+    const res = await testApp().request('/me', { headers: { authorization: `Bearer ${await token({ iat: Math.floor(Date.now() / 1000) + 5 })}` } }, makeEnv());
+    expect(res.status).toBe(200);
+  });
+
+  it('closes the pool only after a deferred audit insert has finished', async () => {
+    const order: string[] = [];
+    const fakeDb = {
+      audit_logs: {
+        create: async () => {
+          await new Promise((r) => setTimeout(r, 20));
+          order.push('insert');
+        },
+      },
+      $disconnect: async () => {
+        order.push('disconnect');
+      },
+    };
+    const app = createApp();
+    app.use('*', async (c, next) => {
+      c.set('db', fakeDb as never);
+      await next();
+    });
+    defineRoute(app, { method: 'get', path: '/a' }, (c) => {
+      audit(c, { actorId: null, action: 'USER_LOGIN', resourceType: 'user' });
+      return null;
+    });
+    const waits: Promise<unknown>[] = [];
+    const ctx = { waitUntil: (p: Promise<unknown>) => waits.push(p), passThroughOnException() {}, props: {} };
+    expect((await app.request('/a', {}, makeEnv(), ctx as never)).status).toBe(200);
+    await Promise.all(waits);
+    expect(order).toEqual(['insert', 'disconnect']);
+  });
+
+  it('maps Nest @Throttle limits onto the 60 s tiers', () => {
+    expect(tierFor(10)).toBe('RL_10');
+    expect(tierFor(60)).toBe('RL_60');
+    expect(tierFor(1000)).toBeNull();
+    expect(tierFor(300)).toBeNull();
+    expect(() => tierFor(7)).toThrow(/No rate-limit binding/);
+  });
+
+  it('a numeric route limit uses the mapped binding, keyed per route and IP', async () => {
+    const limit = vi.fn(async () => ({ success: true }));
+    const app = createApp();
+    defineRoute(app, { method: 'get', path: '/t', limit: 10 }, () => null);
+    await app.request('/t', { headers: { 'cf-connecting-ip': '198.51.100.7' } }, makeEnv({ RL_10: { limit } }));
+    expect(limit).toHaveBeenCalledWith({ key: 'GET:/t:198.51.100.7' });
+  });
+
+  it('makes a plain z.object body strict', async () => {
+    const app = createApp();
+    defineRoute(app, { method: 'post', path: '/s', body: z.object({ t: z.string() }) }, () => null);
+    const res = await app.request('/s', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{"t":"a","extra":1}' }, makeEnv());
+    expect(res.status).toBe(400);
+    expect(((await res.json()) as { errors: string[] }).errors).toEqual(['property extra should not exist']);
+  });
+
+  it('an oversized body is 413 before the global throttle answers 429', async () => {
+    const big = 'x'.repeat(JSON_BODY_LIMIT + 1);
+    const res = await testApp().request(
+      '/posts',
+      { method: 'POST', headers: { 'content-type': 'application/json', 'content-length': String(big.length) }, body: big },
+      makeEnv({ RL_GLOBAL: { limit: async () => ({ success: false }) } }),
+    );
+    expect(res.status).toBe(413);
+    expect(await res.json()).toMatchObject({ code: 'PAYLOAD_TOO_LARGE', error: 'request entity too large' });
+    expect(res.headers.get('x-content-type-options')).toBe('nosniff');
+  });
+
+  it('sends credentials and preflight headers whatever the origin, like express cors', async () => {
+    const get = await testApp().request('/open', { headers: { origin: 'https://evil.test' } }, makeEnv());
+    expect(get.headers.get('access-control-allow-credentials')).toBe('true');
+    const pre = await testApp().request('/open', { method: 'OPTIONS', headers: { origin: 'https://evil.test' } }, makeEnv());
+    expect(pre.status).toBe(200);
+    expect(pre.headers.get('access-control-allow-origin')).toBeNull();
+    expect(pre.headers.get('access-control-allow-methods')).toBe('GET,HEAD,PUT,PATCH,POST,DELETE');
+  });
+
+  it('emits the CSP exactly as helmet 8 does', async () => {
+    const res = await testApp().request('/open', {}, makeEnv());
+    expect(res.headers.get('content-security-policy')).toBe(
+      "default-src 'self';script-src 'self' https://cdn.jsdelivr.net;style-src 'self' 'unsafe-inline';img-src 'self' data: https:;connect-src 'self';font-src 'self' https:;object-src 'none';frame-src 'none';base-uri 'self';form-action 'self';frame-ancestors 'self';script-src-attr 'none';upgrade-insecure-requests",
+    );
   });
 });
