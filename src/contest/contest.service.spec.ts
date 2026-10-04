@@ -400,9 +400,13 @@ describe("ContestService", () => {
       const { Prisma } = await import("@prisma/client");
       prisma.qutuf_sajjadiya_contest_attempts.findFirst
         .mockResolvedValueOnce(null) // fast path: nobody yet
-        .mockResolvedValueOnce(opened); // after the P2002: the winner is visible
+        .mockResolvedValueOnce(opened); // after the unique violation: the winner is visible
       prisma.$queryRaw.mockRejectedValueOnce(
-        new Prisma.PrismaClientKnownRequestError("Unique violation", { code: "P2002", clientVersion: "0.0.0-test" }),
+        new Prisma.PrismaClientKnownRequestError("Raw query failed. Code: `23505`", {
+          code: "P2010",
+          clientVersion: "0.0.0-test",
+          meta: { code: "23505" },
+        }),
       );
 
       const result = await service.start(dto, "127.0.0.1", "agent");
@@ -416,7 +420,11 @@ describe("ContestService", () => {
         .mockResolvedValueOnce(null)
         .mockResolvedValueOnce({ id: ATTEMPT_ID, submitted_at: new Date(), final_score: 1 });
       prisma.$queryRaw.mockRejectedValueOnce(
-        new Prisma.PrismaClientKnownRequestError("Unique violation", { code: "P2002", clientVersion: "0.0.0-test" }),
+        new Prisma.PrismaClientKnownRequestError("Raw query failed. Code: `23505`", {
+          code: "P2010",
+          clientVersion: "0.0.0-test",
+          meta: { code: "23505" },
+        }),
       );
 
       await expect(service.start(dto, "127.0.0.1", "agent")).rejects.toThrow(ConflictException);
@@ -426,7 +434,11 @@ describe("ContestService", () => {
       const { Prisma } = await import("@prisma/client");
       prisma.qutuf_sajjadiya_contest_attempts.findFirst.mockResolvedValue(null);
       prisma.$queryRaw.mockRejectedValueOnce(
-        new Prisma.PrismaClientKnownRequestError("Unique violation", { code: "P2002", clientVersion: "0.0.0-test" }),
+        new Prisma.PrismaClientKnownRequestError("Raw query failed. Code: `23505`", {
+          code: "P2010",
+          clientVersion: "0.0.0-test",
+          meta: { code: "23505" },
+        }),
       );
 
       await expect(service.start(dto, "127.0.0.1", "agent")).rejects.toThrow(ConflictException);
