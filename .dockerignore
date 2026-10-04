@@ -4,4 +4,4 @@ dist
 *.env.local
 .git
 coverage
-*.tsbuildinfo
+*.tsbuildinfoworker

@@ -2,6 +2,15 @@ generator client {
   provider = "prisma-client-js"
 }
 
+// Hono Worker client (worker/). Nest generates only `client` (`prisma generate --generator client`);
+// worker/ runs `--generator worker` with its own Prisma install.
+generator worker {
+  provider   = "prisma-client"
+  output     = "../worker/src/generated/prisma"
+  runtime    = "cloudflare"
+  engineType = "client"
+}
+
 datasource db {
   provider  = "postgresql"
   url       = env("DATABASE_URL")
