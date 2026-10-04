@@ -13,10 +13,12 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@hono/zod-openapi": "^1.6.3",
     "@prisma/adapter-pg": "6.19.3",
     "@prisma/client": "6.19.3",
     "hono": "^4.13.13",
-    "pg": "^8.23.1"
+    "pg": "^8.23.1",
+    "zod": "^4.6.5"
   },
   "devDependencies": {
     "@types/pg": "^8.23.1",
