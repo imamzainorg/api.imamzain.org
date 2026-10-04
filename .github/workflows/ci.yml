@@ -23,7 +23,7 @@ jobs:
         run: npm ci
 
       - name: Generate Prisma client
-        run: npx prisma generate
+        run: npx prisma generate --generator client
 
       - name: Type check
         run: npm run type-check
@@ -64,7 +64,7 @@ jobs:
         run: npm ci
 
       - name: Generate Prisma client
-        run: npx prisma generate
+        run: npx prisma generate --generator client
 
       # migrate deploy (not db push): the baseline migration creates the
       # citext/pgcrypto/pg_trgm extensions the schema needs, and this doubles
@@ -92,3 +92,28 @@ jobs:
           DATABASE_TEST_URL: postgresql://postgres:postgres@localhost:5432/imamzain_test
           JWT_SECRET: test-only-secret-not-for-production
           BCRYPT_ROUNDS: '4'
+  worker:
+    name: Worker (typecheck & test)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: worker
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+          cache-dependency-path: worker/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      # Generates the worker Prisma client and worker-configuration.d.ts first.
+      - name: Type check
+        run: npm run typecheck
+
+      - name: Unit tests
+        run: npm test

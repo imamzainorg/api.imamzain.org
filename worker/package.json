@@ -1,0 +1,28 @@
+{
+  "name": "imamzain-api-worker",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "gen": "prisma generate --schema ../prisma/schema.prisma --generator worker && wrangler types",
+    "dev": "npm run gen && wrangler dev",
+    "deploy": "npm run gen && wrangler deploy",
+    "typecheck": "npm run gen && tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@prisma/adapter-pg": "6.19.3",
+    "@prisma/client": "6.19.3",
+    "hono": "^4.13.13",
+    "pg": "^8.23.1"
+  },
+  "devDependencies": {
+    "@types/pg": "^8.23.1",
+    "prisma": "6.19.3",
+    "typescript": "^6.0.3",
+    "vitest": "^5.0.3",
+    "wrangler": "^4.147.0"
+  }
+}

@@ -7,12 +7,12 @@
     "node": ">=20"
   },
   "scripts": {
-    "build": "prisma generate && tsc -p tsconfig.build.json",
+    "build": "prisma generate --generator client && tsc -p tsconfig.build.json",
     "start": "node dist/src/main.js",
     "dev": "ts-node-dev --respawn --transpile-only src/main.ts",
     "prisma:pull": "prisma db pull",
     "prisma:deploy": "prisma migrate deploy",
-    "prisma:generate": "prisma generate",
+    "prisma:generate": "prisma generate --generator client",
     "prisma:studio": "prisma studio",
     "prisma:seed": "ts-node -P tsconfig.base.json prisma/seed.ts",
     "prisma:seed-content": "ts-node -P tsconfig.base.json prisma/seed-content.ts",
@@ -23,7 +23,7 @@
     "prisma:reconcile-audios": "ts-node -P tsconfig.base.json prisma/reconcile-audios.ts",
     "prisma:backfill-variants": "ts-node -P tsconfig.base.json prisma/backfill-media-variants.ts",
     "prisma:diagnose": "ts-node -P tsconfig.base.json prisma/seed-diagnose.ts",
-    "type-check": "prisma generate && tsc --noEmit -p tsconfig.build.json",
+    "type-check": "prisma generate --generator client && tsc --noEmit -p tsconfig.build.json",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
     "format": "prettier --write .",

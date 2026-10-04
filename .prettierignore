@@ -3,3 +3,6 @@ dist
 coverage
 package-lock.json
 prisma/migrations
+worker/src/generated
+worker/.wrangler
+worker/worker-configuration.d.ts

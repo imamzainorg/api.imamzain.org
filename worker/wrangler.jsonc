@@ -1,0 +1,56 @@
+// Hono API Worker (docs/HONO-MIGRATION-PLAN.md). No route yet: Phase 2 task 6 attaches
+// api.imamzain.org/* once the fallthrough to ORIGIN_URL exists.
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "imamzain-api",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-09-01",
+  "compatibility_flags": ["nodejs_compat"],
+  "observability": { "enabled": true },
+
+  // D9: Smart Placement never placed at our traffic (Phase 1 check 6); pin next to Supabase.
+  "placement": { "region": "aws:eu-north-1" },
+
+  // Caching is off on this config (stale reads would reach the CMS). Its origin connection
+  // limit must stay at 5 while Supavisor's session pool is 15 (Phase 1 check 1).
+  // localConnectionString is what `wrangler dev` uses: the same DB as .env.test.example.
+  "hyperdrive": [
+    {
+      "binding": "HYPERDRIVE",
+      "id": "c81bd672682b4d7c8ee2661b0d0f7f08",
+      "localConnectionString": "postgresql://postgres:postgres@localhost:5432/imamzain_test"
+    }
+  ],
+
+  "r2_buckets": [{ "binding": "R2", "bucket_name": "imamzain-media" }],
+
+  "images": { "binding": "IMAGES" },
+
+  // D6: the binding only has 10 s / 60 s windows and a fixed limit, so there is one binding
+  // per limit tier. Nest's 15-min and 1-h limits are mapped onto these by the rate-limit
+  // helper (Phase 2 task 2). namespace_id must be unique per Cloudflare account.
+  "ratelimits": [
+    // Nest's API-wide ceiling: 3,000 / 15 min per IP.
+    { "name": "RL_GLOBAL", "namespace_id": "1001", "simple": { "limit": 200, "period": 60 } },
+    { "name": "RL_60", "namespace_id": "1002", "simple": { "limit": 60, "period": 60 } },
+    { "name": "RL_30", "namespace_id": "1003", "simple": { "limit": 30, "period": 60 } },
+    { "name": "RL_10", "namespace_id": "1004", "simple": { "limit": 10, "period": 60 } },
+    { "name": "RL_5", "namespace_id": "1005", "simple": { "limit": 5, "period": 60 } },
+    // D7: view dedup, keyed on `ip:resource`.
+    { "name": "RL_VIEW", "namespace_id": "1006", "simple": { "limit": 1, "period": 60 } }
+  ],
+
+  "vars": {
+    // D11: the current Nest deployment; anything not ported is fetched from here.
+    "ORIGIN_URL": "https://api-imamzain-org-0fiv.onrender.com",
+    "ALLOWED_ORIGINS": "https://imamzain.org,https://cms.imamzain.com,https://app.imamzain.org",
+    "R2_PUBLIC_BASE_URL": "https://cdn.imamzain.org"
+  }
+
+  // Secrets: set with `npx wrangler secret put <NAME>`, or in .dev.vars for `wrangler dev`.
+  // Never put them in this file. Same names and values as the Nest env:
+  //   JWT_SECRET
+  //   R2_ACCOUNT_ID, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY   (aws4fetch presigned PUTs)
+  //   TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_WHATSAPP_FROM, TWILIO_TEMPLATE_SID
+  //   NEWSLETTER_UNSUBSCRIBE_SECRET, CONTEST_ATTEMPT_SECRET   (only if set on Nest)
+}

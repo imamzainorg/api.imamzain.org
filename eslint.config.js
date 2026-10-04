@@ -6,7 +6,7 @@ const eslintConfigPrettier = require('eslint-config-prettier');
 module.exports = tseslint.config(
   {
     // Generated / vendored output — never lint these.
-    ignores: ['dist/**', 'node_modules/**', 'coverage/**', 'prisma/migrations/**'],
+    ignores: ['dist/**', 'node_modules/**', 'coverage/**', 'prisma/migrations/**', 'worker/**'],
   },
   {
     files: ['src/**/*.ts', 'test/**/*.ts', 'prisma/**/*.ts'],
