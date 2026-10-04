@@ -40,4 +40,4 @@ npm run dev         # wrangler dev; Hyperdrive uses localConnectionString (local
 - No new features during the migration. Prisma stays on 6.x (≥ 6.16) until Nest is gone (D10).
 - Never put secrets in `wrangler.jsonc`; use `wrangler secret put` or `worker/.dev.vars`.
 - Don't deploy unless the session prompt says so.
-- Commits: no AI co-author trailers.
+- Commits and PRs: no AI co-author trailers, AI attribution footers or session links.
