@@ -30,7 +30,12 @@ export function rethrowP2002AsConflict(err: unknown, message: string, byTarget?:
   throw err;
 }
 
-/** True for a Prisma unique-constraint violation (P2002), whatever index it was. */
+/**
+ * True for a unique-constraint violation, whatever index it was: P2002 from a
+ * model query, or P2010 carrying Postgres 23505 from `$queryRaw`/`$executeRaw`.
+ */
 export function isUniqueViolation(err: unknown): boolean {
-  return err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002';
+  if (!(err instanceof Prisma.PrismaClientKnownRequestError)) return false;
+  if (err.code === 'P2002') return true;
+  return err.code === 'P2010' && (err.meta as { code?: unknown } | undefined)?.code === '23505';
 }
