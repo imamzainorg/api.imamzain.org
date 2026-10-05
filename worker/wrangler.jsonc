@@ -47,7 +47,7 @@
 
   "vars": {
     // D11: the current Nest deployment; anything not ported is fetched from here.
-    "ORIGIN_URL": "https://api-imamzain-org-0fiv.onrender.com",
+    "ORIGIN_URL": "https://api-imamzain-org-temp.onrender.com",
     "ALLOWED_ORIGINS": "https://imamzain.org,https://cms.imamzain.com,https://app.imamzain.org",
     "R2_PUBLIC_BASE_URL": "https://cdn.imamzain.org"
   }

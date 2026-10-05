@@ -26,6 +26,17 @@ for this deploy**. Set each one in the PR that first ports a group using it:
 
 Optional now, harmless: `cd worker && npx wrangler secret put JWT_SECRET`.
 
+## Before attaching the route
+
+The origin must answer on the exact host in `ORIGIN_URL` (the first attempt returned 404 with
+`x-render-routing: blocked-render-subdomain` because the old service rejected its onrender.com host):
+
+```bash
+curl -si https://api-imamzain-org-temp.onrender.com/api/v1/health | head -5   # must be 200
+```
+
+`TRUST_PROXY_HOPS=2` goes on the Render service behind `api-imamzain-org-temp` (the one `api.imamzain.org` serves today).
+
 ## Steps
 
 1. **Local smoke (optional, no prod change).** `cd worker && npm ci && npm run dev`, then
@@ -98,7 +109,7 @@ If it shows a Cloudflare IP, `TRUST_PROXY_HOPS` is too low; if `1.2.3.4`, it is 
 for i in $(seq 1 20); do curl -so /dev/null -w '%{time_starttransfer}\n' $API/api/v1/health; done | sort -n
 ```
 
-Compare p50/p95 with the same loop against `https://api-imamzain-org-0fiv.onrender.com/api/v1/health`.
+Compare p50/p95 with the same loop against `https://api-imamzain-org-temp.onrender.com/api/v1/health`.
 Expect tens of ms added at most (Render cold starts dominate otherwise).
 
 **5. Website and forms**

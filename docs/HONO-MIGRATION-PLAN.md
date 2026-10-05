@@ -91,7 +91,7 @@ These features could be **dropped entirely**, but only on the strength of Phase 
 
 | Item | Value |
 |---|---|
-| Origin host | Render, single instance, service URL `api-imamzain-org-0fiv.onrender.com` |
+| Origin host | Render, single instance, service URL `api-imamzain-org-temp.onrender.com` (the old `-0fiv` service rejects its onrender.com host; found at the first pass-through deploy attempt, 2026-10-05) |
 | Proxying | `api.imamzain.org` is a proxied CNAME to the Render URL. Cache Rule: bypass for every `api.imamzain.org/*` URL |
 | Health check | `GET /api/v1/health`; an external cron-job.org ping hits it (≈ 4.7k of the 24.6k requests) |
 | `TRUST_PROXY_HOPS` | unset (= 1) while traffic is client → Cloudflare → Render. Throttle buckets and `audit_logs.ip_address` are therefore Cloudflare edge IPs today; CMS notes say `=2` is still open |
