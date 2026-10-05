@@ -38,9 +38,21 @@ One bullet per explained diff: a backticked key, \`*\` matching anything, then w
 
 const key = (label: string, d: Diff) => `${label} ${d.field}`;
 
+/** The text outside `<!-- … -->` comments (an unclosed one runs to the end). */
+function outsideComments(s: string): string {
+  return s
+    .split('<!--')
+    .map((part, i) => {
+      if (i === 0) return part;
+      const end = part.indexOf('-->');
+      return end < 0 ? '' : part.slice(end + 3);
+    })
+    .join('');
+}
+
 /** Backticked globs from the explanation bullets. */
 export function explanationPatterns(section: string): RegExp[] {
-  const body = section.replace(/<!--[\s\S]*?-->/g, '');
+  const body = outsideComments(section);
   return [...body.matchAll(/^\s*[-*]\s.*$/gm)].flatMap((line) =>
     [...line[0].matchAll(/`([^`]+)`/g)].map(
       (m) => new RegExp(`^${m[1].split('*').map((s) => s.replace(/[.+?^${}()|[\]\\]/g, '\\$&')).join('.*')}$`),
@@ -48,7 +60,11 @@ export function explanationPatterns(section: string): RegExp[] {
   );
 }
 
-const cell = (s: string) => s.replace(/\|/g, '\\|').replace(/\n/g, ' ');
+/**
+ * A GFM table cell. Only `|` needs escaping: the table parser turns `\|` back into `|` before the code
+ * span is read, and a code span keeps every other backslash as it is.
+ */
+const cell = (s: string) => s.split('|').join('\\|').split('\n').join(' ');
 
 /** Writes reports/<group>.md (keeping its Explanations section) and returns the counts for the console line. */
 export function writeReport(result: GroupResult, dir: string, source: string): Summary {

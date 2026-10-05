@@ -22,6 +22,9 @@ const psql = (db: string, sql: string) =>
   docker(['exec', '-i', CONTAINER, 'psql', '-U', 'postgres', '-d', db, '-v', 'ON_ERROR_STOP=1', '-q', '-At', '-f', '-'], sql);
 
 async function ensureContainer(): Promise<void> {
+  if ((await run('docker', ['info', '--format', '{{.ServerVersion}}'], { allowFail: true })).code !== 0) {
+    throw new Error('Docker is not running: start Docker Desktop and run this again');
+  }
   const state = (await run('docker', ['inspect', '-f', '{{.State.Running}}', CONTAINER], { allowFail: true })).stdout.toString().trim();
   if (state === 'false') await docker(['start', CONTAINER]);
   else if (state !== 'true') {

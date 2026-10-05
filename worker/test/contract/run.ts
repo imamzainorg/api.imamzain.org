@@ -8,18 +8,27 @@ import { prepareDatabases } from '../harness/db';
 import { startStack } from '../harness/servers';
 import { runContract } from './runner';
 
-const group = process.argv[2];
-const db = process.env.CONTRACT_DATABASE_URL ?? (await prepareDatabases(['contract'], console.log)).urls.contract;
-const stack = await startStack(db);
-let failed = false;
-try {
-  for (const [target, url] of [['nest', stack.nest], ['worker', stack.worker]] as const) {
-    const r = await runContract(target, url, db, group);
-    failed ||= !r.ok;
-    console.log(`contract ${target}: ${r.summary}${r.ok ? '' : ` → ${rel(r.log)}`}`);
-    for (const f of r.failures.slice(0, 10)) console.log(`  × ${f}`);
+async function main(group: string | undefined): Promise<boolean> {
+  const db = process.env.CONTRACT_DATABASE_URL ?? (await prepareDatabases(['contract'], console.log)).urls.contract;
+  const stack = await startStack(db);
+  let ok = true;
+  try {
+    for (const [target, url] of [['nest', stack.nest], ['worker', stack.worker]] as const) {
+      const r = await runContract(target, url, db, group);
+      ok &&= r.ok;
+      console.log(`contract ${target}: ${r.summary}${r.ok ? '' : ` → ${rel(r.log)}`}`);
+      for (const f of r.failures.slice(0, 10)) console.log(`  × ${f}`);
+    }
+  } finally {
+    await stack.stop();
   }
-} finally {
-  await stack.stop();
+  return ok;
 }
-process.exit(failed ? 1 : 0);
+
+main(process.argv[2]).then(
+  (ok) => process.exit(ok ? 0 : 1),
+  (err: Error) => {
+    console.error(`contract: ${err.message}`);
+    process.exit(1);
+  },
+);

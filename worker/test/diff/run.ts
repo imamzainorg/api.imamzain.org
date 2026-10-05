@@ -7,23 +7,32 @@ import { prepareDatabases } from '../harness/db';
 import { startStack } from '../harness/servers';
 import { runDiff, summaryLine } from './replay';
 
+async function main(groups: string[]): Promise<boolean> {
+  const runStart = Date.now();
+  const { urls, source } = await prepareDatabases(['diff_a', 'diff_b'], console.log);
+  const stack = await startStack(urls.diff_a, urls.diff_b);
+  let ok = true;
+  try {
+    for (const group of groups) {
+      const s = await runDiff(group, stack, urls.diff_a, runStart, source);
+      ok &&= s.unexplained === 0;
+      console.log(`diff ${group}: ${summaryLine(s)}`);
+    }
+  } finally {
+    await stack.stop();
+  }
+  return ok;
+}
+
 const groups = process.argv.slice(2);
 if (groups.length === 0) {
   console.error('usage: npm run diff -- <group> [<group>...]');
   process.exit(2);
 }
-
-const runStart = Date.now();
-const { urls, source } = await prepareDatabases(['diff_a', 'diff_b'], console.log);
-const stack = await startStack(urls.diff_a, urls.diff_b);
-let failed = false;
-try {
-  for (const group of groups) {
-    const s = await runDiff(group, stack, urls.diff_a, runStart, source);
-    failed ||= s.unexplained > 0;
-    console.log(`diff ${group}: ${summaryLine(s)}`);
-  }
-} finally {
-  await stack.stop();
-}
-process.exit(failed ? 1 : 0);
+main(groups).then(
+  (ok) => process.exit(ok ? 0 : 1),
+  (err: Error) => {
+    console.error(`diff: ${err.message}`);
+    process.exit(1);
+  },
+);
