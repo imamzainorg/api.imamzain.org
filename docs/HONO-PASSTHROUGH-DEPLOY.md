@@ -8,7 +8,7 @@ The Worker goes on `api.imamzain.org/*` with zero ported groups: every request i
 | Where | Change |
 |---|---|
 | `worker/wrangler.jsonc` | Route `api.imamzain.org/*` on zone `imamzain.org`; `workers_dev: false` |
-| Render env (Nest) | `TRUST_PROXY_HOPS=2` so `req.ip` is the visitor (audit IPs and throttles) |
+| Render env (Nest) | `TRUST_PROXY_HOPS=4` so `req.ip` is the visitor (audit IPs and throttles) |
 | DNS | None. `api.imamzain.org` stays a proxied CNAME to Render; the Worker fetches `onrender.com` directly, so there is no loop |
 
 ## Secrets
@@ -35,7 +35,7 @@ The origin must answer on the exact host in `ORIGIN_URL` (the first attempt retu
 curl -si https://api-imamzain-org-temp.onrender.com/api/v1/health | head -5   # must be 200
 ```
 
-`TRUST_PROXY_HOPS=2` goes on the Render service behind `api-imamzain-org-temp` (the one `api.imamzain.org` serves today).
+`TRUST_PROXY_HOPS=4` goes on the Render service behind `api-imamzain-org-temp` (the one `api.imamzain.org` serves today).
 
 ## Steps
 
@@ -43,9 +43,8 @@ curl -si https://api-imamzain-org-temp.onrender.com/api/v1/health | head -5   # 
    `curl -i localhost:8787/api/v1/health` should return Nest's health response.
 2. **Merge the PR** after CI is green.
 3. **Deploy the Worker:** `cd worker && npm ci && npx wrangler deploy`. The route attaches at once.
-4. **Set `TRUST_PROXY_HOPS=2` on Render** (service → Environment). Render restarts the instance (cold start, a few seconds of 503).
-   This is safe before or after step 3 and on rollback: the Worker overwrites `X-Forwarded-For`
-   with one entry, and Render appends the peer, the same shape as today's Cloudflare-proxied traffic.
+4. **Set `TRUST_PROXY_HOPS=4` on Render** (service → Environment). Render restarts the instance (cold start, a few seconds of 503).
+   `4` counts the Worker hop plus Cloudflare/Render hops in front of Nest. Set it after step 3, and revert it to `1` on rollback (see Rollback).
 5. **Verify** (below). Watch `npx wrangler tail --status error` for ~10 minutes.
 
 ## Verification
@@ -101,7 +100,7 @@ SELECT ip_address FROM audit_logs WHERE action = 'USER_LOGIN_FAILED' ORDER BY cr
 -- must NOT be 1.2.3.4 (it should be your IP)
 ```
 
-If it shows a Cloudflare IP, `TRUST_PROXY_HOPS` is too low; if `1.2.3.4`, it is too high. Adjust on Render.
+If it shows a Cloudflare IP, `TRUST_PROXY_HOPS` is too low (2 and 3 both were); if `1.2.3.4`, it is too high. Adjust on Render.
 
 **4. Added latency is small**
 
@@ -131,4 +130,4 @@ there is nothing to roll back to. Detach the route instead; traffic returns to R
 - Dashboard: Workers & Pages → `imamzain-api` → Settings → Domains & Routes → delete `api.imamzain.org/*`, or
 - Edit `wrangler.jsonc` to `"routes": []` and `npx wrangler deploy`.
 
-`TRUST_PROXY_HOPS=2` can stay (see step 4). From the second deploy on, `npx wrangler rollback` works as in the runbook.
+**Set `TRUST_PROXY_HOPS` back to `1` (the default) if you detach the route.** `4` is only right with the Worker in the chain (verified 2026-10-05: with `2` and `3`, `audit_logs.ip_address` was a Cloudflare address; with `4` it was the client). Without the Worker it would trust spoofable `X-Forwarded-For` entries. From the second deploy on, `npx wrangler rollback` works as in the runbook.
