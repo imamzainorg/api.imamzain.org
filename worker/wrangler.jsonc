@@ -1,11 +1,16 @@
-// Hono API Worker (docs/HONO-MIGRATION-PLAN.md). No route yet: Phase 2 task 6 attaches
-// api.imamzain.org/* once the fallthrough to ORIGIN_URL exists.
+// Hono API Worker (docs/HONO-MIGRATION-PLAN.md). Phase 2 task 6: on api.imamzain.org/* with zero
+// ported groups, so everything falls through to ORIGIN_URL. Deploy steps: docs/HONO-PASSTHROUGH-DEPLOY.md.
 {
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "imamzain-api",
   "main": "src/index.ts",
   "compatibility_date": "2026-09-01",
   "compatibility_flags": ["nodejs_compat"],
+
+  // Route on the zone, not a Custom Domain: api.imamzain.org stays a proxied CNAME to Render (the
+  // Worker fetches ORIGIN_URL directly, so there is no loop). Rollback = remove this route.
+  "routes": [{ "pattern": "api.imamzain.org/*", "zone_name": "imamzain.org" }],
+  "workers_dev": false,
   "observability": { "enabled": true },
 
   // D9: Smart Placement never placed at our traffic (Phase 1 check 6); pin next to Supabase.
