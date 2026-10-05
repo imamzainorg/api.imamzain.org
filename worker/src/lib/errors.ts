@@ -1,5 +1,6 @@
 import type { Context } from 'hono';
 import { HTTPException } from 'hono/http-exception';
+import { JSON_HEADERS } from './envelope';
 import type { AppEnv } from './types';
 
 /** Nest's HttpException: status + `error` text, optionally a specific `code`, validation `errors`, Retry-After. */
@@ -129,7 +130,7 @@ export function errorHandler(err: unknown, c: Context<AppEnv>): Response {
   if (retryAfter !== undefined) c.header('Retry-After', String(retryAfter));
   // Overrides any public cache header a route set before failing (see AllExceptionsFilter).
   c.header('Cache-Control', 'no-store');
-  return c.json(body, status as 400);
+  return c.json(body, status as 400, JSON_HEADERS);
 }
 
 /** Mirrors prisma-error.util.ts: P2002 (or its raw-query form) as a 409 with a domain message. */

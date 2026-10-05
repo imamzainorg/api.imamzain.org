@@ -85,6 +85,7 @@ describe('envelope + etag', () => {
     const first = await app.request('/open', {}, makeEnv());
     const tag = first.headers.get('etag')!;
     expect(tag).toBeTruthy();
+    expect(first.headers.get('content-type')).toBe('application/json; charset=utf-8');
     const second = await app.request('/open', { headers: { 'if-none-match': tag } }, makeEnv());
     expect(second.status).toBe(304);
     expect(await second.text()).toBe('');
@@ -98,6 +99,7 @@ describe('errors', () => {
     const res = await testApp().request('/dup?a=1', {}, makeEnv());
     expect(res.status).toBe(409);
     expect(res.headers.get('cache-control')).toBe('no-store');
+    expect(res.headers.get('content-type')).toBe('application/json; charset=utf-8');
     expect(await res.json()).toMatchObject({ success: false, code: 'X', error: 'nope', path: '/dup?a=1' });
   });
 

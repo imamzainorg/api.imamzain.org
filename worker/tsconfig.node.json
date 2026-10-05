@@ -1,0 +1,16 @@
+{
+  // Node-side test code: the diff harness, the contract suite and its runners. tsconfig.json covers the
+  // Worker itself (workerd types); the two type worlds don't mix.
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "lib": ["ES2023"],
+    "types": ["node"],
+    "strict": true,
+    "skipLibCheck": true,
+    "isolatedModules": true,
+    "noEmit": true
+  },
+  "include": ["test/harness", "test/diff", "test/contract", "test/check.ts", "vitest.config.ts", "vitest.contract.config.ts"]
+}

@@ -15,8 +15,11 @@ export function envelope(body: unknown): Record<string, unknown> {
   return { data: body, success: true, timestamp };
 }
 
+/** Express's `res.json` content type; Hono's `c.json` alone omits the charset. */
+export const JSON_HEADERS = { 'Content-Type': 'application/json; charset=utf-8' };
+
 export function respond(c: Context<AppEnv>, body: unknown, status: ContentfulStatusCode = 200): Response {
-  return c.json(envelope(body), status);
+  return c.json(envelope(body), status, JSON_HEADERS);
 }
 
 /**
