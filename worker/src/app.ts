@@ -2,6 +2,10 @@ import { Hono } from 'hono';
 import { academicPaperCategories } from './features/academic-paper-categories/routes';
 import { bookCategories } from './features/book-categories/routes';
 import { galleryCategories } from './features/gallery-categories/routes';
+import { languages } from './features/languages/routes';
+import { settings } from './features/settings/routes';
+import { speakers } from './features/speakers/routes';
+import { stores } from './features/stores/routes';
 import { postCategories } from './features/post-categories/routes';
 import { proxyToOrigin } from './lib/proxy';
 import type { AppEnv } from './lib/types';
@@ -16,6 +20,10 @@ export const ported: Record<string, Hono<AppEnv>> = {
   '/api/v1/book-categories': bookCategories,
   '/api/v1/gallery-categories': galleryCategories,
   '/api/v1/post-categories': postCategories,
+  '/api/v1/languages': languages,
+  '/api/v1/settings': settings,
+  '/api/v1/speakers': speakers,
+  '/api/v1/stores': stores,
 };
 
 export const app = new Hono<AppEnv>();
