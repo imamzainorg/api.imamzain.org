@@ -6,9 +6,10 @@ export const DEFAULT_LIMIT = 20;
 export const MAX_LIMIT = 100;
 
 /** `?page=&limit=` (Nest's PaginationDto). Spread into a route's query schema: `z.strictObject({ ...paginationShape, q })`. */
+// Checks in class-validator's reporting order (@IsInt @Min @Max, read bottom-up), so `?limit=0.5` lists both errors as Nest does.
 export const paginationShape = {
-  page: z.coerce.number().int().min(1).default(DEFAULT_PAGE),
-  limit: z.coerce.number().int().min(1).max(MAX_LIMIT).default(DEFAULT_LIMIT),
+  page: z.coerce.number().min(1).int().default(DEFAULT_PAGE),
+  limit: z.coerce.number().max(MAX_LIMIT).min(1).int().default(DEFAULT_LIMIT),
 };
 
 export interface PaginationInput {

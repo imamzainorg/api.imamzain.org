@@ -38,7 +38,14 @@ export function defaultCodeForStatus(status: number): string {
   return STATUS_CODES[status] ?? (status >= 500 ? 'INTERNAL_ERROR' : 'ERROR');
 }
 
-type PrismaLike = { name?: string; code?: string; message?: string; meta?: { target?: unknown; code?: unknown } };
+/** What adapter-pg puts in `meta.driverAdapterError.cause` (the Rust engine's `meta.target` is never set). */
+type AdapterCause = { kind?: string; originalCode?: string; constraint?: { fields?: string[]; index?: string } };
+type PrismaLike = {
+  name?: string;
+  code?: string;
+  message?: string;
+  meta?: { target?: unknown; code?: unknown; driverAdapterError?: { cause?: AdapterCause } };
+};
 
 const isKnownPrisma = (e: unknown): e is PrismaLike & { code: string } =>
   typeof e === 'object' && e !== null && (e as PrismaLike).name === 'PrismaClientKnownRequestError' && typeof (e as PrismaLike).code === 'string';
@@ -133,13 +140,19 @@ export function errorHandler(err: unknown, c: Context<AppEnv>): Response {
   return c.json(body, status as 400, JSON_HEADERS);
 }
 
-/** Mirrors prisma-error.util.ts: P2002 (or its raw-query form) as a 409 with a domain message. */
+/**
+ * The violated index / columns of a P2002 as one string (`lang,slug`, or an index name). Nest read
+ * `meta.target`; through adapter-pg the columns are in the driver error's `constraint` instead.
+ */
 function uniqueTargetOf(err: PrismaLike): string {
   const target = err.meta?.target;
   if (Array.isArray(target)) return target.join(',');
-  return typeof target === 'string' ? target : '';
+  if (typeof target === 'string') return target;
+  const constraint = err.meta?.driverAdapterError?.cause?.constraint;
+  return constraint?.fields?.join(',') ?? constraint?.index ?? '';
 }
 
+/** Mirrors prisma-error.util.ts: P2002 (or its raw-query form) as a 409 with a domain message. */
 export function rethrowP2002AsConflict(err: unknown, message: string, byTarget?: Record<string, string>): never {
   if (isKnownPrisma(err) && err.code === 'P2002') {
     if (byTarget) {
@@ -156,5 +169,28 @@ export function rethrowP2002AsConflict(err: unknown, message: string, byTarget?:
 export function isUniqueViolation(err: unknown): boolean {
   if (!isKnownPrisma(err)) return false;
   if (err.code === 'P2002') return true;
-  return err.code === 'P2010' && err.meta?.code === '23505';
+  return err.code === 'P2010' && (err.meta?.code === '23505' || err.meta?.driverAdapterError?.cause?.originalCode === '23505');
 }
+
+/**
+ * unique-conflict.util.ts: the violated index / columns of a unique violation, lowercased, or null when
+ * `err` is not one. Callers match with `includes`.
+ */
+export function uniqueViolationTarget(err: unknown): string | null {
+  return isUniqueViolation(err) ? uniqueTargetOf(err as PrismaLike).toLowerCase() : null;
+}
+
+/** `code`s of the 409s a unique index produces; clients branch on these. */
+export const UNIQUE_CONFLICT_CODES = {
+  SLUG_ALREADY_USED: 'SLUG_ALREADY_USED',
+  DUPLICATE_TRANSLATION_LANG: 'DUPLICATE_TRANSLATION_LANG',
+  GALLERY_IMAGE_EXISTS: 'GALLERY_IMAGE_EXISTS',
+  GALLERY_IMAGE_IN_TRASH: 'GALLERY_IMAGE_IN_TRASH',
+} as const;
+
+/** A translation table's (entity, lang) key: one language sent twice. Check `slug` first: (lang, slug) mentions `lang` too. */
+export function isDuplicateLangTarget(target: string): boolean {
+  return target.includes('lang') || target.includes('pkey');
+}
+
+export const DUPLICATE_LANG_MESSAGE = 'translations lists the same language more than once; send one entry per language';

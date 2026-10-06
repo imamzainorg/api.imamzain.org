@@ -1,14 +1,16 @@
 import { Hono } from 'hono';
+import { postCategories } from './features/post-categories/routes';
 import { proxyToOrigin } from './lib/proxy';
 import type { AppEnv } from './lib/types';
 import './lib/bigint';
 
 /**
- * Ported-group table: path prefix → router built with `createApp()` (lib/create-app.ts).
- * Empty until the first group is ported, so every request falls through to ORIGIN_URL.
- * Add an entry in the same PR that ports the group, e.g. `'/api/v1/book-categories': bookCategories`.
+ * Ported-group table: path prefix → router built with `createApp()` (lib/create-app.ts). Any other
+ * path falls through to ORIGIN_URL. Add an entry in the same PR that ports the group.
  */
-export const ported: Record<string, Hono<AppEnv>> = {};
+export const ported: Record<string, Hono<AppEnv>> = {
+  '/api/v1/post-categories': postCategories,
+};
 
 export const app = new Hono<AppEnv>();
 

@@ -39,4 +39,6 @@ export const rows =
     return values;
   };
 
-export const samplers: Record<string, Record<string, Sampler>> = {};
+export const samplers: Record<string, Record<string, Sampler>> = {
+  'post-categories': { id: rows('post_categories') },
+};
