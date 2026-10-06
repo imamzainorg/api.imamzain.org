@@ -1,5 +1,6 @@
 import { createMiddleware } from 'hono/factory';
 import type { PrismaClient } from '../generated/prisma/client';
+import { badRequest } from './errors';
 import type { AppEnv } from './types';
 
 /**
@@ -74,4 +75,12 @@ export function resolveTranslation<T extends TranslationLike>(
   const flagged = candidates.filter((t) => t.is_default === true);
   const pool = flagged.length > 0 ? flagged : candidates;
   return pool.find((t) => t.lang === FALLBACK_LANG) ?? [...pool].sort(byLangCode)[0] ?? null;
+}
+
+/** A full translation set must contain exactly one `is_default: true` row (create paths, full replaces). */
+export function assertExactlyOneDefault(
+  translations: ReadonlyArray<{ is_default?: boolean | null }> | null | undefined,
+  message = 'Exactly one translation must have is_default = true',
+): void {
+  if ((translations ?? []).filter((t) => t.is_default === true).length !== 1) throw badRequest(message);
 }

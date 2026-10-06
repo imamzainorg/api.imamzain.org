@@ -19,7 +19,11 @@
     "check:post-categories": "tsx test/check.ts post-categories",
     "check:book-categories": "tsx test/check.ts book-categories",
     "check:gallery-categories": "tsx test/check.ts gallery-categories",
-    "check:academic-paper-categories": "tsx test/check.ts academic-paper-categories"
+    "check:academic-paper-categories": "tsx test/check.ts academic-paper-categories",
+    "check:languages": "tsx test/check.ts languages",
+    "check:settings": "tsx test/check.ts settings",
+    "check:speakers": "tsx test/check.ts speakers",
+    "check:stores": "tsx test/check.ts stores"
   },
   "dependencies": {
     "@hono/zod-openapi": "^1.6.3",
