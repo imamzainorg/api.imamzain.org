@@ -351,7 +351,7 @@ export function categorySuite(cfg: CategorySuite) {
       expectError(await restore(cat.id), 404, 'NOT_FOUND', 'Deleted category not found');
     });
 
-    it('refuses to delete a category that still has live posts', async () => {
+    it('refuses to delete a category that still has live children', async () => {
       const cat = await create([tr('ar', uid())]);
       await withDb((q) => cfg.insertChild(q, cat.id, uid()));
 
