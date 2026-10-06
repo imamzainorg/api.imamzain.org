@@ -411,3 +411,20 @@ describe('@MaxBytes and the slug lock', () => {
     ]);
   });
 });
+
+describe('array element messages', () => {
+  const messages = (schema: z.ZodType, value: unknown) => {
+    const r = schema.safeParse(value);
+    return r.success ? [] : r.error.issues.flatMap(issueMessages);
+  };
+
+  it('names the array, as class-validator does for { each: true }', () => {
+    const schema = z.object({ tags: z.array(z.string().max(3)) });
+    expect(messages(schema, { tags: ['abcd'] })).toEqual(['each value in tags must be shorter than or equal to 3 characters']);
+    expect(messages(schema, { tags: [5] })).toEqual(['each value in tags must be a string']);
+  });
+
+  it('keeps the dotted path for elements that are objects', () => {
+    expect(messages(z.object({ items: z.array(z.object({ a: z.string() })) }), { items: [{ a: 1 }] })).toEqual(['items.0.a must be a string']);
+  });
+});

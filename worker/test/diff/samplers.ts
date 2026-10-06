@@ -47,5 +47,6 @@ export const samplers: Record<string, Record<string, Sampler>> = {
   speakers: { id: rows('speakers') },
   stores: { id: rows('stores') },
   'static-pages': { id: rows('static_pages'), slug: rows('static_pages', 'slug') },
+  gallery: { id: rows('gallery_images', 'media_id') },
   settings: { key: rows('site_settings', 'key') },
 };
