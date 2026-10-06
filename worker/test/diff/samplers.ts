@@ -41,4 +41,7 @@ export const rows =
 
 export const samplers: Record<string, Record<string, Sampler>> = {
   'post-categories': { id: rows('post_categories') },
+  'book-categories': { id: rows('book_categories') },
+  'gallery-categories': { id: rows('gallery_categories') },
+  'academic-paper-categories': { id: rows('academic_paper_categories') },
 };
