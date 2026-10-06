@@ -60,6 +60,10 @@ export const things = app;
 - **Pagination:** spread `paginationShape` into the query object.
 - **Messages:** `lib/validation.ts` maps Zod issues to class-validator text. A schema needing a message
   the mapper lacks passes it as the issue message, or the mapper gets one case (with a unit test).
+- **Rich-text bodies:** `sanitizeEditorHtml` (`lib/html-sanitize.ts`) on every write; `@MaxBytes` is
+  `.refine(..., { params: { maxBytes } })`, which the mapper turns into Nest's text. Unknown-key errors
+  are reported first per object, as Nest does (`whitelistFirst`); don't reorder them in a schema.
+- **Slug lock:** `assertSlugRenameAllowed` (`lib/publish-rules.ts`) for any group with a published flag.
 - **Known accepted difference:** for a value of the wrong JSON type (`title: 5`, `?page=abc`), Nest also
   lists every other constraint of that field; the Worker lists only the type error. Don't write contract
   tests that depend on it.

@@ -23,7 +23,8 @@
     "check:languages": "tsx test/check.ts languages",
     "check:settings": "tsx test/check.ts settings",
     "check:speakers": "tsx test/check.ts speakers",
-    "check:stores": "tsx test/check.ts stores"
+    "check:stores": "tsx test/check.ts stores",
+    "check:static-pages": "tsx test/check.ts static-pages"
   },
   "dependencies": {
     "@hono/zod-openapi": "^1.6.3",
@@ -31,11 +32,13 @@
     "@prisma/client": "6.19.3",
     "hono": "^4.13.13",
     "pg": "^8.23.1",
+    "sanitize-html": "2.17.5",
     "zod": "^4.6.5"
   },
   "devDependencies": {
     "@types/node": "^22.20.5",
     "@types/pg": "^8.23.1",
+    "@types/sanitize-html": "^2.16.2",
     "prisma": "6.19.3",
     "tsx": "^4.23.15",
     "typescript": "^6.0.3",

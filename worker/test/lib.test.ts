@@ -8,6 +8,8 @@ import { envelope } from '../src/lib/envelope';
 import { conflict } from '../src/lib/errors';
 import { envelopeEtag } from '../src/lib/etag';
 import { parseAcceptLanguage, resolveTranslation } from '../src/lib/i18n';
+import { assertSlugRenameAllowed } from '../src/lib/publish-rules';
+import { issueMessages, whitelistFirst } from '../src/lib/validation';
 import { buildPaginationMeta, paginationShape, resolvePagination } from '../src/lib/pagination';
 import { tierFor } from '../src/lib/rate-limit';
 import type { AppBindings } from '../src/lib/types';
@@ -376,5 +378,36 @@ describe('review fixes', () => {
     expect(res.headers.get('content-security-policy')).toBe(
       "default-src 'self';script-src 'self' https://cdn.jsdelivr.net;style-src 'self' 'unsafe-inline';img-src 'self' data: https:;connect-src 'self';font-src 'self' https:;object-src 'none';frame-src 'none';base-uri 'self';form-action 'self';frame-ancestors 'self';script-src-attr 'none';upgrade-insecure-requests",
     );
+  });
+});
+
+describe('@MaxBytes and the slug lock', () => {
+  it('maps a maxBytes issue to class-validator text behind the nested path', () => {
+    const schema = z.object({ translations: z.array(z.object({ body: z.string().refine((v) => v.length < 3, { params: { maxBytes: 2 } }) })) });
+    const result = schema.safeParse({ translations: [{ body: 'abc' }] });
+    expect(result.success ? [] : result.error.issues.flatMap(issueMessages)).toEqual(['translations.0.body must be at most 2 bytes (UTF-8)']);
+  });
+
+  it('locks the slug of a row that is and stays published, like Nest', () => {
+    const rename = (over: Partial<Parameters<typeof assertSlugRenameAllowed>[0]>) =>
+      assertSlugRenameAllowed({ resourceLabel: 'static page', currentSlug: 'a', nextSlug: 'b', isPublished: true, willBePublished: true, ...over });
+    expect(() => rename({})).toThrow(/slug of a published static page cannot be changed/);
+    expect(() => rename({ willBePublished: false })).not.toThrow();
+    expect(() => rename({ isPublished: false })).not.toThrow();
+    expect(() => rename({ nextSlug: 'a' })).not.toThrow();
+    expect(() => rename({ nextSlug: undefined })).not.toThrow();
+    expect(() => rename({ currentSlug: null })).not.toThrow();
+  });
+
+  it('puts the unknown-key error of an object before the errors of its own properties, as ValidationPipe does', () => {
+    const schema = z.object({ slug: z.string().min(3), items: z.array(z.strictObject({ a: z.string().min(2) })) }).strict();
+    const result = schema.safeParse({ slug: 'x', extra: 1, items: [{ a: 'y', b: 1 }] });
+    const texts = result.success ? [] : whitelistFirst(result.error.issues).flatMap(issueMessages);
+    expect(texts).toEqual([
+      'property extra should not exist',
+      'slug must be longer than or equal to 3 characters',
+      'items.0.property b should not exist',
+      'items.0.a must be longer than or equal to 2 characters',
+    ]);
   });
 });

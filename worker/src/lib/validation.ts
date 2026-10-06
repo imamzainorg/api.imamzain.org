@@ -55,14 +55,32 @@ export function issueMessages(issue: Issue): string[] {
       ];
     case 'invalid_value':
       return [`${p} must be one of the following values: ${(i.values as unknown[]).join(', ')}`];
+    case 'custom':
+      // @MaxBytes: its text carries the field path like the built-in ones, so the schema passes only the limit.
+      if (typeof i.params === 'object' && i.params && 'maxBytes' in i.params) return [`${p} must be at most ${(i.params as { maxBytes: number }).maxBytes} bytes (UTF-8)`];
+      return [issue.message];
     default:
       return [issue.message];
   }
 }
 
+/**
+ * ValidationPipe's whitelist pass runs before the property checks, so an object's `property x should
+ * not exist` comes ahead of the errors of its own properties (Zod reports unknown keys last).
+ */
+export function whitelistFirst(issues: Issue[]): Issue[] {
+  const out = [...issues];
+  for (const unknown of issues.filter((i) => i.code === 'unrecognized_keys')) {
+    out.splice(out.indexOf(unknown), 1);
+    const under = out.findIndex((i) => unknown.path.every((seg, n) => i.path[n] === seg));
+    out.splice(under === -1 ? out.length : under, 0, unknown);
+  }
+  return out;
+}
+
 /** `defaultHook` for OpenAPIHono: 400 `Validation failed` with the Nest-style `errors` array. */
 export function zodHook(result: { success: boolean; error?: z.ZodError }, _c: Context<AppEnv>): void {
   if (result.success || !result.error) return;
-  const errors = result.error.issues.flatMap(issueMessages);
+  const errors = whitelistFirst(result.error.issues).flatMap(issueMessages);
   throw new ApiError(400, 'Validation failed', { code: 'VALIDATION_FAILED', errors });
 }
