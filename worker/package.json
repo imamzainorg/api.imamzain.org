@@ -16,7 +16,10 @@
     "diff": "tsx test/diff/run.ts",
     "check": "tsx test/check.ts",
     "check:health": "tsx test/check.ts health",
-    "check:post-categories": "tsx test/check.ts post-categories"
+    "check:post-categories": "tsx test/check.ts post-categories",
+    "check:book-categories": "tsx test/check.ts book-categories",
+    "check:gallery-categories": "tsx test/check.ts gallery-categories",
+    "check:academic-paper-categories": "tsx test/check.ts academic-paper-categories"
   },
   "dependencies": {
     "@hono/zod-openapi": "^1.6.3",
