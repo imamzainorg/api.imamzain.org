@@ -16,8 +16,9 @@ export function issueMessages(issue: Issue): string[] {
   const p = dotted(issue.path);
   const i = issue as Issue & Record<string, unknown>;
   switch (issue.code) {
+    // Nested messages are the child's own text behind its parent path: `translations.0.property x should not exist`.
     case 'unrecognized_keys':
-      return (i.keys as string[]).map((k) => `property ${p ? `${p}.` : ''}${k} should not exist`);
+      return (i.keys as string[]).map((k) => `${p ? `${p}.` : ''}property ${k} should not exist`);
     case 'invalid_type':
       return [
         {
@@ -31,7 +32,8 @@ export function issueMessages(issue: Issue): string[] {
       ];
     case 'too_small': {
       const min = i.minimum as number | bigint;
-      if (i.origin === 'string') return [min === 1 ? `${p} should not be empty` : `${p} must be longer than or equal to ${min} characters`];
+      // @MinLength / @Length; no Nest DTO uses @IsNotEmpty.
+      if (i.origin === 'string') return [`${p} must be longer than or equal to ${min} characters`];
       if (i.origin === 'array') return [`${p} must contain at least ${min} elements`];
       return [`${p} must not be less than ${min}`];
     }
@@ -42,6 +44,8 @@ export function issueMessages(issue: Issue): string[] {
       return [`${p} must not be greater than ${max}`];
     }
     case 'invalid_format':
+      // @Matches(/x/): Zod's `pattern` is the regex's source form, which is what class-validator prints.
+      if (i.format === 'regex') return [`${p} must match ${i.pattern as string} regular expression`];
       return [
         {
           email: `${p} must be an email`,

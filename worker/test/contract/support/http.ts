@@ -1,6 +1,6 @@
 import { expect } from 'vitest';
 import { HARNESS_JWT_SECRET } from '../../harness/config';
-import { adminToken as mint, connect } from '../../harness/token';
+import { adminToken as mint, connect, type Query } from '../../harness/token';
 
 /**
  * Black-box client for the contract suite. Every test runs unchanged against Nest and against the
@@ -66,18 +66,26 @@ export async function api(path: string, opts: ApiOptions = {}): Promise<ApiRespo
   return { status: res.status, headers: res.headers, text, body };
 }
 
+/** Runs `fn` with a query function on the target's DB: for setup the API can't do (e.g. rows of an unported group). */
+export async function withDb<T>(fn: (q: Query) => Promise<T>): Promise<T> {
+  const db = connect(env('DATABASE_URL'));
+  try {
+    return await fn(db.q);
+  } finally {
+    await db.close();
+  }
+}
+
 let token: Promise<string> | undefined;
 /** A token for the DB's first live super-admin (all permissions), minted with the harness secret. */
 export function adminToken(): Promise<string> {
-  token ??= (async () => {
-    const db = connect(env('DATABASE_URL'));
-    try {
-      return await mint(db.q, process.env.JWT_SECRET ?? HARNESS_JWT_SECRET);
-    } finally {
-      await db.close();
-    }
-  })();
+  token ??= withDb((q) => mint(q, process.env.JWT_SECRET ?? HARNESS_JWT_SECRET));
   return token;
+}
+
+/** The same user with only `permissions`, for 403 tests. */
+export function tokenWith(permissions: string[]): Promise<string> {
+  return withDb((q) => mint(q, process.env.JWT_SECRET ?? HARNESS_JWT_SECRET, permissions));
 }
 
 /** Nest's success envelope: the handler's object with `success` and `timestamp` appended. */

@@ -15,7 +15,8 @@
     "contract": "tsx test/contract/run.ts",
     "diff": "tsx test/diff/run.ts",
     "check": "tsx test/check.ts",
-    "check:health": "tsx test/check.ts health"
+    "check:health": "tsx test/check.ts health",
+    "check:post-categories": "tsx test/check.ts post-categories"
   },
   "dependencies": {
     "@hono/zod-openapi": "^1.6.3",
