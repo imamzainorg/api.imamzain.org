@@ -5,6 +5,7 @@ import { galleryCategories } from './features/gallery-categories/routes';
 import { languages } from './features/languages/routes';
 import { settings } from './features/settings/routes';
 import { speakers } from './features/speakers/routes';
+import { staticPages } from './features/static-pages/routes';
 import { stores } from './features/stores/routes';
 import { postCategories } from './features/post-categories/routes';
 import { proxyToOrigin } from './lib/proxy';
@@ -23,6 +24,7 @@ export const ported: Record<string, Hono<AppEnv>> = {
   '/api/v1/languages': languages,
   '/api/v1/settings': settings,
   '/api/v1/speakers': speakers,
+  '/api/v1/static-pages': staticPages,
   '/api/v1/stores': stores,
 };
 
