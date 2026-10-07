@@ -4,6 +4,7 @@ import { AUDIT_ACTIONS, audit } from '../../lib/audit';
 import { getDb } from '../../lib/db';
 import { conflict, DUPLICATE_LANG_MESSAGE, notFound, UNIQUE_CONFLICT_CODES, uniqueViolationTarget } from '../../lib/errors';
 import { loadActiveLanguages, resolveTranslation } from '../../lib/i18n';
+import { MEDIA_VARIANT_SELECT, OG_IMAGE_SELECT, PUBLIC_MEDIA_SELECT } from '../../lib/media-selects';
 import { buildPaginationMeta, resolvePagination } from '../../lib/pagination';
 import type { AppEnv } from '../../lib/types';
 import type { CreateGalleryInput, UpdateGalleryInput } from './schemas';
@@ -17,24 +18,6 @@ interface ListFilters {
   tags?: string[];
   locations?: string[];
 }
-
-// src/common/crud/media-selects.ts
-const MEDIA_VARIANT_SELECT = { id: true, width: true, url: true, format: true } satisfies Prisma.media_variantsSelect;
-
-const OG_IMAGE_SELECT = {
-  id: true,
-  url: true,
-  filename: true,
-  alt_text: true,
-  mime_type: true,
-  width: true,
-  height: true,
-} satisfies Prisma.mediaSelect;
-
-const PUBLIC_MEDIA_SELECT = {
-  ...OG_IMAGE_SELECT,
-  media_variants: { select: MEDIA_VARIANT_SELECT, orderBy: { width: 'asc' as const } },
-} satisfies Prisma.mediaSelect;
 
 // List queries drop the description from translations.
 const GALLERY_LIST_SELECT = {

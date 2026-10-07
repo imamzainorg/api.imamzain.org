@@ -5,6 +5,7 @@ import { getDb } from '../../lib/db';
 import { badRequest, conflict, notFound, rethrowP2002AsConflict } from '../../lib/errors';
 import { sanitizeEditorHtml } from '../../lib/html-sanitize';
 import { assertExactlyOneDefault, loadActiveLanguages, resolveTranslation } from '../../lib/i18n';
+import { OG_IMAGE_SELECT } from '../../lib/media-selects';
 import { buildPaginationMeta, resolvePagination } from '../../lib/pagination';
 import { assertSlugRenameAllowed } from '../../lib/publish-rules';
 import { softDeleteSuffix, stripSoftDeleteSuffix } from '../../lib/soft-delete';
@@ -35,17 +36,6 @@ const PUBLIC_LIST_SELECT = {
   deleted_at: true,
   static_page_translations: { select: LIST_TRANSLATION_SELECT },
 } satisfies Prisma.static_pagesSelect;
-
-// OG_IMAGE_SELECT in src/common/crud/media-selects.ts.
-const OG_IMAGE_SELECT = {
-  id: true,
-  url: true,
-  filename: true,
-  alt_text: true,
-  mime_type: true,
-  width: true,
-  height: true,
-} satisfies Prisma.mediaSelect;
 
 const DETAIL_INCLUDE = { static_page_translations: { include: { og_image: { select: OG_IMAGE_SELECT } } } } satisfies Prisma.static_pagesInclude;
 

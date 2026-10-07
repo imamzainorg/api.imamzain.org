@@ -27,7 +27,8 @@
     "check:static-pages": "tsx test/check.ts static-pages",
     "check:gallery": "tsx test/check.ts gallery",
     "check:audios": "tsx test/check.ts audios",
-    "check:academic-papers": "tsx test/check.ts academic-papers"
+    "check:academic-papers": "tsx test/check.ts academic-papers",
+    "check:books": "tsx test/check.ts books"
   },
   "dependencies": {
     "@hono/zod-openapi": "^1.6.3",

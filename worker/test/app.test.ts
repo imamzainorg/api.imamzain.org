@@ -82,8 +82,8 @@ describe('fallthrough log', () => {
   it('logs each fallthrough as `fallthrough`, path only', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => new Response('')));
     const log = vi.spyOn(console, 'log').mockImplementation(() => {});
-    await app.request('/api/v1/books?token=secret', {}, env);
-    expect(log).toHaveBeenCalledWith({ event: 'fallthrough', method: 'GET', path: '/api/v1/books' });
+    await app.request('/api/v1/whatsapp?token=secret', {}, env);
+    expect(log).toHaveBeenCalledWith({ event: 'fallthrough', method: 'GET', path: '/api/v1/whatsapp' });
     log.mockRestore();
   });
 });
