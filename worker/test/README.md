@@ -34,8 +34,13 @@ Run one group per check: the diff needs fresh DB copies, and a second group woul
 - **Nest A** (port 3101) on `diff_a` is the reference. **The Worker** (`wrangler dev --local`, port 8797) runs
   on `diff_b`, and its fallthrough goes to **Nest B** (port 3102), also on `diff_b`. That is the production
   strangler layout, so ported and unported routes see the same data.
-- Nest runs from `test/.work/`, so it never loads the repo's `.env`: no real mail, R2 or WhatsApp. The
-  Worker gets a generated `--env-file`, which also stops wrangler reading `.dev.vars`. Crons are off.
+- Nest is hermetic: running from `test/.work/` is not enough, because the generated Prisma client loads
+  the repo-root `.env` whatever the cwd (without overriding variables that are already defined). So
+  `startNest` defines every variable named in `.env.example` and `.env.test.example` itself, blank unless
+  Nest needs a value (`NON_BLANK_NEST_ENV` in `harness/servers.ts`). No real mail, R2, WhatsApp or YouTube
+  channel. When a new variable is added to `.env.example`, it is picked up; if blank is not the same as unset
+  for it (a `??` default, or `env.validation.ts` rejects it), add it to that map.
+  The Worker gets a generated `--env-file`, which also stops wrangler reading `.dev.vars`. Crons are off.
 - Every request carries a synthetic client IP (`X-Forwarded-For` for Nest, `CF-Connecting-IP` for the
   Worker), so throttles never fill unless a test shares one IP on purpose.
 - Admin requests use a token minted for the DB's first super-admin, so nothing is written to sign in.
