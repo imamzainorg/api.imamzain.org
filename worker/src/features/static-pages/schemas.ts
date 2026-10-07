@@ -1,6 +1,7 @@
 import { z } from '@hono/zod-openapi';
 import { MAX_BODY_BYTES, utf8ByteLength } from '../../lib/html-sanitize';
 import { paginationShape } from '../../lib/pagination';
+import { queryBoolean } from '../../lib/query-boolean';
 import { SLUG_PATTERN } from '../../lib/translatable-category/schemas';
 
 /** DTO_LIMITS in src/common/validators/dto-limits.ts; the CMS forms use the same numbers. */
@@ -47,8 +48,6 @@ export type UpdateStaticPageInput = z.output<typeof updateStaticPageBody>;
 
 export const listQuery = z.object(paginationShape);
 
-// toQueryBoolean: only 'true' / 'false' are parsed; anything else reaches the check and answers 400.
-const queryBoolean = z.preprocess((v) => (v === 'true' ? true : v === 'false' ? false : v), z.boolean().optional());
 export const adminListQuery = z.object({ ...paginationShape, is_published: queryBoolean });
 
 /** No uuid check: a malformed id reaches Postgres and comes back as 400 INVALID_IDENTIFIER, as in Nest. */

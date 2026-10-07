@@ -1,6 +1,7 @@
 import { z } from '@hono/zod-openapi';
 import { documentLanguages } from '../../lib/document-languages';
 import { paginationShape } from '../../lib/pagination';
+import { queryBoolean } from '../../lib/query-boolean';
 import { searchTerm } from '../../lib/search-term';
 import { SLUG_PATTERN } from '../../lib/translatable-category/schemas';
 
@@ -76,9 +77,6 @@ export type CreateBookInput = z.output<typeof createBookBody>;
 export type UpdateBookInput = z.output<typeof updateBookBody>;
 
 export const listQuery = z.object(paginationShape);
-
-// @Transform(toQueryBoolean): only the strings true/false are parsed; anything else reaches @IsBoolean.
-const queryBoolean = z.preprocess((v) => (v === 'true' ? true : v === 'false' ? false : v), z.boolean().optional());
 
 export const bookQuery = z.object({ ...paginationShape, category_id: z.uuid().optional(), search: searchTerm, is_publication: queryBoolean });
 

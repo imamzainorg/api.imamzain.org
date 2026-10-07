@@ -51,5 +51,6 @@ export const samplers: Record<string, Record<string, Sampler>> = {
   audios: { id: rows('audios'), slug: rows('audios', 'slug') },
   'academic-papers': { id: rows('academic_papers') },
   books: { id: rows('books'), slug: rows('books', 'slug') },
+  posts: { id: rows('posts'), slug: rows('posts', 'slug') },
   settings: { key: rows('site_settings', 'key') },
 };

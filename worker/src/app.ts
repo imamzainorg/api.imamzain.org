@@ -12,6 +12,7 @@ import { speakers } from './features/speakers/routes';
 import { staticPages } from './features/static-pages/routes';
 import { stores } from './features/stores/routes';
 import { postCategories } from './features/post-categories/routes';
+import { posts } from './features/posts/routes';
 import { proxyToOrigin } from './lib/proxy';
 import type { AppEnv } from './lib/types';
 import './lib/bigint';
@@ -29,6 +30,7 @@ export const ported: Record<string, Hono<AppEnv>> = {
   '/api/v1/gallery': gallery,
   '/api/v1/gallery-categories': galleryCategories,
   '/api/v1/post-categories': postCategories,
+  '/api/v1/posts': posts,
   '/api/v1/languages': languages,
   '/api/v1/settings': settings,
   '/api/v1/speakers': speakers,
