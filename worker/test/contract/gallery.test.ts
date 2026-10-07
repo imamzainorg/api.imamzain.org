@@ -221,13 +221,14 @@ describe('GET /gallery (public list)', () => {
   });
 
   it('hides drafts and trashed images', async () => {
-    const draft = await create({ is_published: false, tags: ['t-hide'] });
-    const gone = await create({ tags: ['t-hide'] });
-    const live = await create({ tags: ['t-hide'] });
+    const tag = uid();
+    const draft = await create({ is_published: false, tags: [tag] });
+    const gone = await create({ tags: [tag] });
+    const live = await create({ tags: [tag] });
     expectSuccess(await del(gone.media_id));
-    expect(idsOf(await api(`${BASE}?tags=t-hide`))).toEqual([live.media_id]);
-    expect(idsOf(await admin('/admin?tags=t-hide'))).toEqual(expect.arrayContaining([live.media_id, draft.media_id]));
-    expect(idsOf(await admin('/admin?tags=t-hide'))).not.toContain(gone.media_id);
+    expect(idsOf(await api(`${BASE}?tags=${tag}`))).toEqual([live.media_id]);
+    expect(idsOf(await admin(`/admin?tags=${tag}`))).toEqual(expect.arrayContaining([live.media_id, draft.media_id]));
+    expect(idsOf(await admin(`/admin?tags=${tag}`))).not.toContain(gone.media_id);
   });
 
   it('filters by category, and requires ALL tags and ALL locations', async () => {
@@ -241,8 +242,9 @@ describe('GET /gallery (public list)', () => {
   });
 
   it('paginates', async () => {
-    for (let i = 0; i < 3; i++) await create({ tags: ['t-page'] });
-    const res = await api(`${BASE}?tags=t-page&limit=2&page=2`);
+    const tag = uid();
+    for (let i = 0; i < 3; i++) await create({ tags: [tag] });
+    const res = await api(`${BASE}?tags=${tag}&limit=2&page=2`);
     expect(res.body.data.items).toHaveLength(1);
     expect(res.body.data.pagination).toEqual({ page: 2, limit: 2, total: 3, pages: 2 });
   });
