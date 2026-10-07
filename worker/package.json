@@ -25,7 +25,8 @@
     "check:speakers": "tsx test/check.ts speakers",
     "check:stores": "tsx test/check.ts stores",
     "check:static-pages": "tsx test/check.ts static-pages",
-    "check:gallery": "tsx test/check.ts gallery"
+    "check:gallery": "tsx test/check.ts gallery",
+    "check:audios": "tsx test/check.ts audios"
   },
   "dependencies": {
     "@hono/zod-openapi": "^1.6.3",
