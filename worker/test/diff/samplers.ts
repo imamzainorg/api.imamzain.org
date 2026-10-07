@@ -49,5 +49,6 @@ export const samplers: Record<string, Record<string, Sampler>> = {
   'static-pages': { id: rows('static_pages'), slug: rows('static_pages', 'slug') },
   gallery: { id: rows('gallery_images', 'media_id') },
   audios: { id: rows('audios'), slug: rows('audios', 'slug') },
+  'academic-papers': { id: rows('academic_papers') },
   settings: { key: rows('site_settings', 'key') },
 };

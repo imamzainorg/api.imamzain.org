@@ -1,5 +1,6 @@
 import { Hono } from 'hono';
 import { academicPaperCategories } from './features/academic-paper-categories/routes';
+import { academicPapers } from './features/academic-papers/routes';
 import { audios } from './features/audios/routes';
 import { bookCategories } from './features/book-categories/routes';
 import { gallery } from './features/gallery/routes';
@@ -20,6 +21,7 @@ import './lib/bigint';
  */
 export const ported: Record<string, Hono<AppEnv>> = {
   '/api/v1/academic-paper-categories': academicPaperCategories,
+  '/api/v1/academic-papers': academicPapers,
   '/api/v1/audios': audios,
   '/api/v1/book-categories': bookCategories,
   '/api/v1/gallery': gallery,
