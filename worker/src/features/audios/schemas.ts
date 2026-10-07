@@ -1,5 +1,6 @@
 import { z } from '@hono/zod-openapi';
 import { paginationShape } from '../../lib/pagination';
+import { queryBoolean } from '../../lib/query-boolean';
 import { searchTerm } from '../../lib/search-term';
 import { SLUG_PATTERN } from '../../lib/translatable-category/schemas';
 
@@ -56,9 +57,6 @@ export type UpdateAudioInput = z.output<typeof updateAudioBody>;
 export const listQuery = z.object(paginationShape);
 
 export const audioQuery = z.object({ ...paginationShape, speaker_id: z.uuid().optional(), search: searchTerm });
-
-// @Transform(toQueryBoolean): only the strings true/false are parsed; anything else reaches @IsBoolean.
-const queryBoolean = z.preprocess((v) => (v === 'true' ? true : v === 'false' ? false : v), z.boolean().optional());
 
 export const audioAdminQuery = z.object({ ...paginationShape, speaker_id: z.uuid().optional(), search: searchTerm, is_published: queryBoolean });
 
