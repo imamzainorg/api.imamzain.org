@@ -30,16 +30,51 @@ export async function ensureNestBuild(): Promise<void> {
 }
 
 /**
- * Nest with only what it needs. Its cwd is test/.work, so the repo's real .env (R2, SMTP and Twilio
- * keys) is never loaded: nothing a scenario does can send mail, upload to R2 or text anyone.
+ * Keys whose blank value is not the same as unset, so `hermeticNestEnv` gives them the value Nest
+ * itself falls back to (or, for BCRYPT_ROUNDS, the cheap one `.env.test.example` uses) instead.
+ * Every other key in the example files is blank, which Nest reads as unset.
+ */
+const NON_BLANK_NEST_ENV: Record<string, string> = {
+  JWT_EXPIRES_IN: '24h', // a blank expiry reaches jsonwebtoken as ''
+  SMTP_SECURE: 'false', // blank fails validation (boolean string); irrelevant while SMTP_HOST is blank
+  BCRYPT_ROUNDS: '4', // blank fails validation (Min 4); 4 keeps hashing fast
+  R2_UPLOAD_URL_TTL_SECONDS: '900', // blank fails validation (Min 60)
+  R2_BUCKET: 'imamzain-media', // read with `??`: blank would stay ''
+  R2_PUBLIC_BASE_URL: 'https://cdn.imamzain.org', // idem
+  EMAIL_TO: 'info@imamzain.org', // idem; no mail leaves anyway (SMTP is blank)
+  PUBLIC_SITE_URL: 'https://imamzain.org', // idem: feed links would lose their host
+  PUBLIC_SITE_NAME: 'Imam Zain Foundation', // idem: blank RSS channel title
+  NEWSLETTER_UNSUBSCRIBE_URL_BASE: 'https://imamzain.org/newsletter/unsubscribe', // idem: `new URL('')` throws
+};
+
+/** Variable names an example env file declares, commented-out optional ones included (`# KEY=value`). */
+function envKeysOf(file: string): string[] {
+  const keys = fs.readFileSync(path.join(REPO_DIR, file), 'utf8').matchAll(/^\s*#?\s*([A-Z][A-Z0-9_]*)=/gm);
+  return [...keys].map((m) => m[1]);
+}
+
+/**
+ * The environment of a harness Nest: `explicit` plus every other variable the repo's example env files
+ * name, blank. Nest's cwd is test/.work, but requiring the generated Prisma client still loads the repo
+ * root `.env`, and that loader never overrides a variable that is already defined, even as ''. Without
+ * this, the real YOUTUBE_CHANNEL_ID would filter the homepage videos (the Worker doesn't see it) and the
+ * real R2, SMTP and Twilio keys would reach a Nest whose scenarios write data.
+ */
+export function hermeticNestEnv(explicit: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  const blank = Object.fromEntries(['.env.example', '.env.test.example'].flatMap(envKeysOf).map((k) => [k, '']));
+  return { ...baseEnv(), ...blank, ...NON_BLANK_NEST_ENV, ...explicit };
+}
+
+/**
+ * Nest with only what it needs. Nothing a scenario does can send mail, upload to R2 or text anyone:
+ * the repo's real `.env` stays out (see `hermeticNestEnv`).
  */
 async function startNest(children: ChildProcess[], name: string, port: number, db: string): Promise<string> {
   const logFile = path.join(LOG_DIR, `${name}.log`);
   const child = startBackground(process.execPath, [path.join(REPO_DIR, 'dist/src/main.js')], {
     cwd: WORK_DIR,
     logFile,
-    env: {
-      ...baseEnv(),
+    env: hermeticNestEnv({
       NODE_ENV: 'test',
       PORT: String(port),
       DATABASE_URL: db,
@@ -49,7 +84,7 @@ async function startNest(children: ChildProcess[], name: string, port: number, d
       DISABLE_CRON: 'true',
       EXPOSE_DOCS: 'true',
       LOG_LEVEL: 'warn',
-    },
+    }),
   });
   children.push(child);
   const url = `http://127.0.0.1:${port}`;
