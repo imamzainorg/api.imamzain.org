@@ -14,10 +14,13 @@ const dotted = (path: PropertyKey[]) => path.map(String).join('.');
  */
 export function issueMessages(issue: Issue): string[] {
   const i = issue as Issue & Record<string, unknown>;
-  // `@IsString({ each: true })` and friends: class-validator names the array, not the element.
+  // `@IsString({ each: true })` and friends: class-validator names the array, not the element, and
+  // Nest puts the parent path (`translations.0.`) in front of the whole message.
   const last = issue.path[issue.path.length - 1];
   const isElement = typeof last === 'number' && issue.code !== 'unrecognized_keys' && i.expected !== 'object';
-  const p = isElement ? `each value in ${dotted(issue.path.slice(0, -1))}` : dotted(issue.path);
+  const array = issue.path.slice(0, -1);
+  const parent = dotted(array.slice(0, -1));
+  const p = isElement ? `${parent ? `${parent}.` : ''}each value in ${String(array[array.length - 1])}` : dotted(issue.path);
   switch (issue.code) {
     // Nested messages are the child's own text behind its parent path: `translations.0.property x should not exist`.
     case 'unrecognized_keys':

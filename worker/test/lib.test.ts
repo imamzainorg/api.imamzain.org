@@ -424,6 +424,11 @@ describe('array element messages', () => {
     expect(messages(schema, { tags: [5] })).toEqual(['each value in tags must be a string']);
   });
 
+  it('puts the parent path in front of an `each` message, as Nest does', () => {
+    const schema = z.object({ items: z.array(z.object({ tags: z.array(z.string().max(3)) })) });
+    expect(messages(schema, { items: [{ tags: ['abcd'] }] })).toEqual(['items.0.each value in tags must be shorter than or equal to 3 characters']);
+  });
+
   it('keeps the dotted path for elements that are objects', () => {
     expect(messages(z.object({ items: z.array(z.object({ a: z.string() })) }), { items: [{ a: 1 }] })).toEqual(['items.0.a must be a string']);
   });
