@@ -32,17 +32,13 @@ beforeAll(async () => {
   await seedPost({ slug: draft, is_published: false, translations: [{ lang: 'ar', title: `${PREFIX} draft` }] });
   await seedPost({ slug: gone, deleted: true, translations: [{ lang: 'ar', title: `${PREFIX} gone` }] });
   await seedPost({ slug: ampersand, published_at: '2999-06-01T00:00:00Z', translations: [{ lang: 'ar', title: `${PREFIX} amp` }] });
-  await withDb(async (q) => {
-    // The homepage lists only the configured channel's uploads, and Nest picks YOUTUBE_CHANNEL_ID up from the repo's
-    // .env (Prisma loads it): borrow the mirror's main channel so the row shows up wherever the suite runs.
-    const [main] = await q(`SELECT channel_id FROM youtube_videos GROUP BY channel_id ORDER BY count(*) DESC LIMIT 1`);
-    await q(`INSERT INTO youtube_videos (video_id, title, channel_id, published_at, description) VALUES ($1, $2, $3, '3000-01-01T00:00:00Z', $4)`, [
+  await withDb((q) =>
+    q(`INSERT INTO youtube_videos (video_id, title, channel_id, published_at, description) VALUES ($1, $2, 'UC-seed', '3000-01-01T00:00:00Z', $3)`, [
       VIDEO_ID,
       `${PREFIX} video`,
-      main?.channel_id ?? 'UC-seed',
       `line one\n\n   line   two ${'x'.repeat(300)}`,
-    ]);
-  });
+    ]),
+  );
 });
 
 afterAll(async () => {
