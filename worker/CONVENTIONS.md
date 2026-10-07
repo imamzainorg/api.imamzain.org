@@ -105,6 +105,10 @@ export const things = app;
 
 ## 8. Tests
 
+The testing policy in `CLAUDE.md` applies first: a test must name the regression it catches. Where the
+contract list below would add tests that don't (e.g. one validation case per DTO limit), keep the
+representative ones, not every permutation.
+
 **Contract tests** live in `test/contract/<group>.test.ts`, black-box over HTTP. They are the same file
 for both targets, so only test behaviour Nest has.
 
