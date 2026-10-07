@@ -35,6 +35,20 @@ npm run check:<group>  # typecheck + diff + contract tests on Nest and the Worke
 ```
 How the harness works and what to add when porting a group: `worker/test/README.md`.
 
+## Testing policy
+Applies to Nest and Worker alike. Fewer, meaningful tests beat coverage-driven ones. If following
+this ever produces more tests than the existing process would, drop the policy for that case.
+1. Test externally observable behavior, not implementation details.
+2. Prioritize business rules, security boundaries, data transformations, authorization, failure modes.
+3. No tests written only to raise coverage.
+4. Don't test trivial getters/setters, constants, types or framework behavior.
+5. Don't test private/internal functions directly unless they hold substantial independent logic.
+6. Prefer a few high-value tests over exhaustive permutations.
+7. Per feature cover: the primary success path, important boundary cases, important failure/security cases.
+8. No tests whose only point is "a mock was called", unless that interaction is itself the contract.
+9. If behavior is obvious from the code and has no real regression risk, don't test it just because you can.
+10. Before adding a test, name the regression it would catch. No answer, no test.
+
 ## Rules
 - Same contract: URLs, envelopes, status codes, error `code`s and `error` text stay identical
   to Nest (D5). Contract changes wait until after cutover.
