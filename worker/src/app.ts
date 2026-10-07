@@ -1,13 +1,16 @@
 import { Hono } from 'hono';
 import { academicPaperCategories } from './features/academic-paper-categories/routes';
 import { academicPapers } from './features/academic-papers/routes';
+import { auditLogs } from './features/audit-logs/routes';
 import { audios } from './features/audios/routes';
 import { bookCategories } from './features/book-categories/routes';
 import { books } from './features/books/routes';
 import { dailyHadiths } from './features/daily-hadiths/routes';
 import { homepage, rss, sitemap } from './features/feeds/routes';
+import { dashboard } from './features/dashboard/routes';
 import { gallery } from './features/gallery/routes';
 import { galleryCategories } from './features/gallery-categories/routes';
+import { health } from './features/health/routes';
 import { languages } from './features/languages/routes';
 import { search } from './features/search/routes';
 import { settings } from './features/settings/routes';
@@ -29,6 +32,9 @@ export const ported: Record<string, Hono<AppEnv>> = {
   '/api/v1/academic-paper-categories': academicPaperCategories,
   '/api/v1/academic-papers': academicPapers,
   '/api/v1/audios': audios,
+  '/api/v1/audit-logs': auditLogs,
+  '/api/v1/dashboard': dashboard,
+  '/api/v1/health': health,
   '/api/v1/book-categories': bookCategories,
   '/api/v1/books': books,
   '/api/v1/gallery': gallery,

@@ -33,7 +33,9 @@
     "check:daily-hadiths": "tsx test/check.ts daily-hadiths",
     "check:feeds": "tsx test/check.ts feeds",
     "check:search": "tsx test/check.ts search",
-    "check:youtube": "tsx test/check.ts youtube"
+    "check:youtube": "tsx test/check.ts youtube",
+    "check:dashboard": "tsx test/check.ts dashboard",
+    "check:audit-logs": "tsx test/check.ts audit-logs"
   },
   "dependencies": {
     "@hono/zod-openapi": "^1.6.3",
