@@ -5,6 +5,9 @@ export type AppBindings = Env & {
   JWT_SECRET: string;
   ENFORCE_PASSWORD_CHANGE_AFTER_RESET?: string;
   SITE_TIMEZONE?: string;
+  PUBLIC_SITE_URL?: string;
+  PUBLIC_SITE_NAME?: string;
+  YOUTUBE_CHANNEL_ID?: string;
 };
 
 export interface CurrentUser {

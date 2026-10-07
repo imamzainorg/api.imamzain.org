@@ -30,7 +30,10 @@
     "check:academic-papers": "tsx test/check.ts academic-papers",
     "check:books": "tsx test/check.ts books",
     "check:posts": "tsx test/check.ts posts",
-    "check:daily-hadiths": "tsx test/check.ts daily-hadiths"
+    "check:daily-hadiths": "tsx test/check.ts daily-hadiths",
+    "check:feeds": "tsx test/check.ts feeds",
+    "check:search": "tsx test/check.ts search",
+    "check:youtube": "tsx test/check.ts youtube"
   },
   "dependencies": {
     "@hono/zod-openapi": "^1.6.3",

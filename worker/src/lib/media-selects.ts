@@ -3,6 +3,12 @@ import type { Prisma } from '../generated/prisma/client';
 // src/common/crud/media-selects.ts
 export const MEDIA_VARIANT_SELECT = { id: true, width: true, url: true, format: true } satisfies Prisma.media_variantsSelect;
 
+// Feed shape (homepage, search): the original `url` plus srcset-ready variants.
+export const MEDIA_URL_WITH_VARIANTS_SELECT = {
+  url: true,
+  media_variants: { select: MEDIA_VARIANT_SELECT, orderBy: { width: 'asc' as const } },
+} satisfies Prisma.mediaSelect;
+
 // A translation's resolvable OG image (detail routes only).
 export const OG_IMAGE_SELECT = {
   id: true,

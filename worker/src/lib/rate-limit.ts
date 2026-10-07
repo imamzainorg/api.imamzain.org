@@ -4,11 +4,11 @@ import { tooManyRequests } from './errors';
 import type { AppEnv } from './types';
 
 /** One Rate Limiting binding per limit tier (wrangler.jsonc); the binding's limit is fixed, so the tier IS the limit. */
-export type RateTier = 'RL_GLOBAL' | 'RL_60' | 'RL_30' | 'RL_10' | 'RL_5' | 'RL_VIEW';
+export type RateTier = 'RL_GLOBAL' | 'RL_120' | 'RL_60' | 'RL_30' | 'RL_20' | 'RL_10' | 'RL_5' | 'RL_VIEW';
 
 /** RL_GLOBAL's limit per 60 s in wrangler.jsonc (Nest's 3,000 / 15 min per IP). */
 const GLOBAL_PER_MINUTE = 200;
-const TIER_BY_LIMIT: Record<number, RateTier> = { 60: 'RL_60', 30: 'RL_30', 10: 'RL_10', 5: 'RL_5' };
+const TIER_BY_LIMIT: Record<number, RateTier> = { 120: 'RL_120', 60: 'RL_60', 30: 'RL_30', 20: 'RL_20', 10: 'RL_10', 5: 'RL_5' };
 
 /**
  * Nest's `@Throttle({ default: { limit, ttl } })` → the binding tier for that route. The bindings only

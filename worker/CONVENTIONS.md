@@ -36,11 +36,14 @@ export const things = app;
 
 - **Order:** declare routes in the controller's order; static segments (`/trash`) before `/:id`.
 - **Auth:** omit for public, `auth: true` for `@AuthOnly`, `auth: ['<group>:<action>']` for `@Auth(...)`.
-- **Throttle:** `limit: <Nest @Throttle limit>`; `tierFor` maps it to a binding (60 s windows, D6).
+- **Throttle:** `limit: <Nest @Throttle limit>`; `tierFor` maps it to a binding (60 s windows, D6);
+  a limit with no binding makes `tierFor` throw, so add the tier to `rate-limit.ts` and `wrangler.jsonc` (new `namespace_id`).
 - **Status:** POST answers 201 unless the Nest method has `@HttpCode(200)` → `status: 200`.
 - **Caching:** `@PublicCache(a, b)` → `publicCache(c, a, b)` at the top of the handler.
 - **Response:** the handler returns exactly what the Nest service returned (`{ message, data, ... }`);
   `respond` adds `success` and `timestamp`.
+- **Non-JSON bodies** (the XML feeds): the handler returns a `Response` (`c.body(...)` with its own
+  `Content-Type` and `Cache-Control`); `defineRoute` skips the envelope for it, and the ETag middleware still tags it.
 - `response:` schemas are optional (D4): add one only when it's cheap.
 
 ## 4. Schemas
@@ -119,9 +122,8 @@ for both targets, so only test behaviour Nest has.
 - **Per route:** the happy path, 401, 403, 400 (one `it.each` table of bodies → exact `errors` arrays),
   404, and the group's business rules (see the plan, section 6).
 - Get them green on Nest **first**, then on the Worker.
-- **Intentional fixes** (plan rule 6) get a test named `worker-only: …` that is skipped on Nest.
-  The runner doesn't tell the suite its target yet: the first group that needs one adds that to
-  `contract/runner.ts`.
+- **Intentional fixes** (plan rule 6) get a test named `worker-only: …`, written with `workerOnly(...)`
+  from `support/http.ts`, which is skipped on Nest (the runner sets `CONTRACT_IMPL`).
 
 **Diff:**
 - Add one sampler per path parameter in `test/diff/samplers.ts`.

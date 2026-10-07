@@ -5,13 +5,16 @@ import { audios } from './features/audios/routes';
 import { bookCategories } from './features/book-categories/routes';
 import { books } from './features/books/routes';
 import { dailyHadiths } from './features/daily-hadiths/routes';
+import { homepage, rss, sitemap } from './features/feeds/routes';
 import { gallery } from './features/gallery/routes';
 import { galleryCategories } from './features/gallery-categories/routes';
 import { languages } from './features/languages/routes';
+import { search } from './features/search/routes';
 import { settings } from './features/settings/routes';
 import { speakers } from './features/speakers/routes';
 import { staticPages } from './features/static-pages/routes';
 import { stores } from './features/stores/routes';
+import { youtube } from './features/youtube/routes';
 import { postCategories } from './features/post-categories/routes';
 import { posts } from './features/posts/routes';
 import { proxyToOrigin } from './lib/proxy';
@@ -29,6 +32,11 @@ export const ported: Record<string, Hono<AppEnv>> = {
   '/api/v1/book-categories': bookCategories,
   '/api/v1/books': books,
   '/api/v1/gallery': gallery,
+  '/api/v1/homepage': homepage,
+  '/api/v1/rss': rss,
+  '/api/v1/search': search,
+  '/api/v1/sitemap.xml': sitemap,
+  '/api/v1/youtube': youtube,
   '/api/v1/daily-hadiths': dailyHadiths,
   '/api/v1/gallery-categories': galleryCategories,
   '/api/v1/post-categories': postCategories,

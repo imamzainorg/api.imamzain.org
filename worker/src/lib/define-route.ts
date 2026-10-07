@@ -77,6 +77,8 @@ export function defineRoute<Q extends Schema = undefined, P extends Schema = und
       params: cfg.params ? v('param') : undefined,
       body: cfg.body ? v('json') : undefined,
     } as Input<Q, P, B>);
+    // A handler that sends its own body (the XML feeds) skips the JSON envelope.
+    if (result instanceof Response) return result;
     return respond(c, result, status);
   });
 }

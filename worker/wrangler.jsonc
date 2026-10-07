@@ -37,8 +37,10 @@
   "ratelimits": [
     // Nest's API-wide ceiling: 3,000 / 15 min per IP.
     { "name": "RL_GLOBAL", "namespace_id": "1001", "simple": { "limit": 200, "period": 60 } },
+    { "name": "RL_120", "namespace_id": "1007", "simple": { "limit": 120, "period": 60 } },
     { "name": "RL_60", "namespace_id": "1002", "simple": { "limit": 60, "period": 60 } },
     { "name": "RL_30", "namespace_id": "1003", "simple": { "limit": 30, "period": 60 } },
+    { "name": "RL_20", "namespace_id": "1008", "simple": { "limit": 20, "period": 60 } },
     { "name": "RL_10", "namespace_id": "1004", "simple": { "limit": 10, "period": 60 } },
     { "name": "RL_5", "namespace_id": "1005", "simple": { "limit": 5, "period": 60 } },
     // D7: view dedup, keyed on `ip:resource`.
@@ -55,6 +57,8 @@
   // Secrets: set with `npx wrangler secret put <NAME>`, or in .dev.vars for `wrangler dev`.
   // Never put them in this file. Same names and values as the Nest env:
   //   JWT_SECRET
+  //   YOUTUBE_CHANNEL_ID   (the homepage lists only this channel's uploads; unset lists every mirrored video)
+  //   PUBLIC_SITE_URL, PUBLIC_SITE_NAME   (sitemap / RSS; only if set on Nest, else the same defaults apply)
   //   R2_ACCOUNT_ID, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY   (aws4fetch presigned PUTs)
   //   TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_WHATSAPP_FROM, TWILIO_TEMPLATE_SID
   //   NEWSLETTER_UNSUBSCRIBE_SECRET, CONTEST_ATTEMPT_SECRET   (only if set on Nest)
