@@ -4,6 +4,7 @@ import { academicPapers } from './features/academic-papers/routes';
 import { audios } from './features/audios/routes';
 import { bookCategories } from './features/book-categories/routes';
 import { books } from './features/books/routes';
+import { dailyHadiths } from './features/daily-hadiths/routes';
 import { gallery } from './features/gallery/routes';
 import { galleryCategories } from './features/gallery-categories/routes';
 import { languages } from './features/languages/routes';
@@ -28,6 +29,7 @@ export const ported: Record<string, Hono<AppEnv>> = {
   '/api/v1/book-categories': bookCategories,
   '/api/v1/books': books,
   '/api/v1/gallery': gallery,
+  '/api/v1/daily-hadiths': dailyHadiths,
   '/api/v1/gallery-categories': galleryCategories,
   '/api/v1/post-categories': postCategories,
   '/api/v1/posts': posts,

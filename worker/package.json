@@ -29,7 +29,8 @@
     "check:audios": "tsx test/check.ts audios",
     "check:academic-papers": "tsx test/check.ts academic-papers",
     "check:books": "tsx test/check.ts books",
-    "check:posts": "tsx test/check.ts posts"
+    "check:posts": "tsx test/check.ts posts",
+    "check:daily-hadiths": "tsx test/check.ts daily-hadiths"
   },
   "dependencies": {
     "@hono/zod-openapi": "^1.6.3",

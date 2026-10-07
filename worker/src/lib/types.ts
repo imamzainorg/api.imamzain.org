@@ -4,6 +4,7 @@ import type { PrismaClient } from '../generated/prisma/client';
 export type AppBindings = Env & {
   JWT_SECRET: string;
   ENFORCE_PASSWORD_CHANGE_AFTER_RESET?: string;
+  SITE_TIMEZONE?: string;
 };
 
 export interface CurrentUser {
