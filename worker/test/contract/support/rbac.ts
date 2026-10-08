@@ -2,7 +2,7 @@ import { expect } from 'vitest';
 import { adminToken, api, expectSuccess, withDb } from './http';
 
 /** Shared setup for the users, roles and auth suites. Names are unique per call: the suite runs twice on one DB. */
-export const uid = (prefix: string) => `${prefix}${Date.now().toString(36)}${Math.random().toString(36).slice(2, 7)}`;
+export const uid = (prefix: string) => `${prefix}${Date.now().toString(36)}${crypto.randomUUID().slice(0, 5)}`;
 
 export const PASSWORD = 'contract-password-1';
 
