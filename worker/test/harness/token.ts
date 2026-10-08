@@ -46,3 +46,11 @@ export async function adminToken(q: Query, secret: string, permissions?: string[
     'HS256',
   );
 }
+
+/** A token for any live user, carrying `permissions` (both targets trust the token's list), for actors other than the admin. */
+export async function userToken(q: Query, secret: string, userId: string, permissions: string[]): Promise<string> {
+  const [user] = await q('SELECT id, username, token_version FROM users WHERE id = $1', [userId]);
+  if (!user) throw new Error(`no user ${userId}`);
+  const now = Math.floor(Date.now() / 1000);
+  return sign({ sub: user.id, username: user.username, permissions, token_version: user.token_version, iat: now, exp: now + 3600 }, secret, 'HS256');
+}
