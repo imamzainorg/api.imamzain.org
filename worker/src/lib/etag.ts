@@ -23,13 +23,13 @@ function isFresh(req: Request, etag: string): boolean {
   return inm.split(',').some((v) => weak(v) === weak(etag));
 }
 
-/** Sets the ETag on every JSON/text body and answers a matching GET/HEAD 2xx with a body-less 304. */
+/** Sets the ETag on every JSON/text/XML body and answers a matching GET/HEAD 2xx with a body-less 304. */
 export const etag = createMiddleware<AppEnv>(async (c, next) => {
   await next();
   const res = c.res;
   if (!res.body || res.headers.has('ETag')) return;
   const type = res.headers.get('content-type') ?? '';
-  if (!/json|text/.test(type)) return;
+  if (!/json|text|xml/.test(type)) return;
   const tag = await envelopeEtag(await res.clone().text());
   c.header('ETag', tag);
   const method = c.req.method;

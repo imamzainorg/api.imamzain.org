@@ -27,7 +27,7 @@ export async function runContract(target: string, baseUrl: string, db: string, g
     ['node_modules/vitest/vitest.mjs', 'run', '--config', 'vitest.contract.config.ts', '--reporter=default', '--reporter=json', `--outputFile.json=${json}`, ...files],
     {
       cwd: WORKER_DIR,
-      env: { ...baseEnv(), BASE_URL: baseUrl, DATABASE_URL: db, JWT_SECRET: HARNESS_JWT_SECRET, NO_COLOR: '1' },
+      env: { ...baseEnv(), BASE_URL: baseUrl, DATABASE_URL: db, JWT_SECRET: HARNESS_JWT_SECRET, CONTRACT_IMPL: target, NO_COLOR: '1' },
       allowFail: true,
       logFile: log,
     },

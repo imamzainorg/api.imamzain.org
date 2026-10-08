@@ -1,4 +1,4 @@
-import { expect } from 'vitest';
+import { expect, it } from 'vitest';
 import { HARNESS_JWT_SECRET } from '../../harness/config';
 import { adminToken as mint, connect, type Query } from '../../harness/token';
 
@@ -16,6 +16,12 @@ function env(name: string, shown = name): string {
 
 /** BASE_URL, as passed on by vitest.contract.config.ts. */
 export const BASE_URL = env('CONTRACT_TARGET', 'BASE_URL').replace(/\/$/, '');
+
+/** Which server the suite runs against: set by the runner, nest when run by hand. */
+export const TARGET: 'nest' | 'worker' = process.env.CONTRACT_IMPL === 'worker' ? 'worker' : 'nest';
+
+/** A test of an intentional fix (plan rule 6): Nest still has the old behaviour, so it only runs on the Worker. */
+export const workerOnly = TARGET === 'worker' ? it : it.skip;
 
 export const ISO_DATE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
 
