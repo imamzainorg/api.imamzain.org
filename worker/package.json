@@ -39,7 +39,8 @@
     "check:roles": "tsx test/check.ts roles",
     "check:users": "tsx test/check.ts users",
     "check:auth": "tsx test/check.ts auth",
-    "check:forms": "tsx test/check.ts forms"
+    "check:forms": "tsx test/check.ts forms",
+    "check:contest": "tsx test/check.ts contest"
   },
   "dependencies": {
     "@hono/zod-openapi": "^1.6.3",

@@ -1,6 +1,7 @@
 import { currentUser } from '../../lib/auth';
 import { createApp } from '../../lib/create-app';
 import { defineRoute } from '../../lib/define-route';
+import { contestRoutes } from '../contest/routes';
 import {
   contactQuery,
   createContactBody,
@@ -80,5 +81,8 @@ defineRoute(
   { method: 'post', path: '/contacts/:id/restore', summary: 'Restore a soft-deleted contact submission', auth: ['forms:delete'], params: idParams, status: 200 },
   (c, { params }) => service.restoreContact(c, params.id, currentUser(c).id),
 );
+
+// /api/v1/forms/qutuf-sajjadiya-contest/* (src/contest).
+contestRoutes(app);
 
 export const forms = app;
