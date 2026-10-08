@@ -16,7 +16,7 @@ describe('fallthrough', () => {
     vi.stubGlobal('fetch', fetchMock);
 
     const res = await app.request(
-      '/api/v1/health?x=1',
+      '/api/v1/users?x=1',
       { headers: { 'cf-connecting-ip': '203.0.113.9', 'x-forwarded-for': '6.6.6.6' } },
       env,
     );
@@ -24,7 +24,7 @@ describe('fallthrough', () => {
     expect(res.status).toBe(202);
     expect(await res.text()).toBe('from origin');
     const [url, init] = fetchMock.mock.calls[0];
-    expect(String(url)).toBe('https://origin.test/api/v1/health?x=1');
+    expect(String(url)).toBe('https://origin.test/api/v1/users?x=1');
     expect((init.headers as Headers).get('x-forwarded-for')).toBe('203.0.113.9');
   });
 

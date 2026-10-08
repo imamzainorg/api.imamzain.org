@@ -1,15 +1,9 @@
 import { z } from '@hono/zod-openapi';
+import { isoDate } from '../../lib/iso-date';
 import { paginationShape } from '../../lib/pagination';
 
 /** DTO_LIMITS in src/common/validators/dto-limits.ts; the CMS forms use the same numbers. */
 export const LIMITS = { title: 500, summary: 5000, person: 300, label: 200, metaTitle: 300, metaDescription: 500, listItems: 50 } as const;
-
-// validator.js's isISO8601 (non-strict), which class-validator's @IsDateString uses.
-const ISO_8601 =
-  /^([+-]?\d{4}(?!\d{2}\b))((-?)((0[1-9]|1[0-2])(\3([12]\d|0[1-9]|3[01]))?|W([0-4]\d|5[0-3])(-?[1-7])?|(00[1-9]|0[1-9]\d|[12]\d{2}|3([0-5]\d|6[1-6])))([T\s]((([01]\d|2[0-3])((:?)[0-5]\d)?|24:?00)([.,]\d+(?!:))?)?(\17[0-5]\d([.,]\d+)?)?([zZ]|([+-])([01]\d|2[0-3]):?([0-5]\d)?)?)?)?$/;
-
-const isoDate = (field: string) =>
-  z.custom<string>((v) => typeof v === 'string' && ISO_8601.test(v), `${field} must be a valid ISO 8601 date string`);
 
 // Checks are listed in the order class-validator reports them (its decorators, bottom-up).
 export const galleryTranslationSchema = z.strictObject({
