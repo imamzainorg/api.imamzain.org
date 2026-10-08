@@ -8,6 +8,7 @@ import { bookCategories } from './features/book-categories/routes';
 import { books } from './features/books/routes';
 import { dailyHadiths } from './features/daily-hadiths/routes';
 import { homepage, rss, sitemap } from './features/feeds/routes';
+import { forms } from './features/forms/routes';
 import { dashboard } from './features/dashboard/routes';
 import { gallery } from './features/gallery/routes';
 import { galleryCategories } from './features/gallery-categories/routes';
@@ -41,6 +42,7 @@ export const ported: Record<string, Hono<AppEnv>> = {
   '/api/v1/health': health,
   '/api/v1/book-categories': bookCategories,
   '/api/v1/books': books,
+  '/api/v1/forms': forms,
   '/api/v1/gallery': gallery,
   '/api/v1/homepage': homepage,
   '/api/v1/rss': rss,
