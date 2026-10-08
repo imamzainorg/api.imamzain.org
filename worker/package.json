@@ -37,7 +37,8 @@
     "check:dashboard": "tsx test/check.ts dashboard",
     "check:audit-logs": "tsx test/check.ts audit-logs",
     "check:roles": "tsx test/check.ts roles",
-    "check:users": "tsx test/check.ts users"
+    "check:users": "tsx test/check.ts users",
+    "check:auth": "tsx test/check.ts auth"
   },
   "dependencies": {
     "@hono/zod-openapi": "^1.6.3",
