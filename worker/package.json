@@ -40,12 +40,14 @@
     "check:users": "tsx test/check.ts users",
     "check:auth": "tsx test/check.ts auth",
     "check:forms": "tsx test/check.ts forms",
-    "check:contest": "tsx test/check.ts contest"
+    "check:contest": "tsx test/check.ts contest",
+    "check:media": "tsx test/check.ts media"
   },
   "dependencies": {
     "@hono/zod-openapi": "^1.6.3",
     "@prisma/adapter-pg": "6.19.3",
     "@prisma/client": "6.19.3",
+    "aws4fetch": "^1.0.20",
     "bcryptjs": "^3.0.3",
     "hono": "^4.13.13",
     "pg": "^8.23.1",

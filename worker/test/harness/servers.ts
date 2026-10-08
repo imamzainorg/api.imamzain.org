@@ -1,7 +1,7 @@
 import type { ChildProcess } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
-import { HARNESS_ALLOWED_ORIGINS, HARNESS_JWT_SECRET, LOG_DIR, PORTS, REPO_DIR, WORK_DIR, WORKER_DIR, rel } from './config';
+import { HARNESS_ALLOWED_ORIGINS, HARNESS_JWT_SECRET, HARNESS_R2, LOG_DIR, PORTS, REPO_DIR, WORK_DIR, WORKER_DIR, rel } from './config';
 import { baseEnv, portInUse, run, startBackground, stopTree, waitForHttp } from './proc';
 
 export interface Stack {
@@ -84,6 +84,7 @@ async function startNest(children: ChildProcess[], name: string, port: number, d
       DISABLE_CRON: 'true',
       EXPOSE_DOCS: 'true',
       LOG_LEVEL: 'warn',
+      ...HARNESS_R2,
     }),
   });
   children.push(child);
@@ -96,7 +97,7 @@ async function startNest(children: ChildProcess[], name: string, port: number, d
 async function startWorker(children: ChildProcess[], origin: string, db: string): Promise<string> {
   const logFile = path.join(LOG_DIR, 'worker.log');
   const envFile = path.join(WORK_DIR, 'worker.env');
-  fs.writeFileSync(envFile, [`JWT_SECRET=${HARNESS_JWT_SECRET}`, 'BCRYPT_ROUNDS=4', `ORIGIN_URL=${origin}`, `ALLOWED_ORIGINS=${HARNESS_ALLOWED_ORIGINS}`, ''].join('\n'));
+  fs.writeFileSync(envFile, [`JWT_SECRET=${HARNESS_JWT_SECRET}`, 'BCRYPT_ROUNDS=4', ...Object.entries(HARNESS_R2).map(([k, v]) => `${k}=${v}`), `ORIGIN_URL=${origin}`, `ALLOWED_ORIGINS=${HARNESS_ALLOWED_ORIGINS}`, ''].join('\n'));
   const state = path.join(WORK_DIR, 'wrangler-state');
   fs.rmSync(state, { recursive: true, force: true });
   const args = [

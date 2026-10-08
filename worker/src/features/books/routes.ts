@@ -1,6 +1,8 @@
 import { createApp } from '../../lib/create-app';
 import { defineRoute } from '../../lib/define-route';
 import { publicCache } from '../../lib/envelope';
+import { BOOK_PDF_PREFIX, DOCUMENT_PDF_BYTES, presignDocumentUpload } from '../../lib/r2';
+import { pdfUploadBody } from '../../lib/upload-url';
 import { bookQuery, createBookBody, idParams, listQuery, slugParams, togglePublishBody, updateBookBody } from './schemas';
 import * as service from './service';
 
@@ -71,6 +73,13 @@ defineRoute(
 
 defineRoute(app, { method: 'delete', path: '/:id', summary: 'Soft-delete a book', auth: ['books:delete'], params: idParams }, (c, { params }) =>
   service.softDelete(c, params.id),
+);
+
+// No confirm step: the CMS PUTs to R2 and saves `publicUrl` onto pdf_url.
+defineRoute(
+  app,
+  { method: 'post', path: '/upload-url', summary: 'Request a pre-signed R2 upload URL for a book PDF', auth: ['books:create'], limit: 60, body: pdfUploadBody },
+  async (c, { body }) => ({ message: 'Upload URL generated', data: await presignDocumentUpload(c.env, body.filename, BOOK_PDF_PREFIX, DOCUMENT_PDF_BYTES) }),
 );
 
 export const books = app;

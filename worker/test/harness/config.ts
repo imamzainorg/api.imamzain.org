@@ -14,6 +14,13 @@ export const PORTS = { pg: 55432, nestA: 3101, nestB: 3102, worker: 8797 } as co
 export const HARNESS_JWT_SECRET = 'harness-only-jwt-secret-not-for-production-0000';
 
 /** The production list (worker/wrangler.jsonc), so CORS behaves as in prod on both targets. */
+/**
+ * Fake R2 credentials for both servers: presigning is pure computation, so upload URLs come out alike;
+ * Nest's storage calls fail against an account that doesn't exist, and the Worker's go to its local
+ * (simulated) bucket.
+ */
+export const HARNESS_R2 = { R2_ACCOUNT_ID: 'harness-account', R2_ACCESS_KEY_ID: 'harness-key', R2_SECRET_ACCESS_KEY: 'harness-secret' };
+
 export const HARNESS_ALLOWED_ORIGINS = 'https://imamzain.org,https://cms.imamzain.com,https://app.imamzain.org';
 
 /** Where the prod dump is (runbook S6). Only needed to build the template DB; set DIFF_DUMP to override. */
