@@ -56,4 +56,6 @@ export const samplers: Record<string, Record<string, Sampler>> = {
   'daily-hadiths': { id: rows('daily_hadiths') },
   settings: { key: rows('site_settings', 'key') },
   youtube: { playlistId: rows('youtube_playlists', 'playlist_id') },
+  roles: { id: rows('roles') },
+  users: { id: rows('users') },
 };

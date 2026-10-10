@@ -96,7 +96,7 @@ async function startNest(children: ChildProcess[], name: string, port: number, d
 async function startWorker(children: ChildProcess[], origin: string, db: string): Promise<string> {
   const logFile = path.join(LOG_DIR, 'worker.log');
   const envFile = path.join(WORK_DIR, 'worker.env');
-  fs.writeFileSync(envFile, [`JWT_SECRET=${HARNESS_JWT_SECRET}`, `ORIGIN_URL=${origin}`, `ALLOWED_ORIGINS=${HARNESS_ALLOWED_ORIGINS}`, ''].join('\n'));
+  fs.writeFileSync(envFile, [`JWT_SECRET=${HARNESS_JWT_SECRET}`, 'BCRYPT_ROUNDS=4', `ORIGIN_URL=${origin}`, `ALLOWED_ORIGINS=${HARNESS_ALLOWED_ORIGINS}`, ''].join('\n'));
   const state = path.join(WORK_DIR, 'wrangler-state');
   fs.rmSync(state, { recursive: true, force: true });
   const args = [

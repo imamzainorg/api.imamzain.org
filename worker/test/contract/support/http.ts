@@ -1,6 +1,6 @@
 import { expect, it } from 'vitest';
 import { HARNESS_JWT_SECRET } from '../../harness/config';
-import { adminToken as mint, connect, type Query } from '../../harness/token';
+import { adminToken as mint, connect, userToken, type Query } from '../../harness/token';
 
 /**
  * Black-box client for the contract suite. Every test runs unchanged against Nest and against the
@@ -92,6 +92,11 @@ export function adminToken(): Promise<string> {
 /** The same user with only `permissions`, for 403 tests. */
 export function tokenWith(permissions: string[]): Promise<string> {
   return withDb((q) => mint(q, process.env.JWT_SECRET ?? HARNESS_JWT_SECRET, permissions));
+}
+
+/** A token for the test user `userId` holding `permissions`: an actor that is not the admin. */
+export function tokenFor(userId: string, permissions: string[]): Promise<string> {
+  return withDb((q) => userToken(q, process.env.JWT_SECRET ?? HARNESS_JWT_SECRET, userId, permissions));
 }
 
 /** Nest's success envelope: the handler's object with `success` and `timestamp` appended. */

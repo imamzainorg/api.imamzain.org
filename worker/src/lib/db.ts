@@ -1,6 +1,6 @@
 import { PrismaPg } from '@prisma/adapter-pg';
 import type { Context, MiddlewareHandler } from 'hono';
-import { PrismaClient } from '../generated/prisma/client';
+import { PrismaClient, type Prisma } from '../generated/prisma/client';
 import type { AppEnv } from './types';
 
 // One client per request through Hyperdrive (Phase 1 check 2). max: 1 keeps it to one
@@ -18,6 +18,14 @@ export function getDb(c: Context<AppEnv>): PrismaClient {
     c.set('db', client);
   }
   return client;
+}
+
+/**
+ * Serializes writers of the same `key` until the transaction ends. For a check-then-write the database
+ * can't enforce, e.g. case-insensitive name uniqueness over a case-sensitive unique index.
+ */
+export async function lockKey(tx: Prisma.TransactionClient, key: string): Promise<void> {
+  await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${key}))`;
 }
 
 /** `waitUntil`, safe outside a Worker (unit tests have no execution context: the promise still runs). */
