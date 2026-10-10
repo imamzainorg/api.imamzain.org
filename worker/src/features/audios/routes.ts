@@ -1,7 +1,8 @@
 import { createApp } from '../../lib/create-app';
 import { defineRoute } from '../../lib/define-route';
 import { publicCache } from '../../lib/envelope';
-import { audioAdminQuery, audioQuery, createAudioBody, idParams, listQuery, slugParams, togglePublishBody, updateAudioBody } from './schemas';
+import { presignAudioUpload } from '../../lib/r2';
+import { audioAdminQuery, audioUploadBody, audioQuery, createAudioBody, idParams, listQuery, slugParams, togglePublishBody, updateAudioBody } from './schemas';
 import * as service from './service';
 
 const app = createApp();
@@ -71,6 +72,13 @@ defineRoute(
 
 defineRoute(app, { method: 'delete', path: '/:id', summary: 'Soft-delete an audio', auth: ['audios:delete'], params: idParams }, (c, { params }) =>
   service.softDelete(c, params.id),
+);
+
+// No confirm step: the CMS PUTs to R2 and saves `publicUrl` onto the record.
+defineRoute(
+  app,
+  { method: 'post', path: '/upload-url', summary: 'Request a pre-signed R2 upload URL for an audio file or PDF', auth: ['audios:create'], limit: 60, body: audioUploadBody },
+  async (c, { body }) => ({ message: 'Upload URL generated', data: await presignAudioUpload(c.env, body.filename, body.content_type) }),
 );
 
 export const audios = app;

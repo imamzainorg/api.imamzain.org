@@ -1,6 +1,8 @@
 import { createApp } from '../../lib/create-app';
 import { defineRoute } from '../../lib/define-route';
 import { publicCache } from '../../lib/envelope';
+import { ACADEMIC_PAPER_PDF_PREFIX, DOCUMENT_PDF_BYTES, presignDocumentUpload } from '../../lib/r2';
+import { pdfUploadBody } from '../../lib/upload-url';
 import { createPaperBody, idParams, listQuery, paperQuery, togglePublishBody, updatePaperBody } from './schemas';
 import * as service from './service';
 
@@ -70,6 +72,16 @@ defineRoute(
   app,
   { method: 'delete', path: '/:id', summary: 'Soft-delete an academic paper', auth: ['academic-papers:delete'], params: idParams },
   (c, { params }) => service.softDelete(c, params.id),
+);
+
+// No confirm step: the CMS PUTs to R2 and saves `publicUrl` onto pdf_url.
+defineRoute(
+  app,
+  { method: 'post', path: '/upload-url', summary: 'Request a pre-signed R2 upload URL for a paper PDF', auth: ['academic-papers:create'], limit: 60, body: pdfUploadBody },
+  async (c, { body }) => ({
+    message: 'Upload URL generated',
+    data: await presignDocumentUpload(c.env, body.filename, ACADEMIC_PAPER_PDF_PREFIX, DOCUMENT_PDF_BYTES),
+  }),
 );
 
 export const academicPapers = app;

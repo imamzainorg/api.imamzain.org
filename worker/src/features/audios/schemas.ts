@@ -51,6 +51,11 @@ export const updateAudioBody = z.object({
 
 export const togglePublishBody = z.object({ is_published: z.boolean() });
 
+export const audioUploadBody = z.object({
+  filename: z.string().max(255).min(1),
+  content_type: z.string().regex(/^(audio\/(mpeg|mp4|x-m4a)|application\/pdf)$/),
+});
+
 export type CreateAudioInput = z.output<typeof createAudioBody>;
 export type UpdateAudioInput = z.output<typeof updateAudioBody>;
 

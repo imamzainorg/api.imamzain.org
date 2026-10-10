@@ -58,4 +58,5 @@ export const samplers: Record<string, Record<string, Sampler>> = {
   youtube: { playlistId: rows('youtube_playlists', 'playlist_id') },
   roles: { id: rows('roles') },
   users: { id: rows('users') },
+  media: { id: rows('media') },
 };

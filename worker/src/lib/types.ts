@@ -13,6 +13,11 @@ export type AppBindings = Env & {
   TWILIO_TEMPLATE_SID?: string;
   CONTEST_ATTEMPT_SECRET?: string;
   CONTEST_REVEAL_SCORE?: string;
+  R2_ACCOUNT_ID?: string;
+  R2_ACCESS_KEY_ID?: string;
+  R2_SECRET_ACCESS_KEY?: string;
+  R2_BUCKET?: string;
+  R2_UPLOAD_URL_TTL_SECONDS?: string;
   SITE_TIMEZONE?: string;
   PUBLIC_SITE_URL?: string;
   PUBLIC_SITE_NAME?: string;
