@@ -2,6 +2,7 @@ import { Hono } from 'hono';
 import { academicPaperCategories } from './features/academic-paper-categories/routes';
 import { academicPapers } from './features/academic-papers/routes';
 import { auditLogs } from './features/audit-logs/routes';
+import { auth } from './features/auth/routes';
 import { audios } from './features/audios/routes';
 import { bookCategories } from './features/book-categories/routes';
 import { books } from './features/books/routes';
@@ -35,6 +36,7 @@ export const ported: Record<string, Hono<AppEnv>> = {
   '/api/v1/academic-papers': academicPapers,
   '/api/v1/audios': audios,
   '/api/v1/audit-logs': auditLogs,
+  '/api/v1/auth': auth,
   '/api/v1/dashboard': dashboard,
   '/api/v1/health': health,
   '/api/v1/book-categories': bookCategories,
