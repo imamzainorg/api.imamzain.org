@@ -11,6 +11,8 @@ export type AppBindings = Env & {
   TWILIO_AUTH_TOKEN?: string;
   TWILIO_WHATSAPP_FROM?: string;
   TWILIO_TEMPLATE_SID?: string;
+  CONTEST_ATTEMPT_SECRET?: string;
+  CONTEST_REVEAL_SCORE?: string;
   SITE_TIMEZONE?: string;
   PUBLIC_SITE_URL?: string;
   PUBLIC_SITE_NAME?: string;
