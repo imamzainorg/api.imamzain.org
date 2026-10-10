@@ -7,6 +7,10 @@ export type AppBindings = Env & {
   BCRYPT_ROUNDS?: string;
   JWT_EXPIRES_IN?: string;
   REFRESH_REUSE_GRACE_SECONDS?: string;
+  TWILIO_ACCOUNT_SID?: string;
+  TWILIO_AUTH_TOKEN?: string;
+  TWILIO_WHATSAPP_FROM?: string;
+  TWILIO_TEMPLATE_SID?: string;
   SITE_TIMEZONE?: string;
   PUBLIC_SITE_URL?: string;
   PUBLIC_SITE_NAME?: string;
