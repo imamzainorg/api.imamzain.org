@@ -69,7 +69,7 @@ export async function auditSync(c: Context<AppEnv>, params: AuditWriteParams): P
     await getDb(c).audit_logs.create({ data: row(c, params) });
     return true;
   } catch (err) {
-    console.warn(`Failed to write ${params.action} audit log: ${err}`);
+    console.warn(`Failed to write an audit log for ${params.resourceType} ${params.resourceId ?? '-'}: ${err}`);
     return false;
   }
 }
