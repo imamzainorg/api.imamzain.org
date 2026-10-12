@@ -41,7 +41,8 @@
     "check:auth": "tsx test/check.ts auth",
     "check:forms": "tsx test/check.ts forms",
     "check:contest": "tsx test/check.ts contest",
-    "check:media": "tsx test/check.ts media"
+    "check:media": "tsx test/check.ts media",
+    "check:newsletter": "tsx test/check.ts newsletter"
   },
   "dependencies": {
     "@hono/zod-openapi": "^1.6.3",
