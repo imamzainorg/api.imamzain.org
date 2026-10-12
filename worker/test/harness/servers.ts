@@ -105,6 +105,8 @@ async function startWorker(children: ChildProcess[], origin: string, db: string)
     '--ip', '127.0.0.1', '--port', String(PORTS.worker),
     '--env-file', envFile, '--persist-to', state,
     '--show-interactive-dev-session=false', '--log-level', 'warn',
+    // /__scheduled?cron=... fires a Cron Trigger (test/contract/jobs.test.ts).
+    '--test-scheduled',
   ];
   const child = startBackground(process.execPath, args, {
     cwd: WORKER_DIR,

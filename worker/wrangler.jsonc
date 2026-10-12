@@ -31,6 +31,17 @@
 
   "images": { "binding": "IMAGES" },
 
+  // Phase 5 cron jobs (src/jobs/index.ts, CRONS). Off until cutover: Nest's crons must be stopped first
+  // (DISABLE_CRON=true on the Nest host), or both sides publish posts and flag form rows. Cutover steps:
+  // the hono/jobs PR description. Cron Triggers run in UTC, as Nest's did on Render.
+  // "triggers": {
+  //   "crons": [
+  //     "* * * * *",   // scheduled post publish, form notification outbox
+  //     "0 * * * *",   // orphan-upload cleanup; YouTube sync when the UTC hour is a multiple of 6
+  //     "15 3 * * *"   // refresh-token, login-attempt and audit-log retention
+  //   ]
+  // },
+
   // D6: the binding only has 10 s / 60 s windows and a fixed limit, so there is one binding
   // per limit tier. Nest's 15-min and 1-h limits are mapped onto these by the rate-limit
   // helper (Phase 2 task 2). namespace_id must be unique per Cloudflare account.
@@ -59,6 +70,7 @@
   //   JWT_SECRET
   //   JWT_EXPIRES_IN, BCRYPT_ROUNDS, REFRESH_REUSE_GRACE_SECONDS, ENFORCE_PASSWORD_CHANGE_AFTER_RESET   (only if set on Nest; same defaults otherwise)
   //   YOUTUBE_CHANNEL_ID   (the homepage lists only this channel's uploads; unset lists every mirrored video)
+  //   YOUTUBE_API_KEY   (the 6-hourly sync; unset skips it)
   //   PUBLIC_SITE_URL, PUBLIC_SITE_NAME   (sitemap / RSS; only if set on Nest, else the same defaults apply)
   //   R2_ACCOUNT_ID, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY   (aws4fetch presigned PUTs)
   //   TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_WHATSAPP_FROM, TWILIO_TEMPLATE_SID

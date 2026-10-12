@@ -23,6 +23,7 @@ export type AppBindings = Env & {
   PUBLIC_SITE_URL?: string;
   PUBLIC_SITE_NAME?: string;
   YOUTUBE_CHANNEL_ID?: string;
+  YOUTUBE_API_KEY?: string;
 };
 
 export interface CurrentUser {
