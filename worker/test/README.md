@@ -40,7 +40,9 @@ Run one group per check: the diff needs fresh DB copies, and a second group woul
   Nest needs a value (`NON_BLANK_NEST_ENV` in `harness/servers.ts`). No real mail, R2, WhatsApp or YouTube
   channel. When a new variable is added to `.env.example`, it is picked up; if blank is not the same as unset
   for it (a `??` default, or `env.validation.ts` rejects it), add it to that map.
-  The Worker gets a generated `--env-file`, which also stops wrangler reading `.dev.vars`. Crons are off.
+  The Worker gets a generated `--env-file`, which also stops wrangler reading `.dev.vars`. Crons are off:
+  Nest runs with `DISABLE_CRON`, and the Worker's jobs fire only when `contract/jobs.test.ts` calls
+  `/__scheduled?cron=...` (`--test-scheduled`). Those tests have no diff, so run them with `npm run contract -- jobs`.
 - Every request carries a synthetic client IP (`X-Forwarded-For` for Nest, `CF-Connecting-IP` for the
   Worker), so throttles never fill unless a test shares one IP on purpose.
 - Admin requests use a token minted for the DB's first super-admin, so nothing is written to sign in.
