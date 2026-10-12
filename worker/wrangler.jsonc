@@ -31,16 +31,16 @@
 
   "images": { "binding": "IMAGES" },
 
-  // Phase 5 cron jobs (src/jobs/index.ts, CRONS). Off until cutover: Nest's crons must be stopped first
-  // (DISABLE_CRON=true on the Nest host), or both sides publish posts and flag form rows. Cutover steps:
-  // the hono/jobs PR description. Cron Triggers run in UTC, as Nest's did on Render.
-  // "triggers": {
-  //   "crons": [
-  //     "* * * * *",   // scheduled post publish, form notification outbox
-  //     "0 * * * *",   // orphan-upload cleanup; YouTube sync when the UTC hour is a multiple of 6
-  //     "15 3 * * *"   // refresh-token, login-attempt and audit-log retention
-  //   ]
-  // },
+  // Phase 5 cron jobs (src/jobs/index.ts, CRONS). Nest runs with DISABLE_CRON=true since this cutover;
+  // never re-enable Nest's crons while these are on, or both sides publish posts and flag form rows.
+  // Cron Triggers run in UTC, as Nest's did on Render.
+  "triggers": {
+    "crons": [
+      "* * * * *",   // scheduled post publish, form notification outbox
+      "0 * * * *",   // orphan-upload cleanup; YouTube sync when the UTC hour is a multiple of 6
+      "15 3 * * *"   // refresh-token, login-attempt and audit-log retention
+    ]
+  },
 
   // D6: the binding only has 10 s / 60 s windows and a fixed limit, so there is one binding
   // per limit tier. Nest's 15-min and 1-h limits are mapped onto these by the rate-limit
