@@ -24,6 +24,11 @@ export type AppBindings = Env & {
   PUBLIC_SITE_NAME?: string;
   YOUTUBE_CHANNEL_ID?: string;
   YOUTUBE_API_KEY?: string;
+  EMAIL_FROM?: string;
+  EMAIL_TO?: string;
+  FORM_NOTIFY_MIN_INTERVAL_SECONDS?: string;
+  NEWSLETTER_CONFIRM_URL_BASE?: string;
+  NEWSLETTER_CONFIRM_MAX_PER_HOUR?: string;
 };
 
 export interface CurrentUser {

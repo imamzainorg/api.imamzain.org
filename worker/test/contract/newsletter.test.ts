@@ -1,7 +1,7 @@
 import { createHmac, hkdfSync } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
 import { HARNESS_JWT_SECRET } from '../harness/config';
-import { adminToken, api, expectError, expectSuccess, tokenWith, withDb } from './support/http';
+import { adminToken, api, expectError, expectSuccess, tokenWith, withDb, workerOnly } from './support/http';
 import { uid } from './support/rbac';
 
 const NEWSLETTER = '/api/v1/newsletter';
@@ -50,15 +50,34 @@ const unsubscribe = (body: unknown) => api(`${NEWSLETTER}/unsubscribe`, { method
 const admin = async (path: string, method = 'POST') => api(`${NEWSLETTER}/subscribers${path}`, { method, token: await adminToken() });
 
 describe('POST /newsletter/subscribe (public)', () => {
-  // On the Worker this route falls through to Nest (it sends the e-mail), so only the reply is checked.
-  it('answers the same for any address and rejects an invalid one', async () => {
-    const res = await api(`${NEWSLETTER}/subscribe`, { method: 'POST', body: { email: `${uid('s')}@example.com` } });
+  it('answers the same for any address, leaves nobody subscribed, and rejects an invalid one', async () => {
+    const email = `${uid('s')}@example.com`;
+    const res = await api(`${NEWSLETTER}/subscribe`, { method: 'POST', body: { email } });
     expectSuccess(res);
     expect(res.body).toMatchObject({ message: 'Please check your inbox to confirm your subscription', data: null });
+    const [row] = await withDb((q) => q('SELECT is_active, confirmed_at FROM newsletter_subscribers WHERE email = $1', [email]));
+    expect(row).toMatchObject({ is_active: false, confirmed_at: null });
 
     const bad = await api(`${NEWSLETTER}/subscribe`, { method: 'POST', body: { email: 'nope' } });
     expectError(bad, 400, 'VALIDATION_FAILED', 'Validation failed');
     expect(bad.body.errors).toEqual(['Please provide a valid email address']);
+  });
+});
+
+// Nest's harness has no mail transport, so it never claims a confirmation; the Worker's local email binding does.
+describe('POST /newsletter/subscribe with a mail transport', () => {
+  workerOnly('worker-only: the link it mints confirms the address, and a second request inside the cool-down changes nothing', async () => {
+    const email = `${uid('s')}@example.com`;
+    expectSuccess(await api(`${NEWSLETTER}/subscribe`, { method: 'POST', body: { email } }));
+    const [first] = await withDb((q) => q('SELECT id, is_active, confirmation_sent_at FROM newsletter_subscribers WHERE email = $1', [email]));
+    expect(first).toMatchObject({ is_active: false, confirmation_sent_at: expect.any(Date) });
+
+    expectSuccess(await api(`${NEWSLETTER}/subscribe`, { method: 'POST', body: { email } }));
+    const [second] = await withDb((q) => q('SELECT confirmation_sent_at FROM newsletter_subscribers WHERE email = $1', [email]));
+    expect(second.confirmation_sent_at).toEqual(first.confirmation_sent_at);
+
+    expectSuccess(await confirm({ email, token: confirmToken(first.id as string, first.confirmation_sent_at as Date) }));
+    expect((await rowOf(first.id as string)).is_active).toBe(true);
   });
 });
 

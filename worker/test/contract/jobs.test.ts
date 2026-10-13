@@ -55,23 +55,24 @@ describe('every minute: scheduled publish', () => {
 });
 
 describe('every minute: form notification outbox', () => {
-  workerOnly('with no mail transport, flags pending submissions failed and keeps them pending; one past the 48 h window is left alone', async () => {
-    const insert = (hoursAgo: number) =>
+  // The harness Worker has the simulated email binding (nothing leaves) and no cool-down (worker.env).
+  workerOnly('announces pending submissions in one digest and clears an earlier failure flag; one past the 48 h window is left alone', async () => {
+    const insert = (hoursAgo: number, failed = false) =>
       withDb(async (q) => {
         const [row] = await q(
-          `INSERT INTO contact_submissions (name, email, message, submitted_at) VALUES ($1, 'jobs@example.test', 'hi', now() - make_interval(hours => $2)) RETURNING id::text AS id`,
-          [uid('job'), hoursAgo],
+          `INSERT INTO contact_submissions (name, email, message, submitted_at, notification_failed_at) VALUES ($1, 'jobs@example.test', 'hi', now() - make_interval(hours => $2), CASE WHEN $3 THEN now() ELSE NULL END) RETURNING id::text AS id`,
+          [uid('job'), hoursAgo, failed],
         );
         return row.id as string;
       });
-    const fresh = await insert(0);
+    const fresh = await insert(0, true);
     const stale = await insert(49);
 
     await fire('* * * * *');
 
     const rows = await withDb((q) => q('SELECT id::text AS id, notified_at, notification_failed_at FROM contact_submissions WHERE id = ANY($1::uuid[])', [[fresh, stale]]));
     const byId = Object.fromEntries(rows.map((r) => [r.id, r]));
-    expect(byId[fresh]).toMatchObject({ notified_at: null, notification_failed_at: expect.any(Date) });
+    expect(byId[fresh]).toMatchObject({ notified_at: expect.any(Date), notification_failed_at: null });
     expect(byId[stale]).toMatchObject({ notified_at: null, notification_failed_at: null });
   });
 });
