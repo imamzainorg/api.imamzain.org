@@ -28,6 +28,7 @@ export type AppBindings = Env & {
   EMAIL_TO?: string;
   FORM_NOTIFY_MIN_INTERVAL_SECONDS?: string;
   NEWSLETTER_CONFIRM_URL_BASE?: string;
+  NEWSLETTER_UNSUBSCRIBE_URL_BASE?: string;
   NEWSLETTER_CONFIRM_MAX_PER_HOUR?: string;
 };
 

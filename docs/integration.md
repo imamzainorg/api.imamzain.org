@@ -1155,8 +1155,8 @@ counts new *confirmations* in the window.
 
 ### How tokens are issued
 
-Every campaign e-mail carries a per-recipient unsubscribe link (see
-below). `POST /newsletter/subscribe` no longer returns a token — it used
+The confirmation e-mail and every campaign e-mail carry a per-recipient
+unsubscribe link (see below). `POST /newsletter/subscribe` no longer returns a token — it used
 to hand one to anyone who asked, for any address.
 
 The token is **`HMAC-SHA256(subscriber id, secret)`** with a server-side

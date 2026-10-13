@@ -51,11 +51,14 @@ describe('buildDigest', () => {
 });
 
 describe('buildConfirmationEmail', () => {
-  it('keeps the link in the plain-text part and escapes it in the HTML part', () => {
-    const url = 'https://imamzain.org/newsletter/confirm?email=a%40b.org&token=abc"def';
-    const { html, text } = buildConfirmationEmail(url);
-    expect(text).toContain(url);
+  it('keeps both links in the plain-text part and escapes them in the HTML part', () => {
+    const confirm = 'https://imamzain.org/newsletter/confirm?email=a%40b.org&token=abc"def';
+    const unsubscribe = 'https://imamzain.org/newsletter/unsubscribe?email=a%40b.org&token=xyz"123';
+    const { html, text } = buildConfirmationEmail(confirm, unsubscribe);
+    expect(text).toContain(confirm);
+    expect(text).toContain(unsubscribe);
     expect(html).toContain('token=abc&quot;def');
-    expect(html).not.toContain('abc"def');
+    expect(html).toContain('token=xyz&quot;123');
+    expect(html).not.toMatch(/abc"def|xyz"123/);
   });
 });

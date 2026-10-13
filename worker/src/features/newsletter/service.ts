@@ -27,6 +27,10 @@ const INVALID_LINK_MESSAGE = 'This confirmation link is invalid or has expired';
 const tokenKeys = (env: AppBindings, info: string): HmacKeyring =>
   resolveHmacKeyring({ dedicatedSecret: env.NEWSLETTER_UNSUBSCRIBE_SECRET, dedicatedName: 'NEWSLETTER_UNSUBSCRIBE_SECRET', jwtSecret: env.JWT_SECRET, info });
 
+/** Embedded in the confirmation e-mail's unsubscribe link; the same MAC every unsubscribe uses. */
+const signUnsubscribeToken = (env: AppBindings, subscriberId: string) =>
+  hmacHex(tokenKeys(env, KEY_INFO.newsletterUnsubscribe).signingKey, subscriberId);
+
 const verifyUnsubscribeToken = (env: AppBindings, subscriberId: string, token: string) =>
   verifyHmacHex(tokenKeys(env, KEY_INFO.newsletterUnsubscribe), subscriberId, token);
 
@@ -117,14 +121,17 @@ async function sendConfirmation(c: Ctx, subscriber: newsletter_subscribers): Pro
   });
   if (claim.count === 0) return; // inside the cool-down, or another request claimed it first
 
-  defer(c, deliverConfirmation(c, subscriber, now, subscriber.confirmation_sent_at, config.urlBase));
+  defer(c, deliverConfirmation(c, subscriber, now, subscriber.confirmation_sent_at, config));
 }
 
-async function deliverConfirmation(c: Ctx, subscriber: newsletter_subscribers, claimedAt: Date, previousSentAt: Date | null, urlBase: string): Promise<void> {
+async function deliverConfirmation(c: Ctx, subscriber: newsletter_subscribers, claimedAt: Date, previousSentAt: Date | null, config: ReturnType<typeof resolveConfirmConfig>): Promise<void> {
   let delivered = false;
   try {
     const token = signConfirmationToken(c.env, subscriber.id, claimedAt);
-    const message = buildConfirmationEmail(confirmationUrl(urlBase, subscriber.email, token));
+    const message = buildConfirmationEmail(
+      confirmationUrl(config.urlBase, subscriber.email, token),
+      confirmationUrl(config.unsubscribeUrlBase, subscriber.email, signUnsubscribeToken(c.env, subscriber.id)),
+    );
     const result = await sendMail(c.env, { to: subscriber.email, ...message });
     delivered = result.ok;
     if (!result.ok) console.warn(`Newsletter confirmation e-mail failed: ${result.error}`);
