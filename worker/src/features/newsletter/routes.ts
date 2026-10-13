@@ -1,13 +1,16 @@
 import { currentUser } from '../../lib/auth';
 import { createApp } from '../../lib/create-app';
 import { defineRoute } from '../../lib/define-route';
-import { confirmBody, idParams, subscriberQuery, unsubscribeBody } from './schemas';
+import { confirmBody, idParams, subscribeBody, subscriberQuery, unsubscribeBody } from './schemas';
 import * as service from './service';
 
 const app = createApp();
 
-// POST /subscribe (sends the confirmation e-mail) and /campaigns/* (dropped, D2) are not registered,
-// so they fall through to Nest.
+// /campaigns/* is dropped (D2) and not registered, so it falls through to Nest.
+
+defineRoute(app, { method: 'post', path: '/subscribe', summary: 'Ask to subscribe an email address to the newsletter (double opt-in)', limit: 5, body: subscribeBody, status: 200 }, (c, { body }) =>
+  service.subscribe(c, body),
+);
 
 defineRoute(app, { method: 'post', path: '/confirm', summary: 'Confirm a newsletter subscription (public)', limit: 10, body: confirmBody, status: 200 }, (c, { body }) =>
   service.confirm(c, body),

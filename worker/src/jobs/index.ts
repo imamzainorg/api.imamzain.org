@@ -22,7 +22,7 @@ type Job = (db: PrismaClient, env: AppBindings, scheduled: Date) => Promise<unkn
 const JOBS: Record<string, [name: string, job: Job][]> = {
   [CRONS.everyMinute]: [
     ['scheduled-publish', (db) => runScheduledPublish(db)],
-    ['form-notifications', (db) => drainOutbox(db)],
+    ['form-notifications', (db, env) => drainOutbox(db, env)],
   ],
   [CRONS.hourly]: [
     ['orphan-uploads', (db, env) => cleanupOrphanUploads(db, env)],

@@ -17,9 +17,11 @@ const email = z.preprocess(
 
 const token = z.string().max(LIMITS.token);
 
+export const subscribeBody = z.object({ email });
 export const confirmBody = z.object({ email, token });
 export const unsubscribeBody = z.object({ email, token });
 
+export type SubscribeInput = z.output<typeof subscribeBody>;
 export type ConfirmInput = z.output<typeof confirmBody>;
 export type UnsubscribeInput = z.output<typeof unsubscribeBody>;
 

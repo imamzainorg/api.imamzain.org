@@ -31,6 +31,10 @@
 
   "images": { "binding": "IMAGES" },
 
+  // D1: Cloudflare Email Service (imamzain.org is onboarded for sending). Local `wrangler dev` simulates it
+  // and sends nothing; the sender address must be on the onboarded domain.
+  "send_email": [{ "name": "EMAIL" }],
+
   // Phase 5 cron jobs (src/jobs/index.ts, CRONS). Nest runs with DISABLE_CRON=true since this cutover;
   // never re-enable Nest's crons while these are on, or both sides publish posts and flag form rows.
   // Cron Triggers run in UTC, as Nest's did on Render.
@@ -62,7 +66,8 @@
     // D11: the current Nest deployment; anything not ported is fetched from here.
     "ORIGIN_URL": "https://api-imamzain-org-temp.onrender.com",
     "ALLOWED_ORIGINS": "https://imamzain.org,https://cms.imamzain.com,https://app.imamzain.org",
-    "R2_PUBLIC_BASE_URL": "https://cdn.imamzain.org"
+    "R2_PUBLIC_BASE_URL": "https://cdn.imamzain.org",
+    "EMAIL_FROM": "imamzain.org <info@imamzain.org>"
   }
 
   // Secrets: set with `npx wrangler secret put <NAME>`, or in .dev.vars for `wrangler dev`.
@@ -75,4 +80,5 @@
   //   R2_ACCOUNT_ID, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY   (aws4fetch presigned PUTs)
   //   TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_WHATSAPP_FROM, TWILIO_TEMPLATE_SID
   //   NEWSLETTER_UNSUBSCRIBE_SECRET, CONTEST_ATTEMPT_SECRET, CONTEST_REVEAL_SCORE   (only if set on Nest)
+  //   EMAIL_TO, FORM_NOTIFY_MIN_INTERVAL_SECONDS, NEWSLETTER_CONFIRM_URL_BASE, NEWSLETTER_CONFIRM_MAX_PER_HOUR   (only if set on Nest; same defaults otherwise)
 }

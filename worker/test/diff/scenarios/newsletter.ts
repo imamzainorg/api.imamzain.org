@@ -2,8 +2,9 @@ import type { Scenario } from '../scenario';
 
 const BASE = '/api/v1/newsletter';
 
-// Subscribers can't be created through the API here (subscribe stays on Nest), so the lifecycle runs
-// on the first subscriber the database already has.
+// Subscribe isn't replayed: the Worker claims a confirmation where the hermetic Nest (no SMTP) doesn't, so
+// the rows would differ by design. The lifecycle runs on the first subscriber the
+// database already has.
 export default [
   {
     name: 'subscriber-lifecycle',

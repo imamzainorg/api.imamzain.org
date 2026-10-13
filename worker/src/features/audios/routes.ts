@@ -7,8 +7,6 @@ import * as service from './service';
 
 const app = createApp();
 
-// POST /upload-url has no route here: it needs R2 presigning (media, S25), so it still falls through to Nest.
-
 defineRoute(app, { method: 'get', path: '/', summary: 'List published audios (public, paginated)', query: audioQuery }, (c, { query }) => {
   publicCache(c, 60);
   return service.findAllPublic(c, query, c.get('lang'));
