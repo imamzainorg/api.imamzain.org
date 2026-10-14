@@ -282,7 +282,7 @@ Total with the pilot: 213 routes.
 Jobs that can run longer than a minute keep their row leases. Add a lease only where a job has none.
 
 ### Phase 6 — Cutover and cleanup (1–2 sessions)
-- **Confirm the origin is idle:** Workers Logs show zero fallthroughs for 7 days.
+- **Confirm the origin is idle:** Workers Logs show zero fallthroughs for 7 days, **and** every server-side caller of the API (the website Worker, any CMS Worker) reaches it through a Service Binding. A same-zone `fetch()` from a Worker skips the API Worker's route and hits the Nest origin directly, so those calls never show up as fallthroughs.
 - **Remove Nest:**
   - Remove the fallthrough and decommission the Nest deployment.
   - Delete `src/`, the Nest dependencies, Jest config and unused env vars.
