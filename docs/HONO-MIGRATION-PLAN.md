@@ -282,13 +282,17 @@ Total with the pilot: 213 routes.
 Jobs that can run longer than a minute keep their row leases. Add a lease only where a job has none.
 
 ### Phase 6 — Cutover and cleanup (1–2 sessions)
-- **Confirm the origin is idle:** Workers Logs show zero fallthroughs for 7 days.
+- **Confirm the origin is idle:** Workers Logs show zero fallthroughs for 7 days, **and** every server-side caller of the API (the website Worker, any CMS Worker) reaches it through a Service Binding. A same-zone `fetch()` from a Worker skips the API Worker's route and hits the Nest origin directly, so those calls never show up as fallthroughs.
 - **Remove Nest:**
   - Remove the fallthrough and decommission the Nest deployment.
   - Delete `src/`, the Nest dependencies, Jest config and unused env vars.
   - Optionally move `worker/` to the repo root.
 - **Docs:** update `docs/integration.md` and the README deploy steps, and add a "what changed" section to the CMS notes.
 - **Measure against the Phase 0 baselines:** source lines, test lines, p95, error rate.
+- **After the cutover (contract changes wait until then, D5):**
+  - Duplicate-submission guard on the public forms: return the existing row when the same name, phone and country (proxy visit) or name, email and message (contact) arrive within a few minutes. Seen on 2026-10-15: eight identical proxy-visit rows in 0.8 s from one visitor, because the website form has no in-flight guard and nothing on the API side dedupes.
+  - Delete the newsletter campaign code and CMS screens for good (D2) once nothing calls them.
+  - Newsletter: the confirmation e-mail now carries a self-service unsubscribe link; add `List-Unsubscribe` headers if campaigns ever return.
 - **Optional afterwards:** Prisma 7, Turnstile on public forms, the cached Hyperdrive binding for public GETs.
 
 ## 6. Testing

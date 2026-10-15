@@ -336,6 +336,7 @@ commented block I uncomment at cutover.
 ✋ **Before:**
 
 - [ ] Check that Workers Logs show **zero fallthrough requests** for 7 days. S5 logs each fallthrough as `fallthrough`; search for it.
+- [ ] Check that the **website Worker calls the API through a Service Binding** (`services: [{ binding: "API", service: "imamzain-api" }]`), not `fetch(API_URL)`. A fetch from one Worker to a route on the same zone skips the route, so the call goes to the Nest origin and never appears as a `fallthrough`, and it breaks the day Nest is switched off. Verify: submit one contact form and one newsletter sign-up, and see both in the `imamzain-api` logs (`npx wrangler tail imamzain-api`). Also confirm the visitor IP arrives (`cf-connecting-ip`), or every visitor shares one rate-limit bucket. The same goes for any other Worker or Pages Function that calls the API server-side (the CMS Workers, if they do).
 
 ```
 <preamble, step = cutover>
