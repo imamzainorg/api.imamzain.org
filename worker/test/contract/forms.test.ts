@@ -1,12 +1,14 @@
 import { describe, expect, it } from 'vitest';
-import { adminToken, api, expectError, expectSuccess, ISO_DATE, tokenWith } from './support/http';
+import { adminToken, api, expectError, expectSuccess, ISO_DATE, tokenWith, withDb, workerOnly } from './support/http';
 import { tokenSub, uid } from './support/rbac';
 
 const FORMS = '/api/v1/forms';
 const MISSING = '00000000-0000-4000-8000-000000000000';
 const FORBIDDEN = 'You do not have permission to access this resource';
 
-const visit = (extra: Record<string, unknown> = {}) => ({ visitor_name: `Visitor ${uid('v')}`, visitor_phone: '+9647801234567', visitor_country: 'IQ', ...extra });
+// A phone of its own per call: the Worker refuses a second name from one phone inside 3 s.
+const newPhone = () => `+9647${String(Math.floor(Math.random() * 1e9)).padStart(9, '0')}`;
+const visit = (extra: Record<string, unknown> = {}) => ({ visitor_name: `Visitor ${uid('v')}`, visitor_phone: newPhone(), visitor_country: 'IQ', ...extra });
 const contact = (extra: Record<string, unknown> = {}) => ({ name: `Sender ${uid('c')}`, email: 'sender@example.com', message: 'السلام عليكم، أود الاستفسار', ...extra });
 
 async function submitVisit(extra: Record<string, unknown> = {}) {
@@ -62,6 +64,46 @@ describe('POST /forms/proxy-visit (public)', () => {
     const res = await api(`${FORMS}/proxy-visit`, { method: 'POST', body: visit(extra) });
     expectError(res, 400, 'VALIDATION_FAILED', 'Validation failed');
     expect(res.body.errors).toEqual(errors);
+  });
+});
+
+describe('POST /forms/proxy-visit duplicates and groups', () => {
+  const rowsFor = (phone: string) => withDb((q) => q('SELECT id::text AS id, name FROM proxy_visit_requests WHERE phone = $1 AND deleted_at IS NULL', [phone]));
+  const submit = (body: Record<string, unknown>) => api(`${FORMS}/proxy-visit`, { method: 'POST', body });
+  const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+  workerOnly('worker-only: eight parallel clicks with the same phone and name make one row, and every click is answered with it', async () => {
+    const body = visit();
+    const results = await Promise.all(Array.from({ length: 8 }, () => submit(body)));
+    for (const r of results) expectSuccess(r, 201);
+    expect(new Set(results.map((r) => r.body.data.id)).size).toBe(1);
+    expect(await rowsFor(body.visitor_phone)).toHaveLength(1);
+  });
+
+  workerOnly('worker-only: another name from the same phone is refused for 3 s, then accepted (a group); the same name matches regardless of case and spacing', async () => {
+    const phone = newPhone();
+    expectSuccess(await submit(visit({ visitor_phone: phone, visitor_name: 'Ali Hassan' })), 201);
+
+    expectError(await submit(visit({ visitor_phone: phone, visitor_name: 'Zainab Hassan' })), 429, 'RATE_LIMITED');
+
+    const again = await submit(visit({ visitor_phone: phone, visitor_name: '  ali   HASSAN ' }));
+    expectSuccess(again, 201);
+    expect(await rowsFor(phone)).toHaveLength(1);
+
+    await sleep(3200);
+    expectSuccess(await submit(visit({ visitor_phone: phone, visitor_name: 'Zainab Hassan' })), 201);
+    expect(await rowsFor(phone)).toHaveLength(2);
+  });
+
+  workerOnly('worker-only: the same name is a new request once the 10-minute window has passed, or after the earlier row was deleted', async () => {
+    const phone = newPhone();
+    await withDb((q) => q("INSERT INTO proxy_visit_requests (name, phone, country, status, submitted_at) VALUES ('Old Visitor', $1, 'IQ', 'PENDING', now() - interval '11 minutes')", [phone]));
+    expectSuccess(await submit(visit({ visitor_phone: phone, visitor_name: 'Old Visitor' })), 201);
+    expect(await rowsFor(phone)).toHaveLength(2);
+
+    await withDb((q) => q('UPDATE proxy_visit_requests SET deleted_at = now() WHERE phone = $1', [phone]));
+    expectSuccess(await submit(visit({ visitor_phone: phone, visitor_name: 'Old Visitor' })), 201);
+    expect(await rowsFor(phone)).toHaveLength(1);
   });
 });
 

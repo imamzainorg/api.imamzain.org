@@ -290,7 +290,7 @@ Jobs that can run longer than a minute keep their row leases. Add a lease only w
 - **Docs:** update `docs/integration.md` and the README deploy steps, and add a "what changed" section to the CMS notes.
 - **Measure against the Phase 0 baselines:** source lines, test lines, p95, error rate.
 - **After the cutover (contract changes wait until then, D5):**
-  - Duplicate-submission guard on the public forms: return the existing row when the same name, phone and country (proxy visit) or name, email and message (contact) arrive within a few minutes. Seen on 2026-10-15: eight identical proxy-visit rows in 0.8 s from one visitor, because the website form has no in-flight guard and nothing on the API side dedupes.
+  - Duplicate-submission guard for the contact form (same name, email and message within a few minutes). The proxy-visit guard was built early, on 2026-10-19 (same phone and name within 10 minutes returns the existing row; a different name from one phone needs 3 s between requests), after 43 and 12 identical rows from single visitors on 15 and 17 Oct.
   - Delete the newsletter campaign code and CMS screens for good (D2) once nothing calls them.
   - Newsletter: the confirmation e-mail now carries a self-service unsubscribe link; add `List-Unsubscribe` headers if campaigns ever return.
 - **Optional afterwards:** Prisma 7, Turnstile on public forms, the cached Hyperdrive binding for public GETs.

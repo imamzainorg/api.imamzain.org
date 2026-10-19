@@ -1,8 +1,8 @@
 import type { Context } from 'hono';
 import type { Prisma, contact_status, proxy_visit_status } from '../../generated/prisma/client';
 import { AUDIT_ACTIONS, audit } from '../../lib/audit';
-import { defer, getDb } from '../../lib/db';
-import { badRequest, conflict, notFound } from '../../lib/errors';
+import { defer, getDb, lockKey } from '../../lib/db';
+import { badRequest, conflict, notFound, tooManyRequests } from '../../lib/errors';
 import { buildPaginationMeta } from '../../lib/pagination';
 import type { AppEnv } from '../../lib/types';
 import { sendProxyVisitCompletion } from '../../lib/whatsapp';
@@ -32,18 +32,48 @@ const casWhere = (id: string, prevStatus: string, isTransition: boolean) => ({ i
 
 // No e-mail from the public submissions: rows are born with notified_at = NULL and the notification
 // digest (a Nest cron until Phase 5) announces them.
+/** The same name from the same phone inside this window is one request sent twice (a repeated click, a retry). */
+export const PROXY_VISIT_DUPLICATE_WINDOW_MS = 10 * 60_000;
+/** One phone may submit for several people (a group), but not faster than this. */
+export const PROXY_VISIT_MIN_GAP_MS = 3_000;
+
+const sameName = (a: string, b: string) => a.trim().replace(/\s+/g, ' ').toLowerCase() === b.trim().replace(/\s+/g, ' ').toLowerCase();
+
 export async function submitProxyVisit(c: Ctx, dto: CreateProxyVisitInput) {
-  const record = await getDb(c).proxy_visit_requests.create({
-    data: { name: dto.visitor_name, phone: dto.visitor_phone, country: dto.visitor_country, status: 'PENDING' },
+  const { record, created } = await getDb(c).$transaction(async (tx) => {
+    // Eight clicks arrive within a second, so the check and the insert must not interleave: one phone at a time.
+    await lockKey(tx, `proxy-visit:${dto.visitor_phone}`);
+
+    const now = Date.now();
+    const recent = await tx.proxy_visit_requests.findMany({
+      where: { phone: dto.visitor_phone, deleted_at: null, submitted_at: { gte: new Date(now - PROXY_VISIT_DUPLICATE_WINDOW_MS) } },
+      orderBy: { submitted_at: 'desc' },
+    });
+
+    const duplicate = recent.find((r) => sameName(r.name, dto.visitor_name));
+    if (duplicate) return { record: duplicate, created: false };
+
+    const last = recent[0];
+    if (last && now - last.submitted_at.getTime() < PROXY_VISIT_MIN_GAP_MS) {
+      throw tooManyRequests('Please wait a few seconds before sending another request from this phone number', { retryAfterSeconds: PROXY_VISIT_MIN_GAP_MS / 1000 });
+    }
+
+    const row = await tx.proxy_visit_requests.create({
+      data: { name: dto.visitor_name, phone: dto.visitor_phone, country: dto.visitor_country, status: 'PENDING' },
+    });
+    return { record: row, created: true };
   });
 
-  audit(c, {
-    actorId: null,
-    action: AUDIT_ACTIONS.PROXY_VISIT_SUBMITTED,
-    resourceType: 'proxy_visit_request',
-    resourceId: record.id,
-    changes: { method: 'POST', path: '/api/v1/forms/proxy-visit' },
-  });
+  // A repeat answers exactly like the first request, so the visitor sees success; it just adds no row.
+  if (created) {
+    audit(c, {
+      actorId: null,
+      action: AUDIT_ACTIONS.PROXY_VISIT_SUBMITTED,
+      resourceType: 'proxy_visit_request',
+      resourceId: record.id,
+      changes: { method: 'POST', path: '/api/v1/forms/proxy-visit' },
+    });
+  }
 
   return { message: 'Proxy visit request submitted', data: record };
 }
