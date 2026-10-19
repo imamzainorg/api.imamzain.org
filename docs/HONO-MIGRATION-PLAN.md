@@ -1,6 +1,8 @@
 # Hono on Cloudflare Workers — migration plan
 
-Draft, 2026-09-30. Nest stays in production until Phase 6; any phase can be the last one.
+**Done, 2026-10-19.** The Worker has served every route since the Phase 6 cutover and the Nest host is switched off (PR 59). What is left is in section 5, Phase 6 (the post-cutover list).
+
+Originally drafted 2026-09-30. Nest stayed in production until Phase 6; any phase could have been the last one.
 
 **Precondition:** merge `fix/tier-0-audit-2026-09` first. Nest is the reference implementation, so it has to be the final Nest.
 
