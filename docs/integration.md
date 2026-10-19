@@ -1289,6 +1289,16 @@ The public site writes to `POST /forms/contact` and
 else is the CMS inbox and needs `forms:read` / `forms:update` /
 `forms:delete`.
 
+**Proxy-visit duplicates and groups.** `POST /forms/proxy-visit` is keyed on the
+phone number. The same name (ignoring case and extra spaces) from the same phone
+within 10 minutes is treated as one request sent twice: the answer is the same
+`201` with the **existing** row and nothing is inserted, so a repeated click or a
+retry looks like success. A *different* name from the same phone is accepted
+(one person submitting for a group) but not faster than 3 seconds after that
+phone's previous request: it gets `429 RATE_LIMITED` with `Retry-After: 3`, and
+the form should say "try again in a few seconds". Rows the CMS has deleted don't
+count.
+
 | Route | Permission |
 | --- | --- |
 | `GET /forms/contacts`, `GET /forms/proxy-visits` | `forms:read` |
