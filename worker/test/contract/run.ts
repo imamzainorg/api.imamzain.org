@@ -1,28 +1,25 @@
 /**
- * `npm run contract [-- <group>]`: starts Nest and the Worker (whose fallthrough origin is that Nest)
- * on one DB and runs the contract suite once per target. The DB is CONTRACT_DATABASE_URL when set (CI:
- * migrated and seeded), else a fresh clone of the diff harness template (Docker).
+ * `npm run contract [-- <group>]`: starts the Worker (`wrangler dev --local`) on a migrated and seeded
+ * Postgres and runs the contract suite against it. The DB is CONTRACT_DATABASE_URL, default the local
+ * test database from the Worker's wrangler.jsonc (`npm run prisma:deploy && npm run prisma:seed` at the repo root).
  */
 import { rel } from '../harness/config';
-import { prepareDatabases } from '../harness/db';
 import { startStack } from '../harness/servers';
 import { runContract } from './runner';
 
+const DEFAULT_DB = 'postgresql://postgres:postgres@localhost:5432/imamzain_test';
+
 async function main(group: string | undefined): Promise<boolean> {
-  const db = process.env.CONTRACT_DATABASE_URL ?? (await prepareDatabases(['contract'], console.log)).urls.contract;
+  const db = process.env.CONTRACT_DATABASE_URL ?? DEFAULT_DB;
   const stack = await startStack(db);
-  let ok = true;
   try {
-    for (const [target, url] of [['nest', stack.nest], ['worker', stack.worker]] as const) {
-      const r = await runContract(target, url, db, group);
-      ok &&= r.ok;
-      console.log(`contract ${target}: ${r.summary}${r.ok ? '' : ` → ${rel(r.log)}`}`);
-      for (const f of r.failures.slice(0, 10)) console.log(`  × ${f}`);
-    }
+    const r = await runContract(stack.worker, db, group);
+    console.log(`contract: ${r.summary}${r.ok ? '' : ` → ${rel(r.log)}`}`);
+    for (const f of r.failures.slice(0, 10)) console.log(`  × ${f}`);
+    return r.ok;
   } finally {
     await stack.stop();
   }
-  return ok;
 }
 
 main(process.argv[2]).then(

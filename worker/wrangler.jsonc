@@ -1,5 +1,4 @@
-// Hono API Worker (docs/HONO-MIGRATION-PLAN.md). Phase 2 task 6: on api.imamzain.org/* with zero
-// ported groups, so everything falls through to ORIGIN_URL. Deploy steps: docs/HONO-PASSTHROUGH-DEPLOY.md.
+// Hono API Worker for api.imamzain.org (docs/HONO-MIGRATION-PLAN.md). Phase 6: Nest is gone, every route is served here.
 {
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "imamzain-api",
@@ -7,8 +6,9 @@
   "compatibility_date": "2026-09-01",
   "compatibility_flags": ["nodejs_compat"],
 
-  // Route on the zone, not a Custom Domain: api.imamzain.org stays a proxied CNAME to Render (the
-  // Worker fetches ORIGIN_URL directly, so there is no loop). Rollback = remove this route.
+  // Route on the zone, not a Custom Domain. Server-side callers in the same zone (the website Worker, any
+  // CMS Worker) must reach the API through a Service Binding: a fetch() to this route from another Worker
+  // in the zone skips it.
   "routes": [{ "pattern": "api.imamzain.org/*", "zone_name": "imamzain.org" }],
   "workers_dev": false,
   "observability": { "enabled": true },
@@ -35,9 +35,7 @@
   // and sends nothing; the sender address must be on the onboarded domain.
   "send_email": [{ "name": "EMAIL" }],
 
-  // Phase 5 cron jobs (src/jobs/index.ts, CRONS). Nest runs with DISABLE_CRON=true since this cutover;
-  // never re-enable Nest's crons while these are on, or both sides publish posts and flag form rows.
-  // Cron Triggers run in UTC, as Nest's did on Render.
+  // Cron jobs (src/jobs/index.ts, CRONS). Cron Triggers run in UTC, as Nest's did on Render.
   "triggers": {
     "crons": [
       "* * * * *",   // scheduled post publish, form notification outbox
@@ -63,8 +61,6 @@
   ],
 
   "vars": {
-    // D11: the current Nest deployment; anything not ported is fetched from here.
-    "ORIGIN_URL": "https://api-imamzain-org-temp.onrender.com",
     "ALLOWED_ORIGINS": "https://imamzain.org,https://cms.imamzain.com,https://app.imamzain.org",
     "R2_PUBLIC_BASE_URL": "https://cdn.imamzain.org",
     "EMAIL_FROM": "imamzain.org <info@imamzain.org>"

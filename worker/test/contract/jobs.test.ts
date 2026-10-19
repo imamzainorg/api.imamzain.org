@@ -3,14 +3,13 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { promisify } from 'node:util';
-import { describe, expect } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import { WORK_DIR, WORKER_DIR } from '../harness/config';
 import { seedPost, uid } from './support/content';
-import { BASE_URL, workerOnly, withDb } from './support/http';
+import { BASE_URL, withDb } from './support/http';
 
 /**
- * The Phase 5 cron jobs, fired through `wrangler dev --test-scheduled`. Nest's crons are off in the
- * harness (DISABLE_CRON), and Nest has no such endpoint, so these run on the Worker only.
+ * The Phase 5 cron jobs, fired through `wrangler dev --test-scheduled`. 
  */
 async function fire(cron: string) {
   const res = await fetch(`${BASE_URL}/__scheduled?cron=${encodeURIComponent(cron)}`);
@@ -38,7 +37,7 @@ const r2Exists = (key: string) =>
   );
 
 describe('every minute: scheduled publish', () => {
-  workerOnly('publishes a draft whose published_at has passed, with a scheduled POST_PUBLISHED audit row; leaves future and deleted drafts alone', async () => {
+  it('publishes a draft whose published_at has passed, with a scheduled POST_PUBLISHED audit row; leaves future and deleted drafts alone', async () => {
     const past = new Date(Date.now() - 60_000).toISOString();
     const due = await seedPost({ slug: uid('job-due'), translations: [{ lang: 'ar', title: 'due' }], is_published: false, published_at: past });
     const future = await seedPost({ slug: uid('job-future'), translations: [{ lang: 'ar', title: 'future' }], is_published: false, published_at: '2999-01-01T00:00:00Z' });
@@ -56,7 +55,7 @@ describe('every minute: scheduled publish', () => {
 
 describe('every minute: form notification outbox', () => {
   // The harness Worker has the simulated email binding (nothing leaves) and no cool-down (worker.env).
-  workerOnly('announces pending submissions in one digest and clears an earlier failure flag; one past the 48 h window is left alone', async () => {
+  it('announces pending submissions in one digest and clears an earlier failure flag; one past the 48 h window is left alone', async () => {
     const insert = (hoursAgo: number, failed = false) =>
       withDb(async (q) => {
         const [row] = await q(
@@ -78,7 +77,7 @@ describe('every minute: form notification outbox', () => {
 });
 
 describe('hourly: orphan-upload cleanup', () => {
-  workerOnly('deletes the object and the row of an expired pending upload; an unexpired one keeps both', async () => {
+  it('deletes the object and the row of an expired pending upload; an unexpired one keeps both', async () => {
     const expired = `media/originals/${crypto.randomUUID()}/expired.jpg`;
     const live = `media/originals/${crypto.randomUUID()}/live.jpg`;
     await r2Put(expired);
@@ -97,7 +96,7 @@ describe('hourly: orphan-upload cleanup', () => {
 });
 
 describe('daily: retention', () => {
-  workerOnly('drops expired and long-revoked refresh tokens and idle login counters; keeps live tokens and recent revocation tombstones', async () => {
+  it('drops expired and long-revoked refresh tokens and idle login counters; keeps live tokens and recent revocation tombstones', async () => {
     const tokens = await withDb(async (q) => {
       const [user] = await q('SELECT id FROM users WHERE deleted_at IS NULL ORDER BY created_at LIMIT 1');
       const add = async (expires: string, revoked: string | null) => {

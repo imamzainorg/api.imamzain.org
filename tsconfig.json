@@ -1,12 +1,4 @@
 {
-    "files": [],
-    "references": [
-        { "path": "./tsconfig.build.json" },
-    { "path": "./tsconfig.test.json" }
-    ],
   "extends": "./tsconfig.base.json",
-    "compilerOptions": {
-        "rootDir": "./",
-    },
-    
+  "include": ["prisma/**/*.ts"]
 }

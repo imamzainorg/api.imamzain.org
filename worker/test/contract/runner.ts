@@ -11,10 +11,10 @@ export interface ContractResult {
   log: string;
 }
 
-/** Runs the contract suite (one group's file, or all) against `baseUrl`, whose DB is `db`. Full output goes to the log. */
-export async function runContract(target: string, baseUrl: string, db: string, group?: string): Promise<ContractResult> {
-  const log = path.join(LOG_DIR, `contract-${target}.log`);
-  const json = path.join(LOG_DIR, `contract-${target}.json`);
+/** Runs the contract suite (one group's file, or all) against the Worker at `baseUrl`, whose DB is `db`. Full output goes to the log. */
+export async function runContract(baseUrl: string, db: string, group?: string): Promise<ContractResult> {
+  const log = path.join(LOG_DIR, `contract.log`);
+  const json = path.join(LOG_DIR, `contract.json`);
   const files: string[] = [];
   if (group) {
     const file = `test/contract/${group}.test.ts`;
@@ -27,7 +27,7 @@ export async function runContract(target: string, baseUrl: string, db: string, g
     ['node_modules/vitest/vitest.mjs', 'run', '--config', 'vitest.contract.config.ts', '--reporter=default', '--reporter=json', `--outputFile.json=${json}`, ...files],
     {
       cwd: WORKER_DIR,
-      env: { ...baseEnv(), BASE_URL: baseUrl, DATABASE_URL: db, JWT_SECRET: HARNESS_JWT_SECRET, CONTRACT_IMPL: target, NO_COLOR: '1' },
+      env: { ...baseEnv(), BASE_URL: baseUrl, DATABASE_URL: db, JWT_SECRET: HARNESS_JWT_SECRET, NO_COLOR: '1' },
       allowFail: true,
       logFile: log,
     },

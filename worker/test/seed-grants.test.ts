@@ -1,4 +1,5 @@
-import { planRoleGrants } from './seed-grants.util';
+import { describe, expect, it } from 'vitest';
+import { planRoleGrants } from '../../prisma/lib/seed-grants';
 
 const LISTED = ['posts:read', 'posts:create', 'roles:update'];
 

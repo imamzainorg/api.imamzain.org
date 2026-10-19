@@ -23,9 +23,9 @@ const setIp: MiddlewareHandler<AppEnv> = async (c, next) => {
 };
 
 /**
- * True when a ported route (registered for a method, not ALL) matched. A path under a ported prefix
- * that no route serves falls through to Nest, which applies its own headers and throttle; preflights
- * are answered here, with the same headers Nest would send.
+ * True when a route (registered for a method, not ALL) matched. A path under a group's prefix that no
+ * route serves skips the group middleware and reaches the app's 404 (app.ts); preflights are answered
+ * here, with the same headers Nest sent.
  */
 const servesRoute = (c: Context<AppEnv>) =>
   c.req.method === 'OPTIONS' || matchedRoutes(c).some((r) => r.method !== 'ALL');
@@ -36,7 +36,7 @@ const onlyForRoutes =
     servesRoute(c) ? mw(c, next) : next();
 
 /**
- * A router for ported routes: the shared middleware around the group's own routes, the Zod hook and
+ * A router for a group's routes: the shared middleware around the group's own routes, the Zod hook and
  * the error envelope. Nest's order is helmet → CORS → language → throttle guards → auth → validation.
  * The body limit sits before the throttle as body-parser did (413 wins over 429), but after CORS, so
  * a browser can read the 413. Each middleware is registered separately so an error thrown in one

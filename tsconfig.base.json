@@ -3,16 +3,10 @@
     "target": "ES2020",
     "module": "commonjs",
     "strict": true,
-    "strictPropertyInitialization": false,
     "types": ["node"],
-
     "esModuleInterop": true,
-    "emitDecoratorMetadata": true,
-    "experimentalDecorators": true,
     "resolveJsonModule": true,
-
     "skipLibCheck": true,
-    "rootDir": "./",
     "noEmit": true
   }
 }

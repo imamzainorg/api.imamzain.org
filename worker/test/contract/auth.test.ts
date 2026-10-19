@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
-import { adminToken, api, expectError, expectSuccess, ISO_DATE, withDb, workerOnly } from './support/http';
+import { adminToken, api, expectError, expectSuccess, ISO_DATE, withDb } from './support/http';
 import { PASSWORD, assignRole, createRole, createUser, login, uid } from './support/rbac';
 
 const AUTH = '/api/v1/auth';
@@ -77,7 +77,7 @@ describe('POST /auth/login', () => {
   });
 
   // REHAUL-FINDINGS-2026-09 (auth.service.ts:166): Nest's check, compare and count are separate round trips.
-  workerOnly('worker-only: a concurrent burst against one username gets exactly 5 guesses', async () => {
+  it('worker-only: a concurrent burst against one username gets exactly 5 guesses', async () => {
     const user = await createUser();
     const results = await Promise.all(Array.from({ length: 8 }, () => login(user.username, 'wrong-password')));
     expect(results.map((r) => r.status).sort()).toEqual([401, 401, 401, 401, 401, 429, 429, 429]);

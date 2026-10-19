@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { adminToken, api, expectError, expectSuccess, tokenFor, tokenWith, workerOnly } from './support/http';
+import { adminToken, api, expectError, expectSuccess, tokenFor, tokenWith } from './support/http';
 import { allPermissionNames, caseVariants, assignRole, createRole, createUser, login, permissionIds, soleAdministrator, uid } from './support/rbac';
 
 const BASE = '/api/v1/roles';
@@ -40,7 +40,7 @@ describe('POST /roles', () => {
   });
 
   // REHAUL-FINDINGS-2026-09 (roles.service.ts:128): Nest's check-then-insert lets concurrent case variants through.
-  workerOnly('worker-only: concurrent case variants of one new name create exactly one role', async () => {
+  it('worker-only: concurrent case variants of one new name create exactly one role', async () => {
     const token = await adminToken();
     const results = await Promise.all(caseVariants(uid('race-')).map((name) => post({ name, translations: [tr('ar')] }, token)));
     expect(results.map((r) => r.status).sort()).toEqual([201, 409, 409, 409]);

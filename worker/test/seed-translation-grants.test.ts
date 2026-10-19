@@ -1,4 +1,5 @@
-import { planTranslationWrite } from './seed-translation-grants.util';
+import { describe, expect, it } from 'vitest';
+import { planTranslationWrite } from '../../prisma/lib/seed-translation-grants';
 
 const DESIRED = { title: 'Add Daily Hadiths', description: "Add hadiths and set which day they're shown" };
 

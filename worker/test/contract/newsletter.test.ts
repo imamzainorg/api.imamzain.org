@@ -1,7 +1,7 @@
 import { createHmac, hkdfSync } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
 import { HARNESS_JWT_SECRET } from '../harness/config';
-import { adminToken, api, expectError, expectSuccess, tokenWith, withDb, workerOnly } from './support/http';
+import { adminToken, api, expectError, expectSuccess, tokenWith, withDb } from './support/http';
 import { uid } from './support/rbac';
 
 const NEWSLETTER = '/api/v1/newsletter';
@@ -64,9 +64,8 @@ describe('POST /newsletter/subscribe (public)', () => {
   });
 });
 
-// Nest's harness has no mail transport, so it never claims a confirmation; the Worker's local email binding does.
 describe('POST /newsletter/subscribe with a mail transport', () => {
-  workerOnly('worker-only: the link it mints confirms the address, and a second request inside the cool-down changes nothing', async () => {
+  it('worker-only: the link it mints confirms the address, and a second request inside the cool-down changes nothing', async () => {
     const email = `${uid('s')}@example.com`;
     expectSuccess(await api(`${NEWSLETTER}/subscribe`, { method: 'POST', body: { email } }));
     const [first] = await withDb((q) => q('SELECT id, is_active, confirmation_sent_at FROM newsletter_subscribers WHERE email = $1', [email]));

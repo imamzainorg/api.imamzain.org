@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { adminToken, api, expectError, expectSuccess, ISO_DATE, tokenWith, withDb, workerOnly } from './support/http';
+import { adminToken, api, expectError, expectSuccess, ISO_DATE, tokenWith, withDb } from './support/http';
 import { tokenSub, uid } from './support/rbac';
 
 const FORMS = '/api/v1/forms';
@@ -72,7 +72,7 @@ describe('POST /forms/proxy-visit duplicates and groups', () => {
   const submit = (body: Record<string, unknown>) => api(`${FORMS}/proxy-visit`, { method: 'POST', body });
   const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-  workerOnly('worker-only: eight parallel clicks with the same phone and name make one row, and every click is answered with it', async () => {
+  it('worker-only: eight parallel clicks with the same phone and name make one row, and every click is answered with it', async () => {
     const body = visit();
     const results = await Promise.all(Array.from({ length: 8 }, () => submit(body)));
     for (const r of results) expectSuccess(r, 201);
@@ -80,7 +80,7 @@ describe('POST /forms/proxy-visit duplicates and groups', () => {
     expect(await rowsFor(body.visitor_phone)).toHaveLength(1);
   });
 
-  workerOnly('worker-only: another name from the same phone is refused for 3 s, then accepted (a group); the same name matches regardless of case and spacing', async () => {
+  it('worker-only: another name from the same phone is refused for 3 s, then accepted (a group); the same name matches regardless of case and spacing', async () => {
     const phone = newPhone();
     expectSuccess(await submit(visit({ visitor_phone: phone, visitor_name: 'Ali Hassan' })), 201);
 
@@ -95,7 +95,7 @@ describe('POST /forms/proxy-visit duplicates and groups', () => {
     expect(await rowsFor(phone)).toHaveLength(2);
   });
 
-  workerOnly('worker-only: the same name is a new request once the 10-minute window has passed, or after the earlier row was deleted', async () => {
+  it('worker-only: the same name is a new request once the 10-minute window has passed, or after the earlier row was deleted', async () => {
     const phone = newPhone();
     await withDb((q) => q("INSERT INTO proxy_visit_requests (name, phone, country, status, submitted_at) VALUES ('Old Visitor', $1, 'IQ', 'PENDING', now() - interval '11 minutes')", [phone]));
     expectSuccess(await submit(visit({ visitor_phone: phone, visitor_name: 'Old Visitor' })), 201);

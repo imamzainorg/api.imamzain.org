@@ -230,7 +230,6 @@ describe('GET /post-categories/:id', () => {
       for (const a of 'qxjvw') for (const b of 'abcdefghijklmnopqrstuvwxyz') if (!used.has(a + b)) free.push(a + b);
       return free[Math.floor(Math.random() * free.length)];
     });
-    // languages is not ported: on the Worker target this falls through to Nest.
     const lang = await api('/api/v1/languages', {
       method: 'POST',
       token: await adminToken(),

@@ -10,35 +10,9 @@ permissions:
   contents: read
 
 jobs:
-  ci:
-    name: Type-check & test
-    runs-on: ubuntu-latest
-
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-          cache: 'npm'
-
-      - name: Install dependencies
-        run: npm ci
-
-      - name: Generate Prisma client
-        run: npx prisma generate --generator client
-
-      - name: Type check
-        run: npm run type-check
-
-      # `npm run test:cov` runs this same suite with coverage locally (and
-      # enforces jest.config.js's coverageThreshold ratchet); left out of CI
-      # because coverage instrumentation roughly doubles the suite's run time.
-      - name: Unit tests
-        run: npm test
-
-  integration:
-    name: Integration tests
+  # The shared schema: migrations apply on a fresh database and schema.prisma matches them.
+  prisma:
+    name: Migrations and schema
     runs-on: ubuntu-latest
 
     services:
@@ -55,28 +29,29 @@ jobs:
           --health-timeout 5s
           --health-retries 10
 
+    env:
+      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/imamzain_test
+      DIRECT_URL: postgresql://postgres:postgres@localhost:5432/imamzain_test
+
     steps:
       - uses: actions/checkout@v4
 
       - uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '22'
           cache: 'npm'
 
       - name: Install dependencies
         run: npm ci
 
-      - name: Generate Prisma client
-        run: npx prisma generate --generator client
+      - name: Type check the seed scripts
+        run: npm run type-check
 
       # migrate deploy (not db push): the baseline migration creates the
       # citext/pgcrypto/pg_trgm extensions the schema needs, and this doubles
       # as a check that the migration chain applies cleanly on a fresh DB.
       - name: Apply migrations to test database
         run: npm run prisma:deploy
-        env:
-          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/imamzain_test
-          DIRECT_URL: postgresql://postgres:postgres@localhost:5432/imamzain_test
 
       # schema.prisma has drifted from the actual migrations before (a
       # daily_hadith_random_picks index existed in the migration history but was
@@ -86,15 +61,7 @@ jobs:
       # if this step ever does fail, check prisma/INTENTIONAL_DRIFT.md first.
       - name: Check schema.prisma against applied migrations
         run: npx prisma migrate diff --from-url "$DATABASE_URL" --to-schema-datamodel prisma/schema.prisma --exit-code
-        env:
-          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/imamzain_test
 
-      - name: Integration tests
-        run: npm run test:integration
-        env:
-          DATABASE_TEST_URL: postgresql://postgres:postgres@localhost:5432/imamzain_test
-          JWT_SECRET: test-only-secret-not-for-production
-          BCRYPT_ROUNDS: '4'
   worker:
     name: Worker (typecheck & test)
     runs-on: ubuntu-latest
@@ -121,10 +88,9 @@ jobs:
       - name: Unit tests
         run: npm test
 
-  # docs/HONO-MIGRATION-PLAN.md, Phase 2 task 5: the same black-box suite against Nest and against the
-  # Worker (wrangler dev, whose unported routes fall through to that Nest), on a migrated + seeded DB.
+  # The black-box suite against the Worker (wrangler dev) on a migrated + seeded DB.
   contract:
-    name: Contract tests (Nest and Worker)
+    name: Contract tests
     runs-on: ubuntu-latest
 
     services:
@@ -156,19 +122,16 @@ jobs:
             package-lock.json
             worker/package-lock.json
 
-      - name: Install dependencies (Nest)
+      - name: Install dependencies (repo root: Prisma and the seed)
         run: npm ci
 
       - name: Install dependencies (Worker)
         run: npm ci
         working-directory: worker
 
-      - name: Build Nest
-        run: npm run build
-
       # The seed creates the languages, permissions, roles and the super-admin the suite mints its token for.
       - name: Migrate and seed the database
-        run: npm run prisma:deploy && npm run prisma:seed
+        run: npx prisma generate --generator client && npm run prisma:deploy && npm run prisma:seed
         env:
           SEED_ADMIN_PASSWORD: ci-only-password-not-secret
           BCRYPT_ROUNDS: '4'
@@ -177,7 +140,7 @@ jobs:
         run: npm run gen
         working-directory: worker
 
-      - name: Contract tests against Nest, then the Worker
+      - name: Contract tests
         run: npm run contract
         working-directory: worker
         env:
