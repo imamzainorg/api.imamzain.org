@@ -1,7 +1,7 @@
 import { PrismaClient } from '@prisma/client';
 import * as bcrypt from 'bcryptjs';
-import { planRoleGrants } from '../src/common/utils/seed-grants.util';
-import { planTranslationWrite } from '../src/common/utils/seed-translation-grants.util';
+import { planRoleGrants } from './lib/seed-grants';
+import { planTranslationWrite } from './lib/seed-translation-grants';
 
 const prisma = new PrismaClient();
 

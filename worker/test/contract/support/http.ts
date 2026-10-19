@@ -1,12 +1,11 @@
-import { expect, it } from 'vitest';
+import { expect } from 'vitest';
 import { HARNESS_JWT_SECRET } from '../../harness/config';
 import { adminToken as mint, connect, userToken, type Query } from '../../harness/token';
 
 /**
- * Black-box client for the contract suite. Every test runs unchanged against Nest and against the
- * Worker; BASE_URL picks the target and DATABASE_URL is that target's DB (test/contract/run.ts and
- * test/check.ts set both). Tests make their own data with unique names and never assume an empty DB,
- * so the suite can run twice on one DB and on the scrubbed prod copy alike.
+ * Black-box client for the contract suite. BASE_URL is the Worker and DATABASE_URL its DB
+ * (test/contract/run.ts sets both). Tests make their own data with unique names and never assume an
+ * empty DB, so the suite can run twice on one DB.
  */
 function env(name: string, shown = name): string {
   const value = process.env[name];
@@ -17,11 +16,6 @@ function env(name: string, shown = name): string {
 /** BASE_URL, as passed on by vitest.contract.config.ts. */
 export const BASE_URL = env('CONTRACT_TARGET', 'BASE_URL').replace(/\/$/, '');
 
-/** Which server the suite runs against: set by the runner, nest when run by hand. */
-export const TARGET: 'nest' | 'worker' = process.env.CONTRACT_IMPL === 'worker' ? 'worker' : 'nest';
-
-/** A test of an intentional fix (plan rule 6): Nest still has the old behaviour, so it only runs on the Worker. */
-export const workerOnly = TARGET === 'worker' ? it : it.skip;
 
 export const ISO_DATE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
 
@@ -46,13 +40,9 @@ export interface ApiResponse {
 
 export const randomIp = () => `10.${(Math.random() * 256) | 0}.${(Math.random() * 256) | 0}.${(Math.random() * 256) | 0}`;
 
-/**
- * Nest (trust proxy 1) reads the client IP from X-Forwarded-For, the Worker from CF-Connecting-IP; the
- * same header pair works on both.
- */
 export async function api(path: string, opts: ApiOptions = {}): Promise<ApiResponse> {
   const ip = opts.ip ?? randomIp();
-  const headers: Record<string, string> = { 'x-forwarded-for': ip, 'cf-connecting-ip': ip, ...opts.headers };
+  const headers: Record<string, string> = { 'cf-connecting-ip': ip, ...opts.headers };
   if (opts.token) headers.authorization = `Bearer ${opts.token}`;
   if (opts.lang) headers['accept-language'] = opts.lang;
   if (opts.body !== undefined) headers['content-type'] = 'application/json';

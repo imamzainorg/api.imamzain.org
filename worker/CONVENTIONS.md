@@ -1,15 +1,15 @@
 # Worker conventions
 
-The rulebook for porting a Nest group to the Worker. The reference port is
-`src/features/post-categories/` with `src/lib/translatable-category/`; copy its shape.
-Where this file and `CLAUDE.md` disagree, this file wins.
+The rulebook for the Worker's route groups, written for the Nest port. Nest was removed in Phase 6, so
+`src/` of the old app and the "Nest is the reference" rules below are history: the contract is now what
+the Worker serves. The reference group is `src/features/post-categories/` with
+`src/lib/translatable-category/`; copy its shape. Where this file and `CLAUDE.md` disagree, this file wins.
 
 ## 1. The rule above all
 
-Same contract as Nest (D5): URLs, status codes, envelope keys, `code`s and `error` text are
-identical. Nest is the reference, bugs included. The only exception is a known Nest bug or an open
-audit finding, fixed on purpose with a `worker-only` test. Port business rules line by line; drop
-infrastructure (Redis, locks, in-process caches, DTO/Swagger classes).
+Same contract as Nest had (D5): URLs, status codes, envelope keys, `code`s and `error` text stay
+identical for the CMS and the website. Contract changes are now allowed after cutover, but only as a
+deliberate change announced to those two clients, never as a side effect.
 
 ## 2. File layout
 
@@ -112,39 +112,24 @@ The testing policy in `CLAUDE.md` applies first: a test must name the regression
 contract list below would add tests that don't (e.g. one validation case per DTO limit), keep the
 representative ones, not every permutation.
 
-**Contract tests** live in `test/contract/<group>.test.ts`, black-box over HTTP. They are the same file
-for both targets, so only test behaviour Nest has.
+**Contract tests** live in `test/contract/<group>.test.ts`, black-box over HTTP against `wrangler dev`.
 
 - Helpers from `support/http.ts`: `api`, `adminToken`, `tokenWith([...])` for 403s, `withDb` for setup
-  through unported tables, `expectSuccess`, `expectError(res, status, code, error)`.
+  through tables the group does not own, `expectSuccess`, `expectError(res, status, code, error)`.
 - Make your own data with unique slugs/names (`uid()`); never assume an empty DB. The suite runs twice
-  on one DB in CI and on the prod copy locally.
+  on one DB in CI.
 - **Per route:** the happy path, 401, 403, 400 (one `it.each` table of bodies → exact `errors` arrays),
   404, and the group's business rules (see the plan, section 6).
-- Get them green on Nest **first**, then on the Worker.
-- **Intentional fixes** (plan rule 6) get a test named `worker-only: …`, written with `workerOnly(...)`
-  from `support/http.ts`, which is skipped on Nest (the runner sets `CONTRACT_IMPL`).
-
-**Diff:**
-- Add one sampler per path parameter in `test/diff/samplers.ts`.
-- Add one write scenario in `test/diff/scenarios/<group>.ts`: create → update → the 409s →
-  delete → restore.
-- If the group's URLs don't start with its name, add it to `GROUP_PREFIXES` in `diff/corpus.ts`.
+- Run it with `npm run contract [-- <group>]` (see `test/README.md`).
 
 **Unit tests** (`test/*.test.ts`, vitest) are only for pure `lib/` helpers.
 
 ## 9. Per-group checklist
 
-1. Read `src/<group>/` (controller, service, DTOs) and its specs for the rules. Read no other feature
-   than `post-categories`.
-2. Write `schemas.ts`, `service.ts`, `routes.ts`; add the group to `ported` in `src/app.ts`.
-3. Add `"check:<group>": "tsx test/check.ts <group>"` to `package.json`.
-4. Write the contract tests; green on Nest, then on the Worker.
-5. Add the sampler and the scenario.
-6. Run `npm run check:<group>` until every line is `ok`. On the prod dump, every remaining diff gets an
-   explanation in `test/diff/reports/<group>.md`; commit that report.
-7. Run `npm run typecheck` and `npm test`. Open the PR on `hono/<group>`; no deploy unless the session
-   prompt says so.
-8. **After merge:** set any new secret the group reads (`wrangler secret put`), then deploy, click
+1. Write `schemas.ts`, `service.ts`, `routes.ts`; add the group to `routes` in `src/app.ts`.
+2. Write the contract tests.
+3. Run `npm run typecheck`, `npm test` and `npm run contract -- <group>`.
+4. Open the PR; no deploy unless the session prompt says so.
+5. **After merge:** set any new secret the group reads (`wrangler secret put`), then deploy, click
    through the CMS screens, and watch `npx wrangler tail --status error`. Roll back with
    `npx wrangler rollback`.

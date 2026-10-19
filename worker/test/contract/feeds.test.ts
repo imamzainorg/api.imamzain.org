@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { api, randomIp, expectSuccess, withDb, workerOnly } from './support/http';
+import { api, randomIp, expectSuccess, withDb } from './support/http';
 import { dropLanguage, dropPosts, retiredLanguage, seedPost, uid } from './support/content';
 
 const BASE = '/api/v1';
@@ -144,7 +144,7 @@ describe('GET /homepage', () => {
     expect(res.body.data.videos.length).toBeLessThanOrEqual(7);
   });
 
-  workerOnly('worker-only: leaves out a post whose only translation is in a retired language, and still fills the block', async () => {
+  it('worker-only: leaves out a post whose only translation is in a retired language, and still fills the block', async () => {
     const slug = `${PREFIX}-news-retired`;
     await seedPost({ slug, is_featured: true, published_at: '2999-07-01T00:00:00Z', translations: [{ lang: RETIRED, title: `${PREFIX} retired` }] });
 

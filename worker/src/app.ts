@@ -26,15 +26,14 @@ import { postCategories } from './features/post-categories/routes';
 import { posts } from './features/posts/routes';
 import { roles } from './features/roles/routes';
 import { users } from './features/users/routes';
-import { proxyToOrigin } from './lib/proxy';
+import { errorHandler, notFound } from './lib/errors';
 import type { AppEnv } from './lib/types';
 import './lib/bigint';
 
 /**
- * Ported-group table: path prefix → router built with `createApp()` (lib/create-app.ts). Any other
- * path falls through to ORIGIN_URL. Add an entry in the same PR that ports the group.
+ * Route table: path prefix → router built with `createApp()` (lib/create-app.ts). Any other path is a 404.
  */
-export const ported: Record<string, Hono<AppEnv>> = {
+export const routes: Record<string, Hono<AppEnv>> = {
   '/api/v1/academic-paper-categories': academicPaperCategories,
   '/api/v1/academic-papers': academicPapers,
   '/api/v1/audios': audios,
@@ -68,7 +67,7 @@ export const ported: Record<string, Hono<AppEnv>> = {
 
 export const app = new Hono<AppEnv>();
 
-for (const [prefix, router] of Object.entries(ported)) app.route(prefix, router);
+for (const [prefix, router] of Object.entries(routes)) app.route(prefix, router);
 
-// Anything no ported router answered goes to the Nest origin.
-app.all('*', proxyToOrigin);
+// Same text and envelope as Nest's unknown-route 404.
+app.notFound((c) => errorHandler(notFound(`Cannot ${c.req.method} ${new URL(c.req.url).pathname}`), c));

@@ -3,22 +3,16 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { promisify } from 'node:util';
-import { it as base, describe, expect, it } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import { WORK_DIR, WORKER_DIR } from '../harness/config';
 import { images } from '../fixtures/images';
-import { adminToken, api, expectError, expectSuccess, ISO_DATE, TARGET, tokenWith, withDb } from './support/http';
+import { adminToken, api, expectError, expectSuccess, ISO_DATE, tokenWith, withDb } from './support/http';
 import { tokenSub, uid } from './support/rbac';
 
 const BASE = '/api/v1/media';
 const MISSING = '00000000-0000-4000-8000-000000000000';
 const IN_USE_HINT = 'Detach the image from those records first; a record in the trash still holds its reference until the image is changed on the record itself.';
 
-/**
- * Behaviour that needs a real object in the bucket. The harness Nest has no bucket (fake R2
- * credentials), while the Worker's R2 binding is wrangler's local bucket, which these tests fill
- * through `wrangler r2 object put --local`. So they run on the Worker only.
- */
-const storage = TARGET === 'worker' ? base : base.skip;
 
 const run = promisify(execFile);
 const wrangler = (...args: string[]) =>
@@ -132,7 +126,7 @@ describe('POST /media/confirm', () => {
     expect(res.body.errors).toEqual(errors);
   });
 
-  storage('storage (worker only): registers the upload under its planned id with the displayed size, then builds the variants', async () => {
+  it('storage (worker only): registers the upload under its planned id with the displayed size, then builds the variants', async () => {
     const { key, mediaId, publicUrl } = await uploadUrl('rotated.jpg');
     await r2Put(key, images.jpegRotated.bytes, 'image/jpeg');
 
@@ -154,7 +148,7 @@ describe('POST /media/confirm', () => {
     expect(await r2Exists(`media/variants/${mediaId}/w320.webp`)).toBe(true);
   });
 
-  storage('storage (worker only): refuses and removes an object that is not an image, or not an allowed type', async () => {
+  it('storage (worker only): refuses and removes an object that is not an image, or not an allowed type', async () => {
     const html = await uploadUrl('page.png', 'image/png');
     await r2Put(html.key, new TextEncoder().encode('<!doctype html><script>alert(1)</script>'), 'image/png');
     expectError(await confirm(html.key, { mime_type: 'image/png' }), 400, 'BAD_REQUEST', 'Uploaded file is not a JPEG, PNG, GIF or WebP image');
@@ -167,7 +161,7 @@ describe('POST /media/confirm', () => {
   });
 
   // REHAUL-FINDINGS-2026-09 (media.service.ts:163, :162).
-  storage('worker-only: refuses a file whose bytes are another type than its label, and an empty file', async () => {
+  it('worker-only: refuses a file whose bytes are another type than its label, and an empty file', async () => {
     const mislabelled = await uploadUrl();
     await r2Put(mislabelled.key, images.pngWide.bytes, 'image/jpeg');
     expectError(await confirm(mislabelled.key), 400, 'BAD_REQUEST', 'Stored object type "image/jpeg" does not match the file, which is image/png');
@@ -268,7 +262,7 @@ describe('references and DELETE /media/:id', () => {
     expectError(await api(`${BASE}/${MISSING}/references`, { token: await adminToken() }), 404, 'NOT_FOUND', 'Media not found');
   });
 
-  storage('storage (worker only): removes the original and its variants from the bucket', async () => {
+  it('storage (worker only): removes the original and its variants from the bucket', async () => {
     const { key, mediaId } = await uploadUrl('to-delete.png', 'image/png');
     await r2Put(key, images.pngWide.bytes, 'image/png');
     expectSuccess(await confirm(key, { mime_type: 'image/png' }), 201);
@@ -287,7 +281,7 @@ describe('POST /media/:id/regenerate-variants', () => {
     expectError(await api(`${BASE}/${MISSING}/regenerate-variants`, { method: 'POST', token: await tokenWith(['media:read']) }), 403, 'FORBIDDEN');
   });
 
-  storage('storage (worker only): explains a no-variants answer: missing original, animated, too small', async () => {
+  it('storage (worker only): explains a no-variants answer: missing original, animated, too small', async () => {
     const token = await adminToken();
     const regen = async (id: string) => (await api(`${BASE}/${id}/regenerate-variants`, { method: 'POST', token })).body;
 
