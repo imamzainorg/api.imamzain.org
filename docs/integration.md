@@ -1,9 +1,13 @@
 # Integration Guide
 
-The reference companion to the OpenAPI spec at [`/docs`](https://api.imamzain.org/docs).
-Scalar tells you what each endpoint does; this document covers the
-cross-cutting concepts a CMS / front-end developer needs once, then
-reuses everywhere.
+The API runs as a Hono app on Cloudflare Workers (`worker/` in the repo).
+This document covers the cross-cutting concepts a CMS / front-end developer
+needs once, then reuses everywhere. **There is no interactive API reference
+page** (`/docs` and `/openapi.json` are not served): the route table of each
+group is in `worker/src/features/<group>/routes.ts`, and the request and
+response shapes are the Zod schemas next to it in `schemas.ts`. For what
+changed when the NestJS app was retired, see
+[What changed with the Cloudflare Workers move](CMS-INTEGRATION-NOTES.md#what-changed-with-the-cloudflare-workers-move).
 
 - [Response envelope](#response-envelope)
 - [Error envelope + error codes](#error-envelope--error-codes)
@@ -18,12 +22,12 @@ reuses everywhere.
 - [Rich-text body sanitisation](#rich-text-body-sanitisation)
 - [Newsletter double opt-in](#newsletter-double-opt-in)
 - [Newsletter unsubscribe scheme](#newsletter-unsubscribe-scheme)
-- [Newsletter campaign delivery](#newsletter-campaign-delivery)
+- [Newsletter campaigns (removed)](#newsletter-campaigns-removed)
 - [Form submissions (admin workflow)](#form-submissions-admin-workflow)
 - [Rate limiting](#rate-limiting)
 - [Public URL conventions](#public-url-conventions)
 - [Cron schedules](#cron-schedules)
-- [Required environment variables](#required-environment-variables)
+- [Configuration (secrets and variables)](#configuration-secrets-and-variables)
 
 ---
 
@@ -113,7 +117,6 @@ Endpoint-specific overrides (more precise than the status default):
 | `GALLERY_IMAGE_IN_TRASH` | 409 | `POST /gallery` — that `media_id` already has a gallery entry sitting in the trash; restore it (`POST /gallery/:id/restore`) instead |
 | `AUDIO_SPEAKER_DELETED` | 409 | `POST /audios/:id/restore` — the audio's speaker is in the trash; restore the speaker first, then retry |
 | `MEDIA_IN_USE` | 409 | `DELETE /media/:id` — still referenced by a post/book/static-page/gallery item; see `GET /media/:id/references` |
-| `SMTP_NOT_CONFIGURED` | 503 | `POST /newsletter/campaigns/:id/send` and `/retry` — the server has no SMTP settings, so nothing can be sent; the campaign is left untouched |
 
 Every error response — of any status, on any route — also carries
 `Cache-Control: no-store`, so a 404/400/429 is never held at a CDN edge
@@ -382,8 +385,8 @@ as equal). Send each id once.
 
 ### Scheduled timestamps need an explicit UTC offset
 
-`published_at` on `POST/PATCH /posts` and `scheduled_at` on newsletter
-campaigns share one validator: the value must be an ISO 8601 instant
+`published_at` on `POST/PATCH /posts` (and any other scheduled timestamp
+using the same validator) must be an ISO 8601 instant
 ending in `Z` or `±hh:mm` — exactly what `new Date(...).toISOString()`
 produces. A date-only value, an offset-less timestamp, lower-case `z`,
 `+0300`, an impossible date, or an out-of-range time is a `400`. Before
@@ -637,7 +640,7 @@ new password and hands it to the user out-of-band.
 
 The API uses RBAC with per-action permission strings of the form
 `<resource>:<action>`. Every protected endpoint declares the
-permission it requires (visible in the Scalar description).
+permission it requires (the `auth: [...]` list on its route in `routes.ts`).
 
 For the complete catalogue — every permission, which roles get them by
 default, and how to assign new combinations — see
@@ -810,9 +813,6 @@ current `display_date`.
 
 Soft delete is the default for content. The exceptions:
 
-- **Newsletter campaigns** in `draft`, `cancelled` or `failed` state
-  (i.e. ones that never reached anyone) can be hard-deleted via
-  `DELETE /newsletter/campaigns/:id`.
 - **Settings**, **roles**, **permissions assignments**, **media files**
   (`DELETE /media/:id` removes the R2 object too) are always hard.
 
@@ -886,13 +886,13 @@ admin handing the upload URL to a less-trusted helper.
 
 ### Server-side variant generation (background)
 
-On `/media/confirm`, the API runs `sharp` to produce WebP variants at up
-to **320, 768, 1280, and 1920 px** widths (skipping any width that would
-upscale — a 1200 px original legitimately gets only two variants, an
-animated GIF gets none). EXIF orientation is applied and stripped on
-each variant, so sideways phone photos come out the right way up.
-`sharp` is capped at 50 megapixels of input so a malicious 30000×30000
-PNG fails fast instead of OOM-ing the dyno. The **original** is also
+On `/media/confirm`, the API uses the Cloudflare Images binding to produce
+WebP variants at up to **320, 768, 1280, and 1920 px** widths (skipping any
+width that would upscale — a 1200 px original legitimately gets only two
+variants, an animated GIF gets none). EXIF orientation is applied and
+stripped on each variant, so sideways phone photos come out the right way up.
+An image the platform cannot decode ends as `variants_status: "unavailable"`
+with reason `UNREADABLE`. The **original** is also
 rewritten in place, seconds after confirm, to strip EXIF/XMP/IPTC (GPS
 position, camera/device serials) when it carries any — same URL, same
 format, orientation baked into the pixels; `file_size` can change once
@@ -900,13 +900,13 @@ shortly after confirm, so don't cache a hash of the original.
 
 **Variant generation runs in the background**, off the request path.
 `/media/confirm` returns immediately with `variants: []` so the editor
-isn't blocked by a 2–5 s `sharp` decode. Poll the media row for
+isn't blocked by a 2–5 s image decode. Poll the media row for
 completion using `variants_status` — **never** the length of
 `variants`:
 
 ```text
 1. POST /media/confirm  → { ..., variants: [], planned_widths: [320,768,…], variants_status: "processing" }
-2. (background, ~1–3 s)     sharp writes each planned width's variant row, then sanitises the original
+2. (background, ~1–3 s)     the Worker writes each planned width's variant row, then sanitises the original
 3. GET  /media/:id       → { ..., variants: [...], variants_status: "ready" }
 ```
 
@@ -1000,7 +1000,7 @@ route uses for a bad UUID.
 Two fields accept rich-text HTML from the CMS:
 
 - `post_translations.body`
-- `newsletter_campaigns.body_html`
+- `static_page_translations.body`
 
 Both go through `sanitize-html` against the same allowlist before
 storage. The allowlist mirrors the Tiptap StarterKit schema. Anything
@@ -1129,7 +1129,7 @@ secret also kills outstanding confirmation links.
 admin resubscribe — and `confirmation_sent_at`. A row with
 `is_active: false`, `confirmed_at: null` and `unsubscribed_at: null` is a
 sign-up still waiting for its click: show it as **pending**, not
-unsubscribed. Only `is_active` subscribers receive campaigns.
+unsubscribed. Campaigns no longer exist, so `is_active` only tells whether the address is on the list.
 Subscribers who joined before this change were grandfathered
 (`confirmed_at = subscribed_at`) and stay active.
 `GET /dashboard/stats` → `newsletter` gains `pending_subscribers`;
@@ -1155,8 +1155,10 @@ counts new *confirmations* in the window.
 
 ### How tokens are issued
 
-The confirmation e-mail and every campaign e-mail carry a per-recipient
-unsubscribe link (see below). `POST /newsletter/subscribe` no longer returns a token — it used
+The confirmation e-mail carries a per-recipient unsubscribe link (see below);
+there are no newsletter campaigns any more, see
+[Newsletter campaigns (removed)](#newsletter-campaigns-removed).
+`POST /newsletter/subscribe` returns no token — it used
 to hand one to anyone who asked, for any address.
 
 The token is **`HMAC-SHA256(subscriber id, secret)`** with a server-side
@@ -1176,8 +1178,7 @@ calling twice is a no-op.
 
 ### Where the URL gets built
 
-Inside outbound campaign emails, the body's `{{unsubscribe_url}}`
-placeholder is replaced per-recipient with:
+The confirmation e-mail's unsubscribe link is built per recipient as:
 
 ```text
 ${NEWSLETTER_UNSUBSCRIBE_URL_BASE}?email=<email>&token=<token>
@@ -1186,10 +1187,6 @@ ${NEWSLETTER_UNSUBSCRIBE_URL_BASE}?email=<email>&token=<token>
 Default base: `https://imamzain.org/newsletter/unsubscribe`. The
 front-end hosts that page and submits the params to
 `POST /newsletter/unsubscribe`.
-
-If the campaign body **doesn't** contain `{{unsubscribe_url}}`, a
-default footer with the link is appended automatically — every email
-the API sends has a working unsubscribe.
 
 ### Admin-driven unsubscribe
 
@@ -1204,81 +1201,19 @@ Both are idempotent. Permission: `newsletter:update`.
 
 ---
 
-## Newsletter campaign delivery
+## Newsletter campaigns (removed)
 
-`POST /newsletter/campaigns/:id/send` queues a campaign; a cron sender
-(every minute) does the sending. What the CMS needs to know:
+Newsletter **campaigns were removed** with the move to Cloudflare Workers
+(decision D2 of the migration plan: the module and its CMS screens were
+dropped). Every `/newsletter/campaigns*` URL now answers
+`404 NOT_FOUND`, the cron sender is gone, and so are the `SMTP_NOT_CONFIGURED`
+error code and the `NEWSLETTER_SEND_PER_HOUR` and `CAMPAIGN_SMTP_*` settings.
+The CMS must not call these endpoints or show campaign screens. Subscriber
+management (list, trash, restore, admin unsubscribe/resubscribe) and the
+public double opt-in flow are unchanged.
 
-**Pacing — a big list takes hours, by design.** Delivery is paced to a
-rolling-hour budget shared by all campaigns: `NEWSLETTER_SEND_PER_HOUR`,
-default **300**. Hostinger's own published limit for the shared mailbox is
-500 messages/hour per mailbox and domain
-([source](https://www.hostinger.com/support/6550582-parameters-and-limits-of-hostinger-cpanel-email/)) —
-the default stays under that so the admin digests and sign-up confirmations
-that share the same mailbox always have room, and because Hostinger's docs
-separately warn that an aggressive burst can trip anti-abuse throttling even
-under the numeric cap. A campaign to 1,300 subscribers therefore takes a bit
-over **4 hours**. Show an ETA rather than a spinner:
-`delivered_count / recipient_count` advances as the cron works. (The old
-sender attempted 50 a minute — 3,000 an hour — so with ~1,300 subscribers
-most recipients would have failed for good.) A dedicated campaign mailbox
-(`CAMPAIGN_SMTP_*`) lets an operator raise the budget further; sharing the
-transactional mailbox, 300/h already leaves 200/h of headroom under
-Hostinger's cap for that mailbox's other traffic.
-
-**Statuses.**
-
-| Status | Meaning |
-| --- | --- |
-| `draft` | Editable. |
-| `scheduled` | Editable; the cron starts it at `scheduled_at`. |
-| `sending` | In progress (possibly paused — see below). Can be cancelled. |
-| `sent` | Finished; at least one recipient was reached. `failed_count` may be non-zero (refused addresses, unsubscribed before their turn). |
-| `failed` | Finished and **nothing was delivered** — or nobody was on the list at the scheduled time. `last_error` may say why. Retry or delete it. |
-| `cancelled` | Stopped; delivered messages stay delivered. |
-
-**Every recipient is settled one at a time.** A message is marked sent the
-moment the mail server accepts it, so a restart can never re-send more than
-the handful of messages that were in flight. A temporary problem (timeout,
-greylisting, a 4xx) is retried with back-off — 5, 10, 20, 40 minutes, five
-attempts in all — and only then counts as failed; a refused address
-(5xx) fails at once. `delivered_count` and `failed_count` are recomputed
-from the recipient rows, so they are always exact.
-
-**Pause instead of fail.** If the problem is on *our* side — the SMTP
-server is unreachable, our login is refused, the hourly quota is reported
-exhausted — the sender stops, does not charge the recipients an attempt,
-and pauses the campaign for 15 minutes: `paused_until` (a future time) and
-`last_error` are set. Show "paused — will resume" while `paused_until` is
-in the future; both clear themselves as soon as mail flows again. If it
-never recovers (say the SMTP password is wrong), the campaign stays
-`sending` and paused — cancel it and fix the configuration.
-
-**Retry a failed campaign.** `POST /newsletter/campaigns/:id/retry`
-(`newsletter:update`; only for `failed`, else 409) puts the failed
-recipients who are still on the list back in the queue with their attempts
-reset and moves the campaign to `sending`. `data.recipient_count` is how
-many were re-queued. Subscribers who joined after the original send are not
-added; if every failed recipient has since left, it answers 409 and the
-campaign stays `failed`. A `failed` campaign can also be deleted now.
-
-**Refusals that leave the campaign untouched.** `send` and `retry` answer
-**503** with `code: SMTP_NOT_CONFIGURED` when no SMTP is set up on the
-server, and `send` answers 400 when there is nobody to send to — in both
-cases the campaign keeps its previous status (it used to be flipped to
-`sent` and consumed).
-
-**`scheduled_at`** must be an ISO-8601 instant **with an explicit UTC
-offset** (`2026-06-01T09:00:00Z` or `…T12:00:00+03:00`) and lie in the
-future; otherwise 400. Before, a time in the past sent the campaign within
-a minute and an offset-less time was read in the server's zone. Re-sending
-the value already stored is always accepted, so saving an overdue scheduled
-campaign unchanged doesn't fail.
-
-**Each message** carries the recipient's own unsubscribe link, a
-`List-Unsubscribe` header, and a plain-text part that includes the link
-(the old text part dropped every URL). It is sent through the *campaign
-lane*: `CAMPAIGN_SMTP_*` if set, otherwise the shared `SMTP_*` mailbox.
+The old `newsletter_campaigns` tables, permissions and audit actions are
+still in the database and the seed; they are inert.
 
 ---
 
@@ -1354,7 +1289,7 @@ they go out with the next one, so nothing is lost. `GET /dashboard/stats` →
 `forms.unsent_notifications` counts rows stuck like that *right now* and
 drops to 0 on its own once mail flows; historical failures from before the
 digest existed are not counted. Submitting a form no longer sends any
-e-mail inline, so a flood of submissions can't burn the SMTP quota.
+e-mail inline, so a flood of submissions can't burn the mail quota.
 
 **`notes` — internal admin annotation**
 
@@ -1379,44 +1314,43 @@ deleted rows, and `POST …/:id/restore` brings one back. See
 
 ## Rate limiting
 
-Two layers of throttling (`@nestjs/throttler`), both keyed on the client
-IP as resolved through `TRUST_PROXY_HOPS`:
+Two layers, both using Cloudflare's Rate Limiting binding and keyed on the
+client IP (`CF-Connecting-IP`). The binding only has **60-second windows**,
+so every limit below is a per-minute count (the old NestJS limits were
+per 15 minutes or per hour):
 
-- **Per route:** 1000 requests per 15 minutes per IP *per route handler*.
-  This is the library's native keying — each handler has its own bucket —
-  and is what the stricter per-endpoint overrides below replace.
-- **API-wide:** **3000 requests per 15 minutes per IP across all routes**
-  (`THROTTLE_GLOBAL_LIMIT`; 0 disables). This is the real ceiling for a
-  client walking the whole API. Its counters are reported in the
-  `X-RateLimit-*-global` headers; the per-route bucket keeps the unsuffixed
-  `X-RateLimit-*` headers.
-
-A handful of endpoints have stricter per-endpoint limits:
+- **API-wide:** **200 requests per minute per IP across all routes.** This
+  is the ceiling for a client walking the whole API. It is also the only
+  limit on routes without a stricter one of their own (the contact and
+  proxy-visit forms, which used to be 300 / hour).
+- **Per route:** a few endpoints have their own bucket, one per route per
+  IP, in addition to the API-wide ceiling:
 
 | Endpoint | Limit | Why |
 | --- | --- | --- |
-| `POST /auth/login` | 10 / 15 min / IP, **plus a per-username lockout** (below) | Anti-brute-force |
-| `POST /auth/refresh` | 30 / 15 min / IP | Limits stolen-token replay |
-| `PATCH /auth/me/password` | 5 / 15 min / IP | Anti-brute-force on current-password check |
-| `POST /users/:id/reset-password` | 10 / 15 min / IP | Anti-abuse on admin-driven reset |
-| `POST /newsletter/subscribe` | 5 / 15 min / IP | Anti-spam signups (each also costs a confirmation e-mail — see [double opt-in](#newsletter-double-opt-in)) |
-| `POST /newsletter/confirm` | 10 / 15 min / IP | Confirmation link clicks |
-| `POST /newsletter/unsubscribe` | 5 / 15 min / IP | Symmetric with subscribe |
-| `POST /forms/contact` | 300 / hour / IP | Generous; flooding goes to admin inbox |
-| `POST /forms/proxy-visit` | 300 / hour / IP | Same |
-| `POST /posts/:id/view` | 30 / min / IP | View-counter abuse; also de-duplicated to one counted view per client IP per post per 30 minutes (a repeat inside the window still answers 200 "View tracked", it just doesn't increment). Other view-counter routes are rate-limited only — not yet de-duplicated |
-| `POST /books/:id/view` | 30 / min / IP | Same |
-| `POST /academic-papers/:id/view` | 30 / min / IP | Same |
-| `POST /audios/:id/view` | 30 / min / IP | Same |
-| `POST /gallery/:id/view` | 30 / min / IP | Same — `:id` is the **media** UUID |
-| `GET /health` | 60 / min / IP | Generous; uptime probes only |
-| `GET /homepage` | 120 / min / IP | Composite payload (several queries); CDN-cacheable, so far above any real need |
+| `POST /auth/login` | 10 / min / IP, **plus a per-username lockout** (below) | Anti-brute-force |
+| `POST /auth/refresh` | 30 / min / IP | Limits stolen-token replay |
+| `PATCH /auth/me/password` | 5 / min / IP | Anti-brute-force on current-password check |
+| `POST /users/:id/reset-password` | 10 / min / IP | Anti-abuse on admin-driven reset |
+| `POST /newsletter/subscribe` | 5 / min / IP | Anti-spam signups (each also costs a confirmation e-mail — see [double opt-in](#newsletter-double-opt-in)) |
+| `POST /newsletter/confirm` | 10 / min / IP | Confirmation link clicks |
+| `POST /newsletter/unsubscribe` | 5 / min / IP | Symmetric with subscribe |
+| `POST /forms/contact`, `POST /forms/proxy-visit` | API-wide ceiling only | Flooding goes to the admin inbox as one digest |
+| `POST /posts/:id/view` | 30 / min / IP; **one counted view per client IP per post per minute** | View-counter abuse. A repeat inside the window still answers 200 "View tracked", it just doesn't increment. (The window was 30 minutes under NestJS.) |
+| `POST /books/:id/view`, `/academic-papers/:id/view`, `/audios/:id/view`, `/gallery/:id/view` | 30 / min / IP | Same limit, **no** de-duplication. `/gallery/:id/view` takes the **media** UUID |
+| `POST /media/upload-url`, `/media/confirm`, and the `upload-url` of books, academic papers and audios | 60 / min / IP | Authenticated, generous |
+| `POST /media/:id/regenerate-variants` | 10 / min / IP | Re-encodes an image |
+| `GET /health`, `GET /search` | 60 / min / IP | Probes and search-as-you-type |
+| `GET /homepage` | 120 / min / IP | Composite payload |
 | `GET /sitemap.xml`, `GET /rss/posts.xml` | 20 / min / IP | Walk every published post; crawlers and feed readers fetch rarely |
-| `POST /forms/qutuf-sajjadiya-contest/start`, `…/submit` | 60 / 15 min / IP each (`CONTEST_THROTTLE_PER_IP`) | Row-spam and answer probing; generous because classrooms share a NAT |
+| `POST /forms/qutuf-sajjadiya-contest/start`, `…/submit` | 60 / min / IP each | Row-spam and answer probing; generous because classrooms share a NAT |
 
 Hitting any limit returns **429 Too Many Requests** with the standard
-error envelope. The response body's `error` field tells the user to
-slow down; the front-end should not retry automatically.
+error envelope and `Retry-After: 60` (an API-wide hit sends
+`Retry-After-global: 60`). The response body's `error` field tells the user
+to slow down; the front-end should not retry automatically. **The
+`X-RateLimit-*` headers are no longer sent**, so the CMS cannot read remaining
+quota from responses.
 
 **Login lockout (per username).** Independent of the per-IP limit above:
 5 failed logins for the same username within 15 minutes lock that username
@@ -1446,8 +1380,7 @@ contest open/close endpoint). The rest of this section describes behaviour
 that only matters while it is open.
 
 `POST /forms/qutuf-sajjadiya-contest/start` and
-`/submit` are limited to **60 requests / 15 min per IP** each
-(`CONTEST_THROTTLE_PER_IP`). The ceiling is generous on purpose: in a live
+`/submit` are limited to **60 requests / minute per IP** each. The ceiling is generous on purpose: in a live
 contest 200+ students share a school or university NAT, and the original
 design (no per-endpoint limit at all) existed for exactly that reason. A
 20-per-15-minutes limit added later contradicted it and would have locked
@@ -1547,29 +1480,27 @@ Add a `<link rel="alternate">` to the public site's `<head>`:
 
 ## Cron schedules
 
-The API runs eight background jobs on cron schedules. Front-end
+The Worker runs its background jobs from three Cloudflare Cron Triggers
+(UTC). A trigger fires once, so there are no locks to coordinate. Front-end
 behaviour should account for the latency.
 
 | Job | Schedule | What it does |
 | --- | --- | --- |
 | Scheduled post publishing | every minute | Flips `is_published=true` on posts whose `published_at <= now()` and were left as drafts. One `updateMany` per tick; audit-logs each transition with `{ scheduled: true, by: 'cron' }`. |
-| Newsletter campaign sender | every minute | First promotes `scheduled` campaigns whose `scheduled_at <= now()` into `sending`. Then gives each `sending` campaign (oldest first, paused ones skipped) a batch of due recipients: at most `NEWSLETTER_BATCH_SIZE` (10), and at most what the rolling-hour budget `NEWSLETTER_SEND_PER_HOUR` (80) still allows. Per recipient: claim the row → send → mark `sent_at` immediately; a transient failure backs off and retries, a server-side failure pauses the campaign. Advisory-locked so one instance sends per tick. See [Newsletter campaign delivery](#newsletter-campaign-delivery). |
-| Form notification digest | every minute | Sends ONE e-mail for the contact / proxy-visit submissions no admin has been told about yet — at most one per `FORM_NOTIFY_MIN_INTERVAL_SECONDS` (default 300 s). A failed send leaves the rows queued for the next digest. Advisory-locked. |
-| YouTube channel mirror sync | every 6 hours (plus once 30 s after boot) | Pulls the configured channel's videos + playlists into the local DB so the homepage / `/youtube/*` endpoints never hit the YouTube Data API on the request path. Gated by a Postgres advisory lock + a recency check, so a multi-instance fleet performs exactly one sync per window (no N× quota burn). After a complete sync it also **prunes** videos and playlists that no longer exist on YouTube: each candidate is re-checked by id first, and a sync that would delete more than `max(10, 25 % of the mirror)` is treated as suspicious and skips pruning (logged). Silently skipped when `YOUTUBE_API_KEY` / `YOUTUBE_CHANNEL_ID` are unset. |
-| Orphan upload cleanup | every hour | Deletes `pending_media_uploads` rows older than the pre-signed URL TTL that were never confirmed via `POST /media/confirm`. Also purges the abandoned R2 object so the bucket doesn't accumulate dead keys. |
-| Login-attempt sweep | daily at 03:20 | Deletes `login_attempts` rows (the per-username lockout counters) idle for more than 24 h. |
-| Refresh-token cleanup | daily at 03:15 | Drops `refresh_tokens` rows past `expires_at` and revoked rows older than 30 days (past the reuse-detection grace window). |
-| Audit-log retention | daily at 03:30 | Drops `audit_logs` rows older than **365 days**. Window is configurable via `AUDIT_LOG_RETENTION_DAYS` in `src/common/audit/audit.service.ts`. The CMS audit-log viewer should not assume rows are available forever. |
+| Form notification digest | every minute | Sends ONE e-mail for the contact / proxy-visit submissions no admin has been told about yet — at most one per `FORM_NOTIFY_MIN_INTERVAL_SECONDS` (default 300 s). A failed send leaves the rows queued for the next digest. |
+| Orphan upload cleanup | every hour | Deletes `pending_media_uploads` rows older than the pre-signed URL TTL that were never confirmed via `POST /media/confirm`, and the abandoned R2 object with each. |
+| YouTube channel mirror sync | hourly trigger, runs when the UTC hour is a multiple of 6 | Pulls the configured channel's videos + playlists into the local DB so the homepage / `/youtube/*` endpoints never hit the YouTube Data API on the request path. A recency check stops a repeated tick from syncing twice. After a complete sync it also **prunes** videos and playlists that no longer exist on YouTube: each candidate is re-checked by id first, and a sync that would delete more than `max(10, 25 % of the mirror)` is treated as suspicious and skips pruning (logged). Silently skipped when `YOUTUBE_API_KEY` is unset. |
+| Retention sweep | daily at 03:15 | In one pass: drops `refresh_tokens` rows past `expires_at` and revoked rows older than 30 days (past the reuse-detection grace window); deletes `login_attempts` rows (the per-username lockout counters) idle for more than 24 h; drops `audit_logs` rows older than **365 days**. The CMS audit-log viewer should not assume rows are available forever. |
+
+The newsletter campaign sender no longer exists (see
+[Newsletter campaigns (removed)](#newsletter-campaigns-removed)), and the
+YouTube sync no longer also runs once after a restart.
 
 So:
 
 - A post scheduled for `09:00:00` may not flip live until `09:00:30` at
   earliest. The CMS UI should display "scheduled for…" with a hint that
   it may go live up to a minute late.
-- A newsletter campaign is **paced**, not drained: with the default
-  budget of 300 messages an hour, 200 subscribers take about 40 minutes and
-  1,300 a bit over 4 hours. The CMS progress bar (`delivered_count /
-  recipient_count`) updates as the cron progresses; show an ETA.
 - Admin notification e-mails for new form submissions arrive as a digest
   up to 5 minutes (`FORM_NOTIFY_MIN_INTERVAL_SECONDS`) after the first
   submission of a burst, not instantly.
@@ -1578,8 +1509,9 @@ So:
 
 ## Caching strategy + cost notes for consumer apps
 
-The API runs on Supabase (Postgres) + a single Node process. Origin
-work scales linearly with hit volume unless the CDN absorbs it. This
+The API runs on Cloudflare Workers in front of Supabase (Postgres, through
+Hyperdrive). Database work scales linearly with hit volume unless the CDN
+absorbs it. This
 section is the **action list** for the CMS and front-end teams to keep
 costs predictable as traffic grows.
 
@@ -1610,7 +1542,7 @@ versions are cached separately at the edge.
 Every JSON response — success **or error** — also carries a weak
 `ETag`, hashed over the response body **without** the envelope's
 `timestamp` field (so the timestamp changing on every call doesn't
-defeat caching), and the ETag survives compression. A request with a
+defeat caching), and the ETag survives the edge's compression. A request with a
 matching `If-None-Match` gets back `304 Not Modified` with **no body**
 — the `timestamp` a client sees on a 304 is whatever it cached from the
 earlier 200, so don't use the envelope `timestamp` as a freshness
@@ -1651,7 +1583,7 @@ The optimisations the CMS can make are around request shape:
 1. **Use the new `?status=draft|scheduled|published` filter on `GET /posts/admin`.** Server-side filtering is cheaper than fetching all and filtering in JS, and the response is 60–80% smaller.
 2. **Use `GET /media?search=<term>&mime_type=image/jpeg`.** The media picker should ALWAYS pass a search or mime filter once the library grows past ~50 items. Trigram indexes are in place; the query stays fast indefinitely.
 3. **Debounce search input by ≥ 300ms before calling `GET /search`** or the post / media `?search=`. Trigram indexes keep individual queries fast (~5–10 ms each), but un-debounced search fires one DB query per keystroke per concurrent user. 300ms is the standard floor.
-4. **Don't poll `GET /dashboard/stats` faster than every 30 seconds.** The response is cached server-side for 30 s (recent perf pass); polling more frequently doesn't change what comes back, just burns network. The server returns the same JSON until the cache expires.
+4. **Don't poll `GET /dashboard/stats` faster than every 30 seconds.** It runs several counts on every call and is not cached server-side any more, so frequent polling goes straight to the database.
 5. **Read the JWT's `permissions[]` array locally to drive button-visibility.** Do not re-call `GET /auth/me` per route render. The JWT is good for 24h; decode it once on login.
 6. **For the campaign composer, fetch the recipient count once via `GET /newsletter/subscribers?is_active=true&limit=1` and read `pagination.total`.** Don't repeat this on every keystroke.
 
@@ -1660,7 +1592,7 @@ The optimisations the CMS can make are around request shape:
 This is where the biggest cost savings live, because the public site is
 the bulk of the traffic.
 
-1. **Route ALL public reads through the CDN, not direct to the API origin.** Cloudflare should be the first hop. Confirm in your DNS: `api.imamzain.org` resolves to a Cloudflare-proxied record (orange cloud).
+1. **Route ALL public reads through `api.imamzain.org`.** The Worker answers on that route (`api.imamzain.org/*` in the `imamzain.org` zone). A Cloudflare Worker or Pages Function calling the API server-side must use a **Service Binding**, not `fetch()` to the public URL: a same-zone `fetch()` from a Worker skips the API Worker's route.
 2. **In Cloudflare's cache rules, set "Respect origin Cache-Control" to ON.** The defaults usually do this, but verify. If a cache rule overrides our headers (e.g. "Browser cache TTL: 1 day"), the front-end will see stale content.
 3. **Use `GET /homepage` instead of three separate `/posts` calls.** Already the case if you start fresh; if there's existing code calling `/posts?featured=true` + `/posts?sort=views` + `/posts?sort=newest`, swap it. Cuts origin load on the busiest route by 3×.
 4. **Always render `<img srcset>` from `media.variants[]`, never the original URL.** Saves both bandwidth and visitor-side bytes. The variants are already pre-baked; using them costs nothing extra.
@@ -1675,7 +1607,8 @@ the bulk of the traffic.
 
 - **Cloudflare Analytics → Cache Status** — target ≥ 90% cache hit rate on `/api/v1/posts*`, `/api/v1/books*`, `/api/v1/gallery*`, `/api/v1/homepage`. If hit rate is low, check that Cloudflare isn't stripping `Vary: Accept-Language` or that the front-end isn't appending cache-busting query params.
 - **Supabase Query Performance** — flag any query > 100ms p95 on `posts`, `book_translations`, `media`. The trigram + B-tree indexes added in round 6 should keep these well below the threshold.
-- **`/dashboard/stats` p95** — should stay < 50 ms (response is now cached in-process for 30 s and the 4 post counts collapsed into a single `FILTER`-based query). If it climbs, profile the underlying counts.
+- **`/dashboard/stats` p95** — the 4 post counts are collapsed into a single `FILTER`-based query. If it climbs, profile the underlying counts.
+- **Workers Logs / `npx wrangler tail --status error`** — the live error stream; Workers → `imamzain-api` → Logs in the dashboard.
 
 ### What's deliberately NOT cached
 
@@ -1688,11 +1621,13 @@ the bulk of the traffic.
 
 ---
 
-## Required environment variables
+## Configuration (secrets and variables)
 
-For the CMS / front-end deployment, the API's env config is the
-authoritative spec. See [.env.example](../.env.example) for the
-complete list. The ones the front-end may need to know about:
+The Worker's configuration is `worker/wrangler.jsonc` (non-secret variables
+and bindings) plus secrets set with `npx wrangler secret put <NAME>`. The
+complete list, with the defaults used when a variable is unset, is the
+comment at the bottom of `wrangler.jsonc`. The ones the CMS and the front-end
+need to know about:
 
 | Var | Default | Front-end implication |
 | --- | --- | --- |
@@ -1701,40 +1636,27 @@ complete list. The ones the front-end may need to know about:
 | `SITE_TIMEZONE` | `Asia/Baghdad` | The calendar-day boundary for `GET /daily-hadiths/today` and the homepage's `hadith_of_day` (and the cache-TTL clamp on both). Compute "today" in this zone, not UTC or the browser's local zone. |
 | `NEWSLETTER_UNSUBSCRIBE_URL_BASE` | `https://imamzain.org/newsletter/unsubscribe` | The page the front-end serves to handle unsubscribe links. Must accept `?email=&token=` and POST them to the API. |
 | `NEWSLETTER_CONFIRM_URL_BASE` | `https://imamzain.org/newsletter/confirm` | The page the double-opt-in confirmation e-mail links to. Must accept `?email=&token=` and POST them to `/newsletter/confirm` (on a button press, ideally). |
-| `NEWSLETTER_SEND_PER_HOUR` | `300` | Campaign delivery budget (messages / rolling hour, all campaigns). Drives how long a campaign takes — show an ETA in the CMS. |
 | `CONTEST_REVEAL_SCORE` | reveal | With `false`, `/submit` returns `final_score: null` — the contest page must then show "your answers were received" instead of a score. |
-| `ALLOWED_ORIGINS` | (required in prod) | The API's CORS allowlist. The front-end's origin must be on this list — otherwise browsers will block the calls. |
-| `REDIS_URL` | unset (in-process) | Set in **multi-instance** deployments only. Enables a shared throttler counter across processes and pub/sub-driven JWT cache invalidation. Unset = in-process fallbacks (correct for single-instance prod and dev). |
+| `ALLOWED_ORIGINS` | in `wrangler.jsonc`: `https://imamzain.org,https://cms.imamzain.com,https://app.imamzain.org` | The API's CORS allowlist. A new front-end origin (including the new CMS) must be added here and deployed — otherwise browsers will block the calls. |
+| `EMAIL_FROM`, `EMAIL_TO` | `imamzain.org <info@imamzain.org>`, `info@imamzain.org` | Sender (must be on the domain onboarded in Cloudflare Email Service) and fallback recipient of the admin digests. |
+| `R2_PUBLIC_BASE_URL` | `https://cdn.imamzain.org` | Base of every media URL the API returns. |
+
+Mail goes out through **Cloudflare Email Service** (the `EMAIL` binding), not
+SMTP; there are no `SMTP_*` settings.
 
 ### Multi-instance correctness
 
-Two pieces of state matter only when the API runs as >1 process behind
-a load balancer:
-
-1. **Throttler counters.** In-memory by default — N instances means N
-   independent buckets, so both the per-route 1000/15min and the
-   API-wide 3000/15min limits effectively become N× larger. With
-   `REDIS_URL` set, counters live in Redis
-   (`@nest-lab/throttler-storage-redis`); one shared bucket per IP
-   across the fleet.
-2. **JWT user cache.** The validate path keeps a 30 s in-process cache
-   per user so authenticated requests skip a `users.findUnique`. When
-   a password change / admin reset / soft-delete invalidates the
-   cache, instance A publishes the user id on the `jwt-cache:invalidate`
-   Redis channel; every other instance drops its local copy within
-   milliseconds. Without Redis, the invalidation is local only and
-   peer instances serve the stale row for up to 30 s.
-
-If `REDIS_URL` is set but Redis is briefly unreachable, the API still
-boots and serves requests — ioredis retries with backoff, throttler
-degrades to in-memory counters until reconnection, pub/sub starts
-working again on reconnect. No request path blocks on Redis being up.
+Not a concern any more. There is no Redis, no advisory lock and no
+in-process cache to keep in step: rate limits are Cloudflare bindings, JWTs
+are checked against the database on each request, and each cron trigger fires
+once.
 
 ---
 
 ## See also
 
-- [`/docs`](https://api.imamzain.org/docs) — interactive Scalar UI; per-endpoint reference.
+- `worker/src/features/<group>/routes.ts` and `schemas.ts` — the per-endpoint reference (there is no `/docs` page).
+- [`worker/CONVENTIONS.md`](../worker/CONVENTIONS.md) — how route groups are built.
 - [permissions.md](permissions.md) — full permission catalogue, default role mappings, and audit-action vocabulary.
 - [CMS-INTEGRATION-NOTES.md](CMS-INTEGRATION-NOTES.md) — chronological release notes per round of API changes.
 - [REHAUL-FINDINGS-2026-09.md](REHAUL-FINDINGS-2026-09.md) — independent review findings from the September 2026 audit round, not yet actioned.

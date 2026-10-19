@@ -331,7 +331,7 @@ commented block I uncomment at cutover.
 
 ## Stage H — Switch Nest off
 
-### S29 · New session · Sonnet · low — 7 days after the last group
+### S29 · New session · Sonnet · low — 7 days after the last group (done 2026-10-19, PR 59; the Nest host is gone)
 
 ✋ **Before:**
 
@@ -352,7 +352,7 @@ lines vs the Phase 0 baseline.
 - [ ] Shut down the Nest host.
 - [ ] Remove its secrets and domain mapping.
 
-### S30 · Same session (or new, Sonnet · low) — docs
+### S30 · Same session (or new, Sonnet · low) — docs (done 2026-10-19)
 
 ```
 Update docs/integration.md, the README deploy section and add a "What changed" section to

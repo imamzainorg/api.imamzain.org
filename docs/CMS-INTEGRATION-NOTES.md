@@ -4,9 +4,11 @@
 > for the API — round-by-round summaries of what changed and when. For
 > ongoing reference, use:
 >
-> - **[/docs](https://api.imamzain.org/docs)** — interactive OpenAPI / Scalar UI, per-endpoint reference.
+> - **`worker/src/features/<group>/routes.ts` + `schemas.ts`** — per-endpoint reference. The interactive `/docs` page of the NestJS app is gone.
 > - **[integration.md](integration.md)** — cross-cutting integration handbook (auth flow, envelopes, pagination, language resolution, media upload, sanitisation allowlist, rate limits, URL conventions, cron schedules).
 > - **[permissions.md](permissions.md)** — permission catalogue, default role mappings, audit-action vocabulary.
+>
+> **Since the move to Cloudflare Workers (October 2026) read the last section first:** [What changed with the Cloudflare Workers move](#what-changed-with-the-cloudflare-workers-move). Older rounds below describe the NestJS app, where they differ.
 >
 > If you're integrating from scratch, start with `integration.md`. If
 > you're catching up on what shipped recently, read this file from the
@@ -3957,3 +3959,90 @@ resource's longest legacy value already fits under its new cap.
   password reset, tags many-to-many, 2FA, personal access tokens,
   content revision history, sitemap chunking — unchanged from §28,
   still not part of any Tier.
+
+---
+
+## What changed with the Cloudflare Workers move
+
+October 2026. The API was rewritten from NestJS (a Node container) to Hono on
+Cloudflare Workers, one route group at a time, and the NestJS host was
+switched off on 2026-10-19. The Worker answers on `api.imamzain.org/*`.
+**The contract the CMS and the website depend on did not change:** URLs,
+response and error envelopes, status codes, error `code`s and `error` text
+are the same, and the contract suite (893 tests) runs against the Worker.
+Everything below is an exception to that sentence.
+
+### Removed
+
+| What | Now |
+| --- | --- |
+| Newsletter campaigns: every `/newsletter/campaigns*` endpoint, the cron sender, the `SMTP_NOT_CONFIGURED` error code | `404 NOT_FOUND`. Delete the campaign screens from the CMS. Subscribers and the double opt-in flow are unchanged. |
+| `/docs` (Scalar) and `/openapi.json` | Not served. Route tables are in `worker/src/features/<group>/routes.ts`, shapes in `schemas.ts`. |
+| `X-RateLimit-*` response headers | Not sent. A 429 carries `Retry-After: 60` (`Retry-After-global: 60` for the API-wide limit). |
+| Server-side caches: the 30 s `/dashboard/stats` cache, the JWT user cache, in-process TTL caches | Gone; each request reads the database. |
+| Redis, advisory locks, `REDIS_URL`, `TRUST_PROXY_HOPS`, `THROTTLE_GLOBAL_LIMIT`, `CONTEST_THROTTLE_PER_IP`, `SMTP_*`, `CAMPAIGN_SMTP_*`, `NEWSLETTER_SEND_PER_HOUR` | Not read by the Worker. |
+
+### Behaviour that differs on purpose
+
+- **Rate limits are per minute.** Cloudflare's Rate Limiting binding only has
+  60-second windows, so a limit that was "N per 15 minutes" (or per hour) is
+  now "N per minute". Login is 10 / min / IP instead of 10 / 15 min (the
+  per-username lockout is unchanged and still database-backed). The whole
+  table is in [integration.md → Rate limiting](integration.md#rate-limiting).
+  The API-wide ceiling is 200 / min / IP.
+- **Post view counting** de-duplicates per IP per post for 1 minute (was 30
+  minutes). The other view endpoints are rate-limited only, as before.
+- **Mail** goes out through Cloudflare Email Service, from `EMAIL_FROM`
+  (an address on the onboarded domain), not through Hostinger SMTP. The
+  newsletter confirmation e-mail now includes a self-service unsubscribe
+  link.
+- **Images**: media variants and the EXIF-stripping rewrite use the
+  Cloudflare Images binding instead of `sharp`. The widths (320, 768, 1280,
+  1920), WebP output and `variants_status` values are the same.
+- **Unknown routes** answer `404 NOT_FOUND` with `Cannot <METHOD> <path>`,
+  as Express did, but without the CORS and security headers of a real route.
+- **Cron jobs** run from Cloudflare Cron Triggers (see
+  [integration.md → Cron schedules](integration.md#cron-schedules)). The three
+  retention sweeps are one job at 03:15 UTC; the YouTube sync runs every
+  6 hours (UTC) and not once after a restart.
+- **`POST /forms/proxy-visit`** treats the same phone and name within 10
+  minutes as one request, and a different name from one phone needs 3 s
+  between requests (see [integration.md → Form submissions](integration.md#form-submissions-admin-workflow)).
+- **Known NestJS bugs were fixed during the port** (the September 2026 audit
+  findings, e.g. the public daily-hadith 500, the media-delete race, the
+  `restore()` privilege check). Each has a test; the per-group list of
+  intentional differences is in the diff reports of the migration, kept in git
+  history: `git show f8fcc3b:worker/test/diff/reports/<group>.md`.
+
+### What the CMS developer must do
+
+1. **CORS:** a new CMS origin has to be added to `ALLOWED_ORIGINS` in
+   `worker/wrangler.jsonc` and the Worker redeployed, or browsers block its
+   calls. Current list: `https://imamzain.org`, `https://cms.imamzain.com`,
+   `https://app.imamzain.org`.
+2. **Server-side callers** (a CMS Worker, the website Worker, a Pages
+   Function) must reach the API through a **Service Binding**
+   (`services: [{ binding: "API", service: "imamzain-api" }]`), not
+   `fetch("https://api.imamzain.org/...")`: a same-zone `fetch()` from a
+   Worker skips the API Worker's route. Pass the visitor's IP on in
+   `CF-Connecting-IP`, otherwise every visitor shares one rate-limit bucket.
+3. **Don't build campaign screens**; don't read `X-RateLimit-*`; don't rely on
+   `/docs`.
+4. **Reads go to the database each time.** `/dashboard/stats` is no longer
+   cached for 30 s, so poll it sparingly.
+
+### Operating it
+
+```bash
+cd worker
+npm run typecheck && npm test    # unit tests
+npm run contract                 # black-box suite against wrangler dev, needs a migrated + seeded Postgres
+npx wrangler deploy              # deploy
+npx wrangler tail --status error # live errors
+npx wrangler rollback            # back to the previous version
+```
+
+Secrets are set with `npx wrangler secret put <NAME>`; variables live in
+`worker/wrangler.jsonc`. Migrations run from the repo root:
+`npm run prisma:deploy`. CI runs the migration check, the Worker's unit tests
+and the contract suite on every pull request.
