@@ -142,7 +142,7 @@ export function normalizeDocumentLanguages(labels: (string | undefined | null)[]
   return [...codes];
 }
 
-export type HadithJson = { id: number; content: string };
+export type HadithJson = { hijri_month: number; hijri_day: number; content: string; source: string | null };
 
 export type StaticPageJson = { title: string; slug: string; content: string };
 

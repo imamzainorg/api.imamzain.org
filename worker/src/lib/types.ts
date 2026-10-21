@@ -20,6 +20,7 @@ export type AppBindings = Env & {
   R2_BUCKET?: string;
   R2_UPLOAD_URL_TTL_SECONDS?: string;
   SITE_TIMEZONE?: string;
+  HIJRI_SOURCE_URL?: string;
   PUBLIC_SITE_URL?: string;
   PUBLIC_SITE_NAME?: string;
   YOUTUBE_CHANNEL_ID?: string;

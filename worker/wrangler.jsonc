@@ -31,6 +31,10 @@
 
   "images": { "binding": "IMAGES" },
 
+  // The Hijri date's anchor (src/features/daily-hadiths/hijri-date.ts): one key, rewritten only when
+  // sistani.org is read. Local `wrangler dev` uses a local namespace.
+  "kv_namespaces": [{ "binding": "HIJRI_DATE_ANCHOR", "id": "6f9ad852d7694feea20b0f1e512590a0" }],
+
   // D1: Cloudflare Email Service (imamzain.org is onboarded for sending). Local `wrangler dev` simulates it
   // and sends nothing; the sender address must be on the onboarded domain.
   "send_email": [{ "name": "EMAIL" }],
@@ -39,7 +43,7 @@
   "triggers": {
     "crons": [
       "* * * * *",   // scheduled post publish, form notification outbox
-      "0 * * * *",   // orphan-upload cleanup; YouTube sync when the UTC hour is a multiple of 6
+      "0 * * * *",   // orphan-upload cleanup; Hijri date check; YouTube sync when the UTC hour is a multiple of 6
       "15 3 * * *"   // refresh-token, login-attempt and audit-log retention
     ]
   },
@@ -73,6 +77,7 @@
   //   YOUTUBE_CHANNEL_ID   (the homepage lists only this channel's uploads; unset lists every mirrored video)
   //   YOUTUBE_API_KEY   (the 6-hourly sync; unset skips it)
   //   PUBLIC_SITE_URL, PUBLIC_SITE_NAME   (sitemap / RSS; only if set on Nest, else the same defaults apply)
+  //   HIJRI_SOURCE_URL   (the page the Hijri date is read from; unset reads https://www.sistani.org/)
   //   R2_ACCOUNT_ID, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY   (aws4fetch presigned PUTs)
   //   TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_WHATSAPP_FROM, TWILIO_TEMPLATE_SID
   //   NEWSLETTER_UNSUBSCRIBE_SECRET, CONTEST_ATTEMPT_SECRET, CONTEST_REVEAL_SCORE   (only if set on Nest)

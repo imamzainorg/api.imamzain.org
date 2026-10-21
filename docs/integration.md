@@ -26,6 +26,7 @@ changed when the NestJS app was retired, see
 - [Form submissions (admin workflow)](#form-submissions-admin-workflow)
 - [Rate limiting](#rate-limiting)
 - [Public URL conventions](#public-url-conventions)
+- [Daily hadiths and the Hijri date](#daily-hadiths-and-the-hijri-date)
 - [Cron schedules](#cron-schedules)
 - [Configuration (secrets and variables)](#configuration-secrets-and-variables)
 
@@ -798,16 +799,17 @@ If, while a row was in trash, another live row claimed the original
 slug / ISBN, restore returns 409. The CMS must rename one side first
 and retry.
 
-**Daily hadiths are the one exception.** `display_date` isn't suffixed
-like a slug — if another hadith has since claimed that date,
+**Daily hadiths are the one exception.** A Hijri day isn't suffixed
+like a slug — if another hadith has since claimed that day,
 `POST /daily-hadiths/:id/restore` succeeds instead of 409ing: the hadith
-comes back **unscheduled** (`display_date` cleared, back in the random
-pool), with `message: "Hadith restored without its schedule: … is now
-taken by another hadith"` and `meta: { unscheduled: true,
-previous_display_date }`. A normal restore returns the same shape with
-`meta.unscheduled: false`. `data` is `null` either way, so existing
-clients keep working; refetch the hadith after a restore to see its
-current `display_date`.
+comes back **without a day** (`hijri_month` and `hijri_day` cleared, so
+it is never shown until an editor gives it one), with `message: "Hadith
+restored without its schedule: 9 جمادى الأولى is now taken by another
+hadith"` and `meta: { unscheduled: true, previous_hijri_month,
+previous_hijri_day }`. A normal restore returns the same shape with
+`meta.unscheduled: false` and both previous fields `null`. `data` is
+`null` either way; refetch the hadith after a restore to see its
+current day.
 
 ### Hard delete
 
@@ -1478,6 +1480,80 @@ Add a `<link rel="alternate">` to the public site's `<head>`:
 
 ---
 
+## Daily hadiths and the Hijri date
+
+Each hadith belongs to one day of the Hijri year — `hijri_month` (1–12)
+and `hijri_day` (1–30) — and is shown on that day every year. The Hijri
+date is the one Najaf announces on [sistani.org](https://www.sistani.org/),
+not a computed calendar, so it can be a day off from Umm al-Qura or a
+browser's `Intl` Hijri calendar. Don't compute it client-side: read it
+from the API. A month that turns out to have 29 days simply skips its
+30th's hadith that year.
+
+| Endpoint | Auth | What it does |
+| --- | --- | --- |
+| `GET /daily-hadiths/today` | public | The hadith for today's Hijri day, in the `Accept-Language` language (else Arabic). `data: null` when that day has none. |
+| `GET /daily-hadiths/hijri-date` | public | Today's Hijri date. Use it for the site header instead of reading sistani.org yourself. |
+| `PUT /daily-hadiths/hijri-date` | `daily-hadiths:update` | Sets today's Hijri date by hand (below). |
+| `GET /daily-hadiths` | public | Browse in Hijri calendar order (hadiths without a day last); `?hijri_month=` alone or with `&hijri_day=`, plus `page` / `limit`. |
+| `GET /daily-hadiths/admin`, `/admin/:id`, `/trash`, `POST`, `PATCH /:id`, `DELETE /:id`, `POST /:id/restore` | `daily-hadiths:*` | As before, with `hijri_month` / `hijri_day` in place of `display_date`. |
+
+```jsonc
+// GET /daily-hadiths/today
+{
+  "message": "Today's hadith",
+  "data": { "id": "…", "content": "…", "source": "…", "lang": "ar" },
+  "meta": {
+    "date": "2026-10-21",   // the Gregorian site date
+    "hijri": { "year": 1448, "month": 5, "day": 9, "month_name": "جمادى الأولى", "provisional": false, "source": "sistani" },
+    "source": "scheduled"   // or "empty" when data is null
+  }
+}
+// GET /daily-hadiths/hijri-date → data:
+// { "date": "2026-10-21", "year": 1448, "month": 5, "day": 9, "month_name": "جمادى الأولى", "provisional": false, "source": "sistani" }
+```
+
+**How the API knows the date.** It keeps one value in Workers KV
+(`HIJRI_DATE_ANCHOR`): the Gregorian day the current Hijri month began.
+Every other day is counted from it, so the request path doesn't read
+sistani.org. The only open question each month is the day after the
+29th: the 30th, or the 1st of the next month. Until sistani.org has been
+read that day, the API counts it as the 30th and answers
+`provisional: true`; the hourly cron reads sistani.org on that day, every
+hour until it gets an answer, and stores what it says. If the KV value is
+ever missing, the first request reads sistani.org once and stores it.
+
+`hijri.source` says where the date came from: `sistani`, `manual` (set
+with `PUT /daily-hadiths/hijri-date`), or `calendar` — Umm al-Qura, used
+only while sistani.org has never been readable; it is always provisional,
+and the hourly check replaces it.
+
+**Setting the date by hand**, for when the announcement and the page
+disagree: `PUT /daily-hadiths/hijri-date` with
+`{ "year": 1448, "month": 5, "day": 9 }` makes *today* that date, and
+counting continues from it. A `day` of 30 also settles that the month has
+30 days. Audit action `HIJRI_DATE_SET`. Outside the API:
+`npx wrangler kv key put --binding HIJRI_DATE_ANCHOR --remote anchor '{"year":1448,"month":5,"start":"2026-10-13","source":"manual"}'`
+(`start` is the Gregorian day of the 1st; add `"length": 29` or `30` once known).
+
+**Admin writes.** `hijri_month` and `hijri_day` go together: send both,
+or both `null` to take a hadith off the calendar; one alone is `400`
+`hijri_month and hijri_day must be provided together`. Omit both on
+`PATCH` to leave the day alone. A day already held by another live
+hadith is `409 CONFLICT` `Another hadith is already scheduled to that
+date`. A hadith without a day is kept but never shown.
+
+**Public browse.** Items are `{ id, hijri_month, hijri_day, content,
+source, lang }`. `hijri_day` without `hijri_month` is `400`
+`hijri_day requires hijri_month`.
+
+**Removed** (October 2026): `display_date` (body, response and the
+`date` / `from` / `to` filters), the random fallback for a day with
+nothing scheduled and its per-day lock (`meta.source: "random"` no longer
+occurs).
+
+---
+
 ## Cron schedules
 
 The Worker runs its background jobs from three Cloudflare Cron Triggers
@@ -1488,6 +1564,7 @@ behaviour should account for the latency.
 | --- | --- | --- |
 | Scheduled post publishing | every minute | Flips `is_published=true` on posts whose `published_at <= now()` and were left as drafts. One `updateMany` per tick; audit-logs each transition with `{ scheduled: true, by: 'cron' }`. |
 | Form notification digest | every minute | Sends ONE e-mail for the contact / proxy-visit submissions no admin has been told about yet — at most one per `FORM_NOTIFY_MIN_INTERVAL_SECONDS` (default 300 s). A failed send leaves the rows queued for the next digest. |
+| Hijri date check | every hour | Reads sistani.org **only** while today's Hijri date is unknown or provisional — in practice the day after each Hijri 29th, until the page answers — and stores the month's length or the new month's start in KV. Every other hour it does nothing. See [Daily hadiths and the Hijri date](#daily-hadiths-and-the-hijri-date). |
 | Orphan upload cleanup | every hour | Deletes `pending_media_uploads` rows older than the pre-signed URL TTL that were never confirmed via `POST /media/confirm`, and the abandoned R2 object with each. |
 | YouTube channel mirror sync | hourly trigger, runs when the UTC hour is a multiple of 6 | Pulls the configured channel's videos + playlists into the local DB so the homepage / `/youtube/*` endpoints never hit the YouTube Data API on the request path. A recency check stops a repeated tick from syncing twice. After a complete sync it also **prunes** videos and playlists that no longer exist on YouTube: each candidate is re-checked by id first, and a sync that would delete more than `max(10, 25 % of the mirror)` is treated as suspicious and skips pruning (logged). Silently skipped when `YOUTUBE_API_KEY` is unset. |
 | Retention sweep | daily at 03:15 | In one pass: drops `refresh_tokens` rows past `expires_at` and revoked rows older than 30 days (past the reuse-detection grace window); deletes `login_attempts` rows (the per-username lockout counters) idle for more than 24 h; drops `audit_logs` rows older than **365 days**. The CMS audit-log viewer should not assume rows are available forever. |
@@ -1528,10 +1605,10 @@ costs predictable as traffic grows.
 | `GET /forms/qutuf-sajjadiya-contest/questions` | `public, max-age=300, s-maxage=3600` | Questions change rarely. |
 | `GET /sitemap.xml`, `/rss/posts.xml` | `public, max-age=900, s-maxage=900` | Already set independently. |
 | `GET /homepage` | `public, max-age=<n>, s-maxage=<m>` — clamped, see below | The single most-hit public route — up to 15 min browser cache, up to 1 h CDN cache. |
-| `GET /daily-hadiths/today` | `public, max-age=<n>, s-maxage=<m>` — clamped, see below | Feeds the homepage. Stable for the whole site-timezone day either way — a scheduled hadith by editor choice, or a random pick locked in at the source the first time that day is resolved with nothing scheduled — so every visitor sees the same answer regardless of caching. |
-| `GET /daily-hadiths` (lookup by date/range, or plain browse) | `public, max-age=300, s-maxage=1800` | Same cadence as categories — hadiths are scheduled rarely, and this is a plain lookup with no random fallback. |
+| `GET /daily-hadiths/today`, `GET /daily-hadiths/hijri-date` | `public, max-age=<n>, s-maxage=<m>` — clamped, see below; `300` / `300` while the date is provisional | Today's hadith feeds the homepage; both answer the same for the whole site-timezone day. A provisional date (the day after a Hijri 29th, before sistani.org has been read) is cached for 5 min so the hourly check's answer reaches visitors soon. |
+| `GET /daily-hadiths` (browse by Hijri month / day) | `public, max-age=300, s-maxage=1800` | Same cadence as categories — hadiths change rarely. |
 
-Only `/daily-hadiths/today` and `/homepage` clamp their TTL to the site's
+Only `/daily-hadiths/today`, `/daily-hadiths/hijri-date` and `/homepage` clamp their TTL to the site's
 calendar day (see [Site time zone and the daily hadith day
 boundary](#site-time-zone-and-the-daily-hadith-day-boundary) below) —
 every other row above is a fixed header.
@@ -1557,9 +1634,10 @@ response additionally carries `Cache-Control: no-store`, so a 404 / 400
 "Today" for the daily hadith (and the `hadith_of_day` picked into `GET
 /homepage`) is the calendar day in `SITE_TIMEZONE` — an IANA zone name,
 default `Asia/Baghdad` (UTC+3, no DST) — not UTC and not the visitor's
-browser clock. `meta.date` on `GET /daily-hadiths/today` is that
-site-timezone date; compute "today" client-side in the same zone or
-you'll disagree with the API for a few hours a day.
+browser clock. The Hijri date (see [Daily hadiths and the Hijri
+date](#daily-hadiths-and-the-hijri-date)) changes at that midnight too.
+`meta.date` on `GET /daily-hadiths/today` is that site-timezone date;
+read "today" from the API rather than computing it client-side.
 
 The `Cache-Control` on `GET /daily-hadiths/today` and `GET /homepage` is
 not a constant: `max-age = min(900, secondsUntilSiteMidnight)` and
@@ -1633,7 +1711,8 @@ need to know about:
 | --- | --- | --- |
 | `PUBLIC_SITE_URL` | `https://imamzain.org` | The canonical origin the sitemap + RSS link to. Must match the front-end's deployed origin. |
 | `PUBLIC_SITE_NAME` | `Imam Zain Foundation` | The RSS feed's `<channel><title>`. |
-| `SITE_TIMEZONE` | `Asia/Baghdad` | The calendar-day boundary for `GET /daily-hadiths/today` and the homepage's `hadith_of_day` (and the cache-TTL clamp on both). Compute "today" in this zone, not UTC or the browser's local zone. |
+| `SITE_TIMEZONE` | `Asia/Baghdad` | The calendar-day boundary for the Hijri date, `GET /daily-hadiths/today` and the homepage's `hadith_of_day` (and the cache-TTL clamp on them). Compute "today" in this zone, not UTC or the browser's local zone. |
+| `HIJRI_SOURCE_URL` | `https://www.sistani.org/` | The page the Hijri date is read from (its `#home-date` block). Only changed for tests. |
 | `NEWSLETTER_UNSUBSCRIBE_URL_BASE` | `https://imamzain.org/newsletter/unsubscribe` | The page the front-end serves to handle unsubscribe links. Must accept `?email=&token=` and POST them to the API. |
 | `NEWSLETTER_CONFIRM_URL_BASE` | `https://imamzain.org/newsletter/confirm` | The page the double-opt-in confirmation e-mail links to. Must accept `?email=&token=` and POST them to `/newsletter/confirm` (on a button press, ideally). |
 | `CONTEST_REVEAL_SCORE` | reveal | With `false`, `/submit` returns `final_score: null` — the contest page must then show "your answers were received" instead of a score. |

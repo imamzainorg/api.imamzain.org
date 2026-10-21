@@ -1,17 +1,36 @@
+import type { Context } from 'hono';
 import { createApp } from '../../lib/create-app';
 import { defineRoute } from '../../lib/define-route';
 import { publicCache } from '../../lib/envelope';
 import { publicCacheUntilSiteMidnight } from '../../lib/site-time';
-import { createHadithBody, idParams, listQuery, publicListQuery, updateHadithBody } from './schemas';
+import type { AppEnv } from '../../lib/types';
+import { createHadithBody, idParams, listQuery, publicListQuery, setHijriDateBody, updateHadithBody } from './schemas';
 import * as service from './service';
 
 const app = createApp();
 
-defineRoute(app, { method: 'get', path: '/today', summary: "Today's hadith (public)" }, async (c) => {
+// A provisional date (the day after a 29th, before sistani.org has been read) is cached for 5 minutes only,
+// so the hourly check's answer reaches visitors soon after it lands.
+const cacheForHijriDay = (c: Context<AppEnv>, provisional: boolean) =>
+  provisional ? publicCacheUntilSiteMidnight(c, 300, 300) : publicCacheUntilSiteMidnight(c, 900, 3600);
+
+defineRoute(app, { method: 'get', path: '/today', summary: "Today's hadith, by sistani.org's Hijri date (public)" }, async (c) => {
   const result = await service.getToday(c, c.get('lang'));
-  publicCacheUntilSiteMidnight(c, 900, 3600);
+  cacheForHijriDay(c, result.meta.hijri.provisional);
   return result;
 });
+
+defineRoute(app, { method: 'get', path: '/hijri-date', summary: "Today's Hijri date (public)" }, async (c) => {
+  const result = await service.getHijriDate(c);
+  cacheForHijriDay(c, result.data.provisional);
+  return result;
+});
+
+defineRoute(
+  app,
+  { method: 'put', path: '/hijri-date', summary: "Set today's Hijri date by hand", auth: ['daily-hadiths:update'], body: setHijriDateBody },
+  (c, { body }) => service.setHijriDate(c, body),
+);
 
 defineRoute(app, { method: 'get', path: '/', summary: 'Browse hadiths (public)', query: publicListQuery }, (c, { query }) => {
   publicCache(c, 300, 1800);
