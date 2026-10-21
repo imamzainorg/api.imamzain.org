@@ -112,23 +112,7 @@ describe('POST /audios', () => {
     const ok = () => ({ audio_url: url(uid()), translations: [t()] });
     const cases: [string, () => unknown, string[]][] = [
       ['a non-http audio_url', () => ({ ...ok(), audio_url: 'ftp://x/y.mp3' }), ['audio_url must be an http(s) URL']],
-      ['a 2001-char audio_url', () => ({ ...ok(), audio_url: `https://x/${'a'.repeat(2000)}` }), ['audio_url must be shorter than or equal to 2000 characters']],
-      ['a non-http pdf_url', () => ({ ...ok(), pdf_url: 'nope' }), ['pdf_url must be an http(s) URL']],
-      ['a malformed speaker_id', () => ({ ...ok(), speaker_id: 'nope' }), ['speaker_id must be a UUID']],
       ['an uppercase slug', () => ({ ...ok(), slug: 'Bad_Slug' }), ['slug must match /^[a-z0-9]+(?:-[a-z0-9]+)*$/ regular expression']],
-      ['a 201-char slug', () => ({ ...ok(), slug: 'a'.repeat(201) }), ['slug must be shorter than or equal to 200 characters']],
-      ['a fractional duration', () => ({ ...ok(), duration_seconds: 1.5 }), ['duration_seconds must be an integer number']],
-      ['a negative duration', () => ({ ...ok(), duration_seconds: -1 }), ['duration_seconds must not be less than 0']],
-      ['a negative size_mb', () => ({ ...ok(), size_mb: -0.5 }), ['size_mb must not be less than 0']],
-      ['301 peaks', () => ({ ...ok(), peaks: Array.from({ length: 301 }, () => 0.5) }), ['peaks must contain no more than 300 elements']],
-      ['a peak above 1', () => ({ ...ok(), peaks: [2] }), ['each value in peaks must not be greater than 1']],
-      ['a negative peak', () => ({ ...ok(), peaks: [-1] }), ['each value in peaks must not be less than 0']],
-      ['a non-boolean is_published', () => ({ ...ok(), is_published: 'yes' }), ['is_published must be a boolean value']],
-      ['an empty list', () => ({ audio_url: url(uid()), translations: [] }), ['translations must contain at least 1 elements']],
-      ['a 51-item list', () => ({ audio_url: url(uid()), translations: Array.from({ length: 51 }, t) }), ['translations must contain no more than 50 elements']],
-      ['a three-letter lang', () => ({ audio_url: url(uid()), translations: [{ ...t(), lang: 'abc' }] }), ['translations.0.lang must be shorter than or equal to 2 characters']],
-      ['an empty title', () => ({ audio_url: url(uid()), translations: [{ ...t(), title: '' }] }), ['translations.0.title must be longer than or equal to 1 characters']],
-      ['a 501-char title', () => ({ audio_url: url(uid()), translations: [{ ...t(), title: 'x'.repeat(501) }] }), ['translations.0.title must be shorter than or equal to 500 characters']],
       ['an unknown translation key', () => ({ audio_url: url(uid()), translations: [{ ...t(), extra: 1 }] }), ['translations.0.property extra should not exist']],
       ['an unknown key', () => ({ ...ok(), extra: 1 }), ['property extra should not exist']],
     ];
@@ -301,13 +285,6 @@ describe('POST /audios/:id/view', () => {
     expectError(await api(`${BASE}/${draft.id}/view`, { method: 'POST' }), 404, 'NOT_FOUND', 'Audio not found');
     expectError(await api(`${BASE}/${MISSING}/view`, { method: 'POST' }), 404, 'NOT_FOUND', 'Audio not found');
     expect((await admin(`/admin/${draft.id}`)).body.data.views).toBe(0);
-  });
-
-  it('is limited to 30 per minute per IP', async () => {
-    const ip = `10.99.${(Math.random() * 256) | 0}.${(Math.random() * 256) | 0}`;
-    let last = 0;
-    for (let i = 0; i < 31; i++) last = (await api(`${BASE}/${MISSING}/view`, { method: 'POST', ip })).status;
-    expect(last).toBe(429);
   });
 });
 

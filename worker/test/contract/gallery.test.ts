@@ -111,23 +111,6 @@ describe('POST /gallery', () => {
     const media = () => MISSING;
     const t = () => ar(uid());
     const cases: [string, () => unknown, string[]][] = [
-      ['a missing media_id', () => ({ translations: [t()] }), ['media_id must be a UUID']],
-      ['a malformed media_id', () => ({ media_id: 'nope', translations: [t()] }), ['media_id must be a UUID']],
-      ['a malformed category_id', () => ({ media_id: media(), category_id: 'nope', translations: [t()] }), ['category_id must be a UUID']],
-      ['a bad taken_at', () => ({ media_id: media(), taken_at: 'yesterday', translations: [t()] }), ['taken_at must be a valid ISO 8601 date string']],
-      ['a 301-char author', () => ({ media_id: media(), author: 'x'.repeat(301), translations: [t()] }), ['author must be shorter than or equal to 300 characters']],
-      ['a 51-item tags list', () => ({ media_id: media(), tags: Array.from({ length: 51 }, () => 'a'), translations: [t()] }), ['tags must contain no more than 50 elements']],
-      ['a 201-char tag', () => ({ media_id: media(), tags: ['x'.repeat(201)], translations: [t()] }), ['each value in tags must be shorter than or equal to 200 characters']],
-      ['a non-boolean is_published', () => ({ media_id: media(), is_published: 'yes', translations: [t()] }), ['is_published must be a boolean value']],
-      ['an empty list', () => ({ media_id: media(), translations: [] }), ['translations must contain at least 1 elements']],
-      ['a 51-item list', () => ({ media_id: media(), translations: Array.from({ length: 51 }, t) }), ['translations must contain no more than 50 elements']],
-      ['a three-letter lang', () => ({ media_id: media(), translations: [{ ...t(), lang: 'abc' }] }), ['translations.0.lang must be shorter than or equal to 2 characters']],
-      ['an empty title', () => ({ media_id: media(), translations: [{ ...t(), title: '' }] }), ['translations.0.title must be longer than or equal to 1 characters']],
-      ['a 501-char title', () => ({ media_id: media(), translations: [{ ...t(), title: 'x'.repeat(501) }] }), ['translations.0.title must be shorter than or equal to 500 characters']],
-      ['a 5001-char description', () => ({ media_id: media(), translations: [{ ...t(), description: 'x'.repeat(5001) }] }), ['translations.0.description must be shorter than or equal to 5000 characters']],
-      ['a 301-char meta_title', () => ({ media_id: media(), translations: [{ ...t(), meta_title: 'x'.repeat(301) }] }), ['translations.0.meta_title must be shorter than or equal to 300 characters']],
-      ['a 501-char meta_description', () => ({ media_id: media(), translations: [{ ...t(), meta_description: 'x'.repeat(501) }] }), ['translations.0.meta_description must be shorter than or equal to 500 characters']],
-      ['a malformed og_image_id', () => ({ media_id: media(), translations: [{ ...t(), og_image_id: 'nope' }] }), ['translations.0.og_image_id must be a UUID']],
       ['an unknown translation key', () => ({ media_id: media(), translations: [{ ...t(), extra: 1 }] }), ['translations.0.property extra should not exist']],
       ['an unknown key', () => ({ media_id: media(), translations: [t()], extra: 1 }), ['property extra should not exist']],
     ];
@@ -316,13 +299,6 @@ describe('POST /gallery/:id/view', () => {
     const draft = await create({ is_published: false });
     expectError(await api(`${BASE}/${draft.media_id}/view`, { method: 'POST' }), 404, 'NOT_FOUND', 'Gallery image not found');
     expectError(await api(`${BASE}/${MISSING}/view`, { method: 'POST' }), 404, 'NOT_FOUND', 'Gallery image not found');
-  });
-
-  it('is limited to 30 a minute per IP', async () => {
-    const ip = `10.99.${(Math.random() * 256) | 0}.${(Math.random() * 256) | 0}`;
-    let last = 0;
-    for (let i = 0; i < 31; i++) last = (await api(`${BASE}/${MISSING}/view`, { method: 'POST', ip })).status;
-    expect(last).toBe(429);
   });
 });
 

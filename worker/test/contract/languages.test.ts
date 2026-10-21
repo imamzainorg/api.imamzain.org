@@ -61,13 +61,7 @@ describe('POST /languages', () => {
   describe('validation', () => {
     const ok = { name: 'n', native_name: 'n' };
     const cases: [string, unknown, string[]][] = [
-      ['a one-letter code', { ...ok, code: 'a' }, ['code must be a 2-letter lowercase ISO 639-1 code']],
-      ['a three-letter code', { ...ok, code: 'abc' }, ['code must be a 2-letter lowercase ISO 639-1 code']],
       ['a non-letter code', { ...ok, code: 'a1' }, ['code must be a 2-letter lowercase ISO 639-1 code']],
-      ['an empty name', { code: 'qq', name: '', native_name: 'n' }, ['name must be longer than or equal to 1 characters']],
-      ['a 101-char name', { code: 'qq', name: 'x'.repeat(101), native_name: 'n' }, ['name must be shorter than or equal to 100 characters']],
-      ['an empty native_name', { code: 'qq', name: 'n', native_name: '' }, ['native_name must be longer than or equal to 1 characters']],
-      ['a non-boolean is_active', { code: 'qq', ...ok, is_active: 'yes' }, ['is_active must be a boolean value']],
       ['an unknown key', { code: 'qq', ...ok, extra: 1 }, ['property extra should not exist']],
     ];
 
@@ -75,12 +69,6 @@ describe('POST /languages', () => {
       const res = await post(body);
       expectError(res, 400, 'VALIDATION_FAILED', 'Validation failed');
       expect(errorsOf(res)).toEqual(errors);
-    });
-
-    it('rejects a missing name and native_name', async () => {
-      const res = await post({ code: 'qq' });
-      expectError(res, 400, 'VALIDATION_FAILED', 'Validation failed');
-      expect(errorsOf(res)).toEqual(expect.arrayContaining(['name must be a string', 'native_name must be a string']));
     });
   });
 

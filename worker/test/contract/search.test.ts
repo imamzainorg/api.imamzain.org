@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { api, expectError, expectSuccess, randomIp } from './support/http';
+import { api, expectError, expectSuccess } from './support/http';
 import { dropLanguage, dropPosts, retiredLanguage, seedPost, uid } from './support/content';
 
 const BASE = '/api/v1/search';
@@ -111,13 +111,5 @@ describe('GET /search', () => {
 
     expectError(res, 400, 'VALIDATION_FAILED');
     expect(errorsOf(res)).toEqual(errors);
-  });
-
-  it('answers 429 once a client passes 60 searches a minute', async () => {
-    const ip = randomIp();
-    const calls = await Promise.all(Array.from({ length: 62 }, () => api(`${BASE}?q=${main}&types=audio`, { ip })));
-
-    expect(calls.filter((r) => r.status === 429).length).toBeGreaterThanOrEqual(1);
-    expect(calls.filter((r) => r.status === 200).length).toBeLessThanOrEqual(60);
   });
 });

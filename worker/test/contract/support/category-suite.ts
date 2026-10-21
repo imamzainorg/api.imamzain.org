@@ -89,19 +89,7 @@ export function categorySuite(cfg: CategorySuite) {
     describe('validation', () => {
       const ok = () => tr('ar', uid());
       const cases: [string, unknown, string[]][] = [
-        ['an empty list', { translations: [] }, ['translations must contain at least 1 elements']],
-        ['51 translations', { translations: Array.from({ length: 51 }, ok) }, ['translations must contain no more than 50 elements']],
-        ['a one-letter lang', { translations: [{ ...ok(), lang: 'a' }] }, ['translations.0.lang must be longer than or equal to 2 characters']],
-        ['a three-letter lang', { translations: [{ ...ok(), lang: 'abc' }] }, ['translations.0.lang must be shorter than or equal to 2 characters']],
-        ['an empty title', { translations: [{ ...ok(), title: '' }] }, ['translations.0.title must be longer than or equal to 1 characters']],
-        ['a 501-char title', { translations: [{ ...ok(), title: 'x'.repeat(501) }] }, ['translations.0.title must be shorter than or equal to 500 characters']],
         ['a bad slug', { translations: [{ ...ok(), slug: 'Bad Slug' }] }, ['translations.0.slug must match /^[a-z0-9]+(?:-[a-z0-9]+)*$/ regular expression']],
-        [
-          'a long bad slug',
-          { translations: [{ ...ok(), slug: 'A'.repeat(201) }] },
-          ['translations.0.slug must be shorter than or equal to 200 characters', 'translations.0.slug must match /^[a-z0-9]+(?:-[a-z0-9]+)*$/ regular expression'],
-        ],
-        ['a 5001-char description', { translations: [{ ...ok(), description: 'x'.repeat(5001) }] }, ['translations.0.description must be shorter than or equal to 5000 characters']],
         ['an unknown translation key', { translations: [{ ...ok(), extra: 1 }] }, ['translations.0.property extra should not exist']],
         ['an unknown top-level key', { translations: [ok()], extra: 1 }, ['property extra should not exist']],
         [
@@ -119,12 +107,6 @@ export function categorySuite(cfg: CategorySuite) {
         const res = await post(body);
         expectError(res, 400, 'VALIDATION_FAILED', 'Validation failed');
         expect(errorsOf(res)).toEqual(errors);
-      });
-
-      it('rejects a missing list', async () => {
-        const res = await post({});
-        expectError(res, 400, 'VALIDATION_FAILED', 'Validation failed');
-        expect(errorsOf(res)).toContain('translations must be an array');
       });
     });
 

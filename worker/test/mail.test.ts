@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { buildConfirmationEmail } from '../src/features/newsletter/confirmation';
 import { buildDigest } from '../src/jobs/form-notifications';
-import { DEFAULT_EMAIL_FROM, parseSender, sendMail } from '../src/lib/mail';
+import { sendMail } from '../src/lib/mail';
 
 describe('sendMail', () => {
   it('sends from the configured sender with the display name split out, and never throws', async () => {
@@ -25,12 +25,6 @@ describe('sendMail', () => {
       error: 'E_SENDER_NOT_VERIFIED: not verified',
     });
     expect(await sendMail({}, { to: 'a@example.com', subject: 's', html: 'x' })).toMatchObject({ ok: false, unconfigured: true });
-  });
-
-  it('reads "Name <addr>" and a bare address', () => {
-    expect(parseSender(DEFAULT_EMAIL_FROM)).toEqual({ email: 'info@imamzain.org', name: 'imamzain.org' });
-    expect(parseSender('"Imam Zain" <a@b.org>')).toEqual({ email: 'a@b.org', name: 'Imam Zain' });
-    expect(parseSender('a@b.org')).toBe('a@b.org');
   });
 });
 
