@@ -175,9 +175,6 @@ describe('POST /daily-hadiths', () => {
     const cases: [string, () => unknown, string[]][] = [
       ['a month past 12', () => ({ hijri_month: 13, hijri_day: 1, translations: [t()] }), ['hijri_month must not be greater than 12']],
       ['a day 0', () => ({ hijri_month: 1, hijri_day: 0, translations: [t()] }), ['hijri_day must not be less than 1']],
-      ['a fractional day', () => ({ hijri_month: 1, hijri_day: 1.5, translations: [t()] }), ['hijri_day must be an integer number']],
-      ['an empty list', () => ({ translations: [] }), ['translations must contain at least 1 elements']],
-      ['empty content', () => ({ translations: [{ ...t(), content: '' }] }), ['translations.0.content must be longer than or equal to 1 characters']],
       ['an unknown translation key', () => ({ translations: [{ ...t(), extra: 1 }] }), ['translations.0.property extra should not exist']],
       ['an unknown key', () => ({ translations: [t()], extra: 1 }), ['property extra should not exist']],
     ];

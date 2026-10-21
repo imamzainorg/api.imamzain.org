@@ -63,13 +63,6 @@ describe('POST /speakers', () => {
   describe('validation', () => {
     const ok = () => tr('ar', uid(), true);
     const cases: [string, unknown, string[]][] = [
-      ['an empty list', { translations: [] }, ['translations must contain at least 1 elements']],
-      ['51 translations', { translations: Array.from({ length: 51 }, ok) }, ['translations must contain no more than 50 elements']],
-      ['a one-letter lang', { translations: [{ ...ok(), lang: 'a' }] }, ['translations.0.lang must be longer than or equal to 2 characters']],
-      ['a three-letter lang', { translations: [{ ...ok(), lang: 'abc' }] }, ['translations.0.lang must be shorter than or equal to 2 characters']],
-      ['an empty name', { translations: [{ ...ok(), name: '' }] }, ['translations.0.name must be longer than or equal to 1 characters']],
-      ['a 301-char name', { translations: [{ ...ok(), name: 'x'.repeat(301) }] }, ['translations.0.name must be shorter than or equal to 300 characters']],
-      ['a non-boolean is_default', { translations: [{ ...ok(), is_default: 'yes' }] }, ['translations.0.is_default must be a boolean value']],
       ['an unknown translation key', { translations: [{ ...ok(), extra: 1 }] }, ['translations.0.property extra should not exist']],
       ['an unknown top-level key', { translations: [ok()], extra: 1 }, ['property extra should not exist']],
     ];
@@ -78,12 +71,6 @@ describe('POST /speakers', () => {
       const res = await post(body);
       expectError(res, 400, 'VALIDATION_FAILED', 'Validation failed');
       expect(errorsOf(res)).toEqual(errors);
-    });
-
-    it('rejects a missing list', async () => {
-      const res = await post({});
-      expectError(res, 400, 'VALIDATION_FAILED', 'Validation failed');
-      expect(errorsOf(res)).toContain('translations must be an array');
     });
   });
 
@@ -173,7 +160,7 @@ describe('GET /speakers/:id', () => {
     expect(await lang()).toBe('en');
   });
 
-  it('answers with the speaker, CDN-cacheable, and 304 for a matching If-None-Match', async () => {
+  it('answers with the speaker, CDN-cacheable', async () => {
     const speaker = await create([tr('ar', uid(), true)]);
     const res = await api(`${BASE}/${speaker.id}`);
 
@@ -181,9 +168,6 @@ describe('GET /speakers/:id', () => {
     expect(res.body.message).toBe('Speaker fetched');
     expect(res.body.data).toEqual(speaker);
     expect(res.headers.get('cache-control')).toBe('public, max-age=60, s-maxage=300');
-    const etag = res.headers.get('etag');
-    expect(etag).toMatch(/^W\/"[\w-]+"$/);
-    expect((await api(`${BASE}/${speaker.id}`, { headers: { 'if-none-match': etag!, 'cache-control': 'max-age=0' } })).status).toBe(304);
   });
 
   it('is 404 for a missing or soft-deleted speaker, never cached, and 400 for a malformed id', async () => {

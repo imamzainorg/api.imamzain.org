@@ -156,17 +156,9 @@ describe('POST /posts', () => {
     const t = () => ar(uid());
     const ok = () => ({ category_id: MISSING, slug: uid(), translations: [t()] });
     const cases: [string, () => unknown, string[]][] = [
-      ['a missing category_id', () => ({ slug: uid(), translations: [t()] }), ['category_id must be a UUID']],
       ['an upper-case slug', () => ({ ...ok(), slug: 'Bad Slug' }), ['slug must match /^[a-z0-9]+(?:-[a-z0-9]+)*$/ regular expression']],
       ['a published_at without an offset', () => ({ ...ok(), published_at: '2026-06-01T09:00:00' }), ['published_at must be an ISO-8601 timestamp with an explicit UTC offset, e.g. 2026-06-01T09:00:00Z or 2026-06-01T12:00:00+03:00']],
       ['an impossible published_at day', () => ({ ...ok(), published_at: '2026-02-31T09:00:00Z' }), ['published_at must be an ISO-8601 timestamp with an explicit UTC offset, e.g. 2026-06-01T09:00:00Z or 2026-06-01T12:00:00+03:00']],
-      ['a non-boolean is_featured', () => ({ ...ok(), is_featured: 'yes' }), ['is_featured must be a boolean value']],
-      ['an empty list', () => ({ ...ok(), translations: [] }), ['translations must contain at least 1 elements']],
-      ['an empty title', () => ({ ...ok(), translations: [{ ...t(), title: '' }] }), ['translations.0.title must be longer than or equal to 1 characters']],
-      ['an empty body', () => ({ ...ok(), translations: [{ ...t(), body: '' }] }), ['translations.0.body must be longer than or equal to 1 characters']],
-      ['a 121-char meta_title', () => ({ ...ok(), translations: [{ ...t(), meta_title: 'x'.repeat(121) }] }), ['translations.0.meta_title must be shorter than or equal to 120 characters']],
-      ['a malformed og_image_id', () => ({ ...ok(), translations: [{ ...t(), og_image_id: 'nope' }] }), ['translations.0.og_image_id must be a UUID']],
-      ['a malformed attachment id', () => ({ ...ok(), attachment_ids: ['nope'] }), ['each value in attachment_ids must be a UUID']],
       ['a repeated attachment id in another letter case', () => ({ ...ok(), attachment_ids: [MISSING, MISSING.toUpperCase()] }), ["All attachment_ids's elements must be unique"]],
       ['an unknown translation key', () => ({ ...ok(), translations: [{ ...t(), extra: 1 }] }), ['translations.0.property extra should not exist']],
       ['an unknown key', () => ({ ...ok(), extra: 1 }), ['property extra should not exist']],

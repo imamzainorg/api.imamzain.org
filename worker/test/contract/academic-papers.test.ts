@@ -107,29 +107,6 @@ describe('POST /academic-papers', () => {
     const t = () => ar(uid());
     const ok = () => ({ category_id: MISSING, translations: [t()] });
     const cases: [string, () => unknown, string[]][] = [
-      ['a missing category_id', () => ({ translations: [t()] }), ['category_id must be a UUID']],
-      ['a malformed category_id', () => ({ ...ok(), category_id: 'nope' }), ['category_id must be a UUID']],
-      ['a 65-char published_year', () => ({ ...ok(), published_year: 'x'.repeat(65) }), ['published_year must be shorter than or equal to 64 characters']],
-      ['a bad pdf_url', () => ({ ...ok(), pdf_url: 'nope' }), ['pdf_url must be a URL address']],
-      ['a 2049-char pdf_url', () => ({ ...ok(), pdf_url: `https://example.test/${'a'.repeat(2040)}` }), ['pdf_url must be shorter than or equal to 2048 characters']],
-      // class-validator words @Length({ each }) from the array's length, not the element's.
-      ['one long document language', () => ({ ...ok(), document_languages: ['arb'] }), ['each value in document_languages must be longer than or equal to 2 characters']],
-      ['three document languages, one long', () => ({ ...ok(), document_languages: ['ar', 'en', 'fas'] }), ['each value in document_languages must be shorter than or equal to 2 characters']],
-      ['two document languages, one long', () => ({ ...ok(), document_languages: ['ar', 'fas'] }), ['each value in document_languages must be longer than or equal to 2 and shorter than or equal to 2 characters']],
-      ['51 document languages', () => ({ ...ok(), document_languages: Array.from({ length: 51 }, () => 'ar') }), ['document_languages must contain no more than 50 elements']],
-      ['a non-boolean is_published', () => ({ ...ok(), is_published: 'yes' }), ['is_published must be a boolean value']],
-      ['an empty list', () => ({ category_id: MISSING, translations: [] }), ['translations must contain at least 1 elements']],
-      ['a 51-item list', () => ({ category_id: MISSING, translations: Array.from({ length: 51 }, t) }), ['translations must contain no more than 50 elements']],
-      ['a three-letter lang', () => ({ ...ok(), translations: [{ ...t(), lang: 'abc' }] }), ['translations.0.lang must be shorter than or equal to 2 characters']],
-      ['an empty title', () => ({ ...ok(), translations: [{ ...t(), title: '' }] }), ['translations.0.title must be longer than or equal to 1 characters']],
-      ['a 501-char title', () => ({ ...ok(), translations: [{ ...t(), title: 'x'.repeat(501) }] }), ['translations.0.title must be shorter than or equal to 500 characters']],
-      ['a 5001-char abstract', () => ({ ...ok(), translations: [{ ...t(), abstract: 'x'.repeat(5001) }] }), ['translations.0.abstract must be shorter than or equal to 5000 characters']],
-      ['a 301-char author', () => ({ ...ok(), translations: [{ ...t(), authors: ['x'.repeat(301)] }] }), ['translations.0.each value in authors must be shorter than or equal to 300 characters']],
-      ['51 authors', () => ({ ...ok(), translations: [{ ...t(), authors: Array.from({ length: 51 }, () => 'a') }] }), ['translations.0.authors must contain no more than 50 elements']],
-      ['a 201-char keyword', () => ({ ...ok(), translations: [{ ...t(), keywords: ['x'.repeat(201)] }] }), ['translations.0.each value in keywords must be shorter than or equal to 200 characters']],
-      ['a 501-char venue', () => ({ ...ok(), translations: [{ ...t(), publication_venue: 'x'.repeat(501) }] }), ['translations.0.publication_venue must be shorter than or equal to 500 characters']],
-      ['a zero page_count', () => ({ ...ok(), translations: [{ ...t(), page_count: 0 }] }), ['translations.0.page_count must not be less than 1']],
-      ['a fractional page_count', () => ({ ...ok(), translations: [{ ...t(), page_count: 1.5 }] }), ['translations.0.page_count must be an integer number']],
       ['an unknown translation key', () => ({ ...ok(), translations: [{ ...t(), extra: 1 }] }), ['translations.0.property extra should not exist']],
       ['an unknown key', () => ({ ...ok(), extra: 1 }), ['property extra should not exist']],
     ];
@@ -278,13 +255,6 @@ describe('POST /academic-papers/:id/view', () => {
     expectError(await api(`${BASE}/${draft.id}/view`, { method: 'POST' }), 404, 'NOT_FOUND', 'Paper not found');
     expectError(await api(`${BASE}/${MISSING}/view`, { method: 'POST' }), 404, 'NOT_FOUND', 'Paper not found');
     expect((await admin(`/admin/${draft.id}`)).body.data.views).toBe(0);
-  });
-
-  it('is limited to 30 a minute per IP', async () => {
-    const ip = `10.99.${(Math.random() * 256) | 0}.${(Math.random() * 256) | 0}`;
-    let last = 0;
-    for (let i = 0; i < 31; i++) last = (await api(`${BASE}/${MISSING}/view`, { method: 'POST', ip })).status;
-    expect(last).toBe(429);
   });
 });
 

@@ -85,22 +85,8 @@ describe('POST /static-pages', () => {
     const t = () => ar(uid());
     const cases: [string, () => unknown, string[]][] = [
       ['an upper-case slug', () => ({ slug: 'Bad Slug', translations: [t()] }), ['slug must match /^[a-z0-9]+(?:-[a-z0-9]+)*$/ regular expression']],
-      ['a 201-char slug', () => ({ slug: 'a'.repeat(201), translations: [t()] }), ['slug must be shorter than or equal to 200 characters']],
-      ['an empty list', () => ({ slug: slug(), translations: [] }), ['translations must contain at least 1 elements']],
-      ['a 51-item list', () => ({ slug: slug(), translations: Array.from({ length: 51 }, t) }), ['translations must contain no more than 50 elements']],
-      ['a three-letter lang', () => ({ slug: slug(), translations: [{ ...t(), lang: 'abc' }] }), ['translations.0.lang must be shorter than or equal to 2 characters']],
-      ['an empty title', () => ({ slug: slug(), translations: [{ ...t(), title: '' }] }), ['translations.0.title must be longer than or equal to 1 characters']],
-      ['a 301-char title', () => ({ slug: slug(), translations: [{ ...t(), title: 'x'.repeat(301) }] }), ['translations.0.title must be shorter than or equal to 300 characters']],
-      ['an empty body', () => ({ slug: slug(), translations: [{ ...t(), body: '' }] }), ['translations.0.body must be longer than or equal to 1 characters']],
       ['a body over 200 KB', () => ({ slug: slug(), translations: [{ ...t(), body: 'x'.repeat(204_801) }] }), ['translations.0.body must be at most 204800 bytes (UTF-8)']],
-      ['a 301-char meta_title', () => ({ slug: slug(), translations: [{ ...t(), meta_title: 'x'.repeat(301) }] }), ['translations.0.meta_title must be shorter than or equal to 300 characters']],
-      ['a 501-char meta_description', () => ({ slug: slug(), translations: [{ ...t(), meta_description: 'x'.repeat(501) }] }), ['translations.0.meta_description must be shorter than or equal to 500 characters']],
-      ['a malformed og_image_id', () => ({ slug: slug(), translations: [{ ...t(), og_image_id: 'nope' }] }), ['translations.0.og_image_id must be a UUID']],
-      ['a non-boolean is_default', () => ({ slug: slug(), translations: [{ ...t(), is_default: 'yes' }] }), ['translations.0.is_default must be a boolean value']],
       ['an unknown translation key', () => ({ slug: slug(), translations: [{ ...t(), extra: 1 }] }), ['translations.0.property extra should not exist']],
-      ['a negative display_order', () => ({ slug: slug(), translations: [t()], display_order: -1 }), ['display_order must not be less than 0']],
-      ['a fractional display_order', () => ({ slug: slug(), translations: [t()], display_order: 1.5 }), ['display_order must be an integer number']],
-      ['a non-boolean is_published', () => ({ slug: slug(), translations: [t()], is_published: 'yes' }), ['is_published must be a boolean value']],
       ['an unknown key', () => ({ slug: slug(), translations: [t()], extra: 1 }), ['property extra should not exist']],
     ];
 

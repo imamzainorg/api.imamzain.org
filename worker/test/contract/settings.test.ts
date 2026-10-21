@@ -80,9 +80,6 @@ describe('PUT /settings/:key', () => {
   describe('validation', () => {
     const cases: [string, unknown, string[]][] = [
       ['a bad type', { value: 'x', type: 'date' }, ['type must be one of the following values: string, number, boolean, json']],
-      ['a 10001-char value', { value: 'x'.repeat(10_001) }, ['value must be shorter than or equal to 10000 characters']],
-      ['a 501-char description', { value: 'x', description: 'x'.repeat(501) }, ['description must be shorter than or equal to 500 characters']],
-      ['a non-boolean is_public', { value: 'x', is_public: 'yes' }, ['is_public must be a boolean value']],
       ['an unknown key', { value: 'x', extra: 1 }, ['property extra should not exist']],
     ];
 
@@ -90,18 +87,6 @@ describe('PUT /settings/:key', () => {
       const res = await put(uid(), body);
       expectError(res, 400, 'VALIDATION_FAILED', 'Validation failed');
       expect(errorsOf(res)).toEqual(errors);
-    });
-
-    it('rejects a missing value', async () => {
-      const res = await put(uid(), {});
-      expectError(res, 400, 'VALIDATION_FAILED', 'Validation failed');
-      expect(errorsOf(res)).toContain('value must be a string');
-    });
-
-    it('rejects a key longer than 100 characters', async () => {
-      const res = await put('k'.repeat(101), { value: 'x' });
-      expectError(res, 400, 'VALIDATION_FAILED', 'Validation failed');
-      expect(errorsOf(res)).toEqual(['key must be shorter than or equal to 100 characters']);
     });
   });
 

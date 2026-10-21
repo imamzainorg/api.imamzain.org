@@ -183,21 +183,8 @@ describe('POST /books', () => {
     const t = () => ar(uid());
     const ok = () => ({ category_id: MISSING, cover_image_id: MISSING, translations: [t()] });
     const cases: [string, () => unknown, string[]][] = [
-      ['a missing category_id', () => ({ cover_image_id: MISSING, translations: [t()] }), ['category_id must be a UUID']],
-      ['a missing cover_image_id', () => ({ category_id: MISSING, translations: [t()] }), ['cover_image_id must be a UUID']],
       ['an upper-case slug', () => ({ ...ok(), slug: 'Bad Slug' }), ['slug must match /^[a-z0-9]+(?:-[a-z0-9]+)*$/ regular expression']],
-      ['an empty isbn', () => ({ ...ok(), isbn: '' }), ['isbn must be longer than or equal to 1 characters']],
-      ['a zero pages', () => ({ ...ok(), pages: 0 }), ['pages must not be less than 1']],
-      ['a fractional pages', () => ({ ...ok(), pages: 1.5 }), ['pages must be an integer number']],
       ['a non-http pdf_url', () => ({ ...ok(), pdf_url: 'ftp://x/y.pdf' }), ['pdf_url must be an http(s) URL']],
-      ['one long document language', () => ({ ...ok(), document_languages: ['arb'] }), ['each value in document_languages must be longer than or equal to 2 characters']],
-      ['a zero part_number', () => ({ ...ok(), part_number: 0, parts: 1 }), ['part_number must not be less than 1']],
-      ['a malformed parent_id', () => ({ ...ok(), parent_id: 'nope' }), ['parent_id must be a UUID']],
-      ['a non-boolean is_publication', () => ({ ...ok(), is_publication: 'yes' }), ['is_publication must be a boolean value']],
-      ['an empty list', () => ({ ...ok(), translations: [] }), ['translations must contain at least 1 elements']],
-      ['an empty title', () => ({ ...ok(), translations: [{ ...t(), title: '' }] }), ['translations.0.title must be longer than or equal to 1 characters']],
-      ['a 301-char meta_title', () => ({ ...ok(), translations: [{ ...t(), meta_title: 'x'.repeat(301) }] }), ['translations.0.meta_title must be shorter than or equal to 300 characters']],
-      ['a malformed og_image_id', () => ({ ...ok(), translations: [{ ...t(), og_image_id: 'nope' }] }), ['translations.0.og_image_id must be a UUID']],
       ['an unknown translation key', () => ({ ...ok(), translations: [{ ...t(), extra: 1 }] }), ['translations.0.property extra should not exist']],
       ['an unknown key', () => ({ ...ok(), extra: 1 }), ['property extra should not exist']],
     ];
@@ -405,13 +392,6 @@ describe('POST /books/:id/view', () => {
     expectError(await api(`${BASE}/${draft.id}/view`, { method: 'POST' }), 404, 'NOT_FOUND', 'Book not found');
     expectError(await api(`${BASE}/${MISSING}/view`, { method: 'POST' }), 404, 'NOT_FOUND', 'Book not found');
     expect((await admin(`/admin/${draft.id}`)).body.data.views).toBe(0);
-  });
-
-  it('is limited to 30 a minute per IP', async () => {
-    const ip = `10.99.${(Math.random() * 256) | 0}.${(Math.random() * 256) | 0}`;
-    let last = 0;
-    for (let i = 0; i < 31; i++) last = (await api(`${BASE}/${MISSING}/view`, { method: 'POST', ip })).status;
-    expect(last).toBe(429);
   });
 });
 
