@@ -1,7 +1,9 @@
 // Cron Triggers (plan, Phase 5). A trigger fires once per schedule, so Nest's advisory locks are gone;
 // the YouTube freshness check stays as the guard against a repeated tick.
 import type { PrismaClient } from '../generated/prisma/client';
+import { checkHijriDate } from '../features/daily-hadiths/hijri-date';
 import { db as createDb } from '../lib/db';
+import { siteDate, siteTimezone } from '../lib/site-time';
 import type { AppBindings } from '../lib/types';
 import { drainOutbox } from './form-notifications';
 import { cleanupOrphanUploads } from './orphan-uploads';
@@ -26,6 +28,8 @@ const JOBS: Record<string, [name: string, job: Job][]> = {
   ],
   [CRONS.hourly]: [
     ['orphan-uploads', (db, env) => cleanupOrphanUploads(db, env)],
+    // Reads sistani.org only while today's Hijri date is unknown or provisional (the day after a 29th).
+    ['hijri-date', (_db, env) => checkHijriDate(env, siteDate(siteTimezone(env.SITE_TIMEZONE)))],
     // Nest ran it at 0 */6 * * *; one hourly trigger covers both jobs.
     ['youtube-sync', (db, env, scheduled) => (scheduled.getUTCHours() % 6 === 0 ? runGuardedSync(db, env) : Promise.resolve())],
   ],

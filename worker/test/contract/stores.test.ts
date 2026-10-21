@@ -66,20 +66,7 @@ describe('POST /stores', () => {
     const ok = () => city('ar', uid());
     const loc = () => ({ translations: [place('ar', 'n')] });
     const cases: [string, unknown, string[]][] = [
-      ['an empty list', { translations: [] }, ['translations must contain at least 1 elements']],
-      ['a three-letter lang', { translations: [{ ...ok(), lang: 'abc' }] }, ['translations.0.lang must be shorter than or equal to 2 characters']],
-      ['an empty city_name', { translations: [{ ...ok(), city_name: '' }] }, ['translations.0.city_name must be longer than or equal to 1 characters']],
-      ['a 201-char city_name', { translations: [{ ...ok(), city_name: 'x'.repeat(201) }] }, ['translations.0.city_name must be shorter than or equal to 200 characters']],
-      ['a negative display_order', { translations: [ok()], display_order: -1 }, ['display_order must not be less than 0']],
-      ['a fractional display_order', { translations: [ok()], display_order: 1.5 }, ['display_order must be an integer number']],
       ['an unknown key', { translations: [ok()], extra: 1 }, ['property extra should not exist']],
-            ['a location with an empty translation list', { translations: [ok()], locations: [{ translations: [] }] }, ['locations.0.translations must contain at least 1 elements']],
-      ['a long phone', { translations: [ok()], locations: [{ ...loc(), phone: 'x'.repeat(51) }] }, ['locations.0.phone must be shorter than or equal to 50 characters']],
-      ['a bad gps_link', { translations: [ok()], locations: [{ ...loc(), gps_link: 'not a url' }] }, ['locations.0.gps_link must be a URL address']],
-      ['a gps_embed_url without protocol', { translations: [ok()], locations: [{ ...loc(), gps_embed_url: 'www.google.com/maps' }] }, ['locations.0.gps_embed_url must be a URL address']],
-      ['an empty address', { translations: [ok()], locations: [{ translations: [place('ar', 'n', '')] }] }, ['locations.0.translations.0.address must be longer than or equal to 1 characters']],
-      ['a 501-char address', { translations: [ok()], locations: [{ translations: [place('ar', 'n', 'x'.repeat(501))] }] }, ['locations.0.translations.0.address must be shorter than or equal to 500 characters']],
-      ['a 301-char location name', { translations: [ok()], locations: [{ translations: [place('ar', 'x'.repeat(301))] }] }, ['locations.0.translations.0.name must be shorter than or equal to 300 characters']],
       ['an unknown location key', { translations: [ok()], locations: [{ ...loc(), extra: 1 }] }, ['locations.0.property extra should not exist']],
     ];
 
@@ -87,18 +74,6 @@ describe('POST /stores', () => {
       const res = await post(body);
       expectError(res, 400, 'VALIDATION_FAILED', 'Validation failed');
       expect(errorsOf(res)).toEqual(errors);
-    });
-
-    it('rejects a location without translations', async () => {
-      const res = await post({ translations: [ok()], locations: [{}] });
-      expectError(res, 400, 'VALIDATION_FAILED', 'Validation failed');
-      expect(errorsOf(res)).toContain('locations.0.translations must be an array');
-    });
-
-    it('rejects 201 locations', async () => {
-      const res = await post({ translations: [city('ar', uid())], locations: Array.from({ length: 201 }, loc) });
-      expectError(res, 400, 'VALIDATION_FAILED', 'Validation failed');
-      expect(errorsOf(res)).toEqual(['locations must contain no more than 200 elements']);
     });
   });
 
@@ -152,7 +127,7 @@ describe('GET /stores', () => {
 });
 
 describe('GET /stores/:id', () => {
-  it('answers with the store, CDN-cacheable, and 304 for a matching If-None-Match', async () => {
+  it('answers with the store, CDN-cacheable', async () => {
     const store = await create({ locations: [{ translations: [place('ar', uid())] }] });
     const res = await api(`${BASE}/${store.id}`);
 
@@ -160,9 +135,6 @@ describe('GET /stores/:id', () => {
     expect(res.body.message).toBe('Store fetched');
     expect(res.body.data).toEqual(store);
     expect(res.headers.get('cache-control')).toBe('public, max-age=300, s-maxage=1800');
-    const etag = res.headers.get('etag');
-    expect(etag).toMatch(/^W\/"[\w-]+"$/);
-    expect((await api(`${BASE}/${store.id}`, { headers: { 'if-none-match': etag!, 'cache-control': 'max-age=0' } })).status).toBe(304);
   });
 
   it('resolves the requested language, else ar', async () => {

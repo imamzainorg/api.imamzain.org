@@ -2,7 +2,7 @@ import type { Context } from 'hono';
 import { publicCache } from './envelope';
 import type { AppEnv } from './types';
 
-// The editors' time zone: a hadith's display_date is the calendar day they picked, not the UTC day.
+// The site's day boundary: the Hijri date (and so today's hadith) changes at midnight here, not in UTC.
 export const DEFAULT_SITE_TIMEZONE = 'Asia/Baghdad';
 
 const MS_PER_SECOND = 1000;

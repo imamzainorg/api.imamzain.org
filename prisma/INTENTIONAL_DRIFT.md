@@ -42,7 +42,7 @@ Whenever a migration adds one of these, add a row here in the same PR.
 | `uq_posts_slug` | `posts` | `20260819100000_content_slug_phase_b_unique` | Partial unique: `WHERE slug IS NOT NULL`. |
 | `uq_books_slug` | `books` | `20260819100000_content_slug_phase_b_unique` | Partial unique: `WHERE slug IS NOT NULL`. |
 | `uq_static_pages_slug` | `static_pages` | `20260819100000_content_slug_phase_b_unique` | Partial unique: `WHERE slug IS NOT NULL`. |
-| `daily_hadiths_display_date_key` | `daily_hadiths` | `20260906120000_hadith_display_date` | Partial unique: `WHERE display_date IS NOT NULL AND deleted_at IS NULL`. |
+| `daily_hadiths_hijri_date_key` | `daily_hadiths` | `20261021100000_hadith_hijri_date` | Partial unique: `WHERE hijri_month IS NOT NULL AND deleted_at IS NULL`. |
 | `uq_books_parent_part_number` | `books` | `20260917110000_books_series_integrity` | Partial unique: `WHERE parent_id IS NOT NULL AND part_number IS NOT NULL AND deleted_at IS NULL` — see the comment on `books.part_number` in schema.prisma. |
 | `idx_newsletter_recipients_pending` | `newsletter_campaign_recipients` | `20260917130000_newsletter_delivery_and_double_opt_in` | Partial: `WHERE sent_at IS NULL AND failed_at IS NULL`. |
 | `idx_newsletter_recipients_sent_at` | `newsletter_campaign_recipients` | `20260917130000_newsletter_delivery_and_double_opt_in` | Partial: `WHERE sent_at IS NOT NULL`. |
@@ -55,6 +55,7 @@ Whenever a migration adds one of these, add a row here in the same PR.
 | Constraint | Table | Migration | Why it can't be in schema.prisma |
 |---|---|---|---|
 | `academic_paper_translations_page_count_check` | `academic_paper_translations` | `00000000000000_baseline` | `CHECK (page_count > 0)` — Prisma DSL has no CHECK support. |
+| `daily_hadiths_hijri_date_check` | `daily_hadiths` | `20261021100000_hadith_hijri_date` | `hijri_month` and `hijri_day` both null, or 1–12 and 1–30. |
 | `books_pages_check` | `books` | `00000000000000_baseline` | `CHECK (pages > 0)`. |
 | `books_part_number_check` | `books` | `00000000000000_baseline` | `CHECK (part_number > 0)`. |
 | `books_parts_check` | `books` | `00000000000000_baseline` | `CHECK (parts > 0)`. |

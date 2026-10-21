@@ -112,7 +112,7 @@ the category resources, the only admin-read surface (trash) is gated by
 | --- | --- |
 | `daily-hadiths:read` | List + read hadiths |
 | `daily-hadiths:create` | Add a new hadith |
-| `daily-hadiths:update` | Edit a hadith, including scheduling/unscheduling its display date |
+| `daily-hadiths:update` | Edit a hadith, including moving it to another Hijri day or off the calendar; set today's Hijri date by hand (`PUT /daily-hadiths/hijri-date`) |
 | `daily-hadiths:delete` | Soft-delete a hadith |
 
 ### Dashboard, audit, contest, settings
@@ -380,6 +380,7 @@ Four category resources emit parallel sets:
 | `DAILY_HADITH_UPDATED` | `PATCH /daily-hadiths/:id` |
 | `DAILY_HADITH_DELETED` | `DELETE /daily-hadiths/:id` |
 | `DAILY_HADITH_RESTORED` | `POST /daily-hadiths/:id/restore` |
+| `HIJRI_DATE_SET` | `PUT /daily-hadiths/hijri-date` — `resource_id` is the site date; `changes` has the date set and the month's start |
 
 The YouTube sync (`youtube-sync.service.ts`) does **not** emit audit
 log rows. It's a system action driven by cron, not a user action;

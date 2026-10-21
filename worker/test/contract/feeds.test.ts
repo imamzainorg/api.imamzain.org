@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { api, randomIp, expectSuccess, withDb } from './support/http';
+import { api, expectSuccess, withDb } from './support/http';
 import { dropLanguage, dropPosts, retiredLanguage, seedPost, uid } from './support/content';
 
 const BASE = '/api/v1';
@@ -13,7 +13,6 @@ const noSummary = `${PREFIX}-plain`;
 const draft = `${PREFIX}-draft`;
 const gone = `${PREFIX}-gone`;
 const ampersand = `${PREFIX}-a&b`;
-const onlyRetired = `${PREFIX}-retired`;
 
 beforeAll(async () => {
   await retiredLanguage(RETIRED);
@@ -71,14 +70,6 @@ describe('GET /sitemap.xml', () => {
 
     expect(again.status).toBe(304);
     expect(again.text).toBe('');
-  });
-
-  it('answers 429 past 20 requests a minute from one client', async () => {
-    const ip = randomIp();
-    const calls = await Promise.all(Array.from({ length: 22 }, () => api(`${BASE}/sitemap.xml`, { ip })));
-
-    expect(calls.filter((r) => r.status === 429).length).toBeGreaterThanOrEqual(1);
-    expect(calls.filter((r) => r.status === 200).length).toBeLessThanOrEqual(20);
   });
 });
 

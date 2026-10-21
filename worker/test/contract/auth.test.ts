@@ -1,5 +1,7 @@
 import { createHash } from 'node:crypto';
+import { sign } from 'hono/jwt';
 import { describe, expect, it } from 'vitest';
+import { HARNESS_JWT_SECRET } from '../harness/config';
 import { adminToken, api, expectError, expectSuccess, ISO_DATE, withDb } from './support/http';
 import { PASSWORD, assignRole, createRole, createUser, login, uid } from './support/rbac';
 
@@ -222,9 +224,12 @@ describe('GET /auth/me', () => {
     expect((await me(flagged.accessToken)).body.data.must_change_password).toBe(true);
   });
 
-  it('is 401 without or with a bad token', async () => {
+  it('is 401 without, with a bad and with an expired token', async () => {
     expectError(await api(`${AUTH}/me`), 401, 'UNAUTHORIZED', 'Unauthorized');
     expectError(await me('not.a.jwt'), 401, 'UNAUTHORIZED', 'Unauthorized');
+    const now = Math.floor(Date.now() / 1000);
+    const expired = await sign({ ...claims(await adminToken()), iat: now - 3600, exp: now - 10 }, process.env.JWT_SECRET ?? HARNESS_JWT_SECRET, 'HS256');
+    expectError(await me(expired), 401, 'UNAUTHORIZED', 'Unauthorized');
   });
 });
 

@@ -18,6 +18,9 @@ export const HARNESS_JWT_SECRET = 'harness-only-jwt-secret-not-for-production-00
 /** Fake R2 credentials: presigning is pure computation, and the Worker's storage calls go to wrangler's local bucket. */
 export const HARNESS_R2 = { R2_ACCOUNT_ID: 'harness-account', R2_ACCESS_KEY_ID: 'harness-key', R2_SECRET_ACCESS_KEY: 'harness-secret' };
 
+/** Nothing listens here: the suite never reads sistani.org, so the Hijri date starts from Umm al-Qura. */
+export const HARNESS_HIJRI_SOURCE_URL = 'http://127.0.0.1:9/';
+
 /** The production list (worker/wrangler.jsonc), so CORS behaves as in prod. */
 export const HARNESS_ALLOWED_ORIGINS = 'https://imamzain.org,https://cms.imamzain.com,https://app.imamzain.org';
 
