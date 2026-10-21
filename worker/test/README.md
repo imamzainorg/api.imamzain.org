@@ -9,7 +9,7 @@
 ## `npm run contract`
 
 Starts the Worker with a generated env file (`test/.work/worker.env`, which also stops wrangler reading
-`.dev.vars`) on port 8797, runs the suite once, and stops it. Logs are in `test/.work/logs/` (gitignored).
+`.dev.vars`) on port 8797 (`CONTRACT_PORT` overrides it), runs the suite once, and stops it. Logs are in `test/.work/logs/` (gitignored).
 
 The database is `CONTRACT_DATABASE_URL`, default `postgresql://postgres:postgres@localhost:5432/imamzain_test`.
 It must be migrated and seeded first; from the repo root:

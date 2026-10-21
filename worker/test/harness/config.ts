@@ -6,8 +6,11 @@ export const WORKER_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.ur
 export const WORK_DIR = path.join(WORKER_DIR, 'test/.work');
 export const LOG_DIR = path.join(WORK_DIR, 'logs');
 
-/** The Worker's port; not a default one, so a running `npm run dev` doesn't clash. */
-export const PORTS = { worker: 8797 } as const;
+/**
+ * The Worker's port; not a default one, so a running `npm run dev` doesn't clash. CONTRACT_PORT overrides it,
+ * e.g. on Windows hosts where Hyper-V reserves a range around 8797 (`netsh interface ipv4 show excludedportrange`).
+ */
+export const PORTS = { worker: Number(process.env.CONTRACT_PORT ?? 8797) } as const;
 
 /** Signs harness and contract tokens. Never a real secret: it only exists in local and CI stacks. */
 export const HARNESS_JWT_SECRET = 'harness-only-jwt-secret-not-for-production-0000';
