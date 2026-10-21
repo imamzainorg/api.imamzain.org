@@ -4046,3 +4046,58 @@ Secrets are set with `npx wrangler secret put <NAME>`; variables live in
 `worker/wrangler.jsonc`. Migrations run from the repo root:
 `npm run prisma:deploy`. CI runs the migration check, the Worker's unit tests
 and the contract suite on every pull request.
+
+---
+
+## Daily hadiths follow the Hijri date
+
+October 2026. **Breaking for the CMS and the website.** Each hadith now
+belongs to one day of the Hijri year (`hijri_month` 1–12, `hijri_day`
+1–30) and is shown on that day every year, by the Hijri date Najaf
+announces on sistani.org. The Gregorian `display_date` and the random
+fallback are gone. The full contract is in
+[integration.md → Daily hadiths and the Hijri date](integration.md#daily-hadiths-and-the-hijri-date).
+
+The 32 old hadiths were deleted and 360 new ones loaded, one per Hijri
+day (`prisma/data/daily-hadiths.json`, from the editors' «قالب الحكمة»
+document). `npm run prisma:seed-content` loads the same file.
+
+| What | Before | Now |
+| --- | --- | --- |
+| Hadith fields (create, update, admin and public reads) | `display_date: "YYYY-MM-DD" \| null` | `hijri_month`, `hijri_day` (both or neither; `null` takes a hadith off the calendar) |
+| `GET /daily-hadiths` filters | `date`, `from` + `to` | `hijri_month`, optionally with `hijri_day`; calendar order |
+| `GET /daily-hadiths/today` | a scheduled hadith, else a random one locked for the day; `meta: { date, source: "scheduled" \| "random" \| "empty" }` | the hadith for today's Hijri day or `data: null`; `meta: { date, hijri: {…}, source: "scheduled" \| "empty" }` |
+| Restore whose day was taken | `meta.previous_display_date` | `meta.previous_hijri_month`, `meta.previous_hijri_day` |
+| Today's Hijri date | — | `GET /daily-hadiths/hijri-date` (public); `PUT` to set it by hand (`daily-hadiths:update`, audit `HIJRI_DATE_SET`) |
+
+**CMS:**
+
+1. Replace the date picker on the hadith form with a Hijri month select
+   (the twelve names, 1–12) and a day number (1–30). Send both, or both
+   `null`. A `409` means another hadith holds that day.
+2. Show `hijri_day` + month name in the list; browse a month with
+   `GET /daily-hadiths?hijri_month=`.
+3. Read `previous_hijri_month` / `previous_hijri_day` from a restore's
+   `meta` instead of `previous_display_date`.
+4. Optional: a small "today's Hijri date" control calling
+   `PUT /daily-hadiths/hijri-date`, for the rare day sistani.org and the
+   announcement disagree.
+
+**Website:**
+
+1. The top-bar hadith should come from `GET /daily-hadiths/today` (or
+   `hadith_of_day` on `/homepage`) instead of the bundled `hadiths.json`
+   picked by Gregorian day of the month.
+2. The header date can come from `GET /daily-hadiths/hijri-date`
+   (`day`, `month_name`, `year`) instead of the site's own
+   `/api/hijri-date` reader, so the date and the hadith never disagree.
+3. Don't expect `meta.source: "random"` any more.
+
+**Deploy order.** `20261021100000_hadith_hijri_date` (additive) is
+applied in production and the 360 hadiths are loaded; the Worker in
+production still serves the old code until this is deployed (until then
+`/today` draws at random from the 360, as before). Deploy the Worker,
+then apply `20261021110000_drop_hadith_gregorian_schedule`, which drops
+`display_date` and `daily_hadith_random_picks` (the previous Worker reads
+both). The `HIJRI_DATE_ANCHOR` KV namespace already exists; the first
+request after the deploy reads sistani.org and fills it.

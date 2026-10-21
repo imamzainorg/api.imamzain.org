@@ -9,6 +9,8 @@
  *   npm run prisma:seed-content
  */
 
+import * as fs from 'fs';
+import * as path from 'path';
 import { PrismaClient } from '@prisma/client';
 import {
   assertDataDir,
@@ -660,30 +662,27 @@ async function seedStudentTheses(catMap: Map<string, string>): Promise<void> {
 
 // ── Daily hadiths ─────────────────────────────────────────────────────────────
 
+/** One hadith per Hijri day (prisma/data/daily-hadiths.json), not a legacy export. */
 async function seedHadiths(): Promise<void> {
-  const hadiths = loadJson<HadithJson[]>('hadiths.json');
+  const file = path.join(__dirname, 'data', 'daily-hadiths.json');
+  const hadiths = JSON.parse(fs.readFileSync(file, 'utf-8')) as HadithJson[];
   let created = 0;
   let skipped = 0;
 
-  for (let i = 0; i < hadiths.length; i++) {
-    const h = hadiths[i];
-    const content = h.content?.trim();
-    if (!content) { skipped++; continue; }
-
-    // Idempotency: skip if any hadith already has this exact Arabic content
-    const existing = await prisma.daily_hadith_translations.findFirst({
-      where: { lang: 'ar', content },
+  for (const h of hadiths) {
+    // Idempotency: a Hijri day that already has a live hadith keeps it.
+    const existing = await prisma.daily_hadiths.findFirst({
+      where: { hijri_month: h.hijri_month, hijri_day: h.hijri_day, deleted_at: null },
     });
     if (existing) { skipped++; continue; }
 
-    const hadith = await prisma.daily_hadiths.create({
-      data: { display_order: i, is_active: true },
+    await prisma.daily_hadiths.create({
+      data: {
+        hijri_month: h.hijri_month,
+        hijri_day: h.hijri_day,
+        daily_hadith_translations: { create: { lang: 'ar', content: h.content, source: h.source } },
+      },
     });
-
-    await prisma.daily_hadith_translations.create({
-      data: { hadith_id: hadith.id, lang: 'ar', content, is_default: true },
-    });
-
     created++;
   }
 
