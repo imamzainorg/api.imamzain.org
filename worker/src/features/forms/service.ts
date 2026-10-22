@@ -202,11 +202,25 @@ export async function findAllProxyVisits(
   page: number,
   limit: number,
   status?: proxy_visit_status,
+  filters: { search?: string; country?: string; from?: string; to?: string } = {},
 ) {
   const db = getDb(c);
+  const { search, country, from, to } = filters;
   const where: Prisma.proxy_visit_requestsWhereInput = {
     deleted_at: null,
     ...(status ? { status } : {}),
+    ...(country ? { country } : {}),
+    ...(search
+      ? {
+          OR: [
+            { name: { contains: search, mode: 'insensitive' } },
+            { phone: { contains: search } },
+          ],
+        }
+      : {}),
+    ...(from || to
+      ? { submitted_at: { ...(from ? { gte: new Date(from) } : {}), ...(to ? { lte: new Date(to) } : {}) } }
+      : {}),
   };
   const [items, total] = await Promise.all([
     db.proxy_visit_requests.findMany({

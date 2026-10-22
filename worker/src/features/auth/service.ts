@@ -153,7 +153,7 @@ type LoginOutcome =
   | { kind: 'ok'; user: UserWithPermissions };
 
 export async function login(c: Ctx, dto: LoginInput) {
-  // Trimmed, then matched byte-for-byte: usernames are case-sensitive at login.
+  // Trimmed, then matched case-insensitively (creation already rejects names differing only by case).
   const username = dto.username.trim();
   const key = loginThrottleKey(username);
   const path = '/api/v1/auth/login';
@@ -169,7 +169,7 @@ export async function login(c: Ctx, dto: LoginInput) {
       if (retryAfterSeconds > 0) return { kind: 'locked', retryAfterSeconds };
 
       const user = await tx.users.findFirst({
-        where: { username, deleted_at: null },
+        where: { username: { equals: username, mode: 'insensitive' }, deleted_at: null },
         include: USER_WITH_PERMISSIONS_INCLUDE,
       });
       const match = await verifyPassword(

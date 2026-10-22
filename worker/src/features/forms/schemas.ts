@@ -60,6 +60,13 @@ export type UpdateContactInput = z.output<typeof updateContactBody>;
 export const proxyVisitQuery = z.object({
   ...paginationShape,
   status: z.enum(PROXY_VISIT_STATUSES).optional(),
+  /** Matches name or phone (case-insensitive substring). */
+  search: z.string().trim().min(1).max(100).optional(),
+  country: z.string().regex(COUNTRY).optional(),
+  /** Submitted on/after this instant. */
+  from: isoDate('from').optional(),
+  /** Submitted on/before this instant. */
+  to: isoDate('to').optional(),
 });
 export const contactQuery = z.object({
   ...paginationShape,

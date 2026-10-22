@@ -37,7 +37,12 @@ defineRoute(
     auth: ['forms:read'],
     query: proxyVisitQuery,
   },
-  (c, { query }) => service.findAllProxyVisits(c, query.page, query.limit, query.status),
+  (c, { query }) => service.findAllProxyVisits(c, query.page, query.limit, query.status, {
+      search: query.search,
+      country: query.country,
+      from: query.from,
+      to: query.to,
+    }),
 );
 
 defineRoute(
