@@ -4,6 +4,10 @@ import * as service from './service';
 
 const app = createApp();
 
-defineRoute(app, { method: 'get', path: '/', summary: 'API health check (public)', limit: 60 }, (c) => service.check(c));
+defineRoute(
+  app,
+  { method: 'get', path: '/', summary: 'API health check (public)', limit: 60 },
+  (c) => service.check(c),
+);
 
 export const health = app;

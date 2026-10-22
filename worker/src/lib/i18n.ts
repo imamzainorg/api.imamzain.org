@@ -30,7 +30,10 @@ type TranslationLike = { lang?: string; is_default?: boolean };
  * and passes it as `active` below.
  */
 export async function loadActiveLanguages(db: PrismaClient): Promise<Set<string>> {
-  const rows = await db.languages.findMany({ where: { deleted_at: null, is_active: true }, select: { code: true } });
+  const rows = await db.languages.findMany({
+    where: { deleted_at: null, is_active: true },
+    select: { code: true },
+  });
   return new Set(rows.map((r) => r.code));
 }
 
@@ -66,7 +69,9 @@ export function resolveTranslation<T extends TranslationLike>(
   lang: string | null,
   options: ResolveTranslationOptions = {},
 ): T | null {
-  const candidates = options.includeInactive ? (translations ?? []) : onlyActiveTranslations(translations, options.active);
+  const candidates = options.includeInactive
+    ? (translations ?? [])
+    : onlyActiveTranslations(translations, options.active);
   if (candidates.length === 0) return null;
   if (lang) {
     const match = candidates.find((t) => t.lang === lang);
@@ -82,5 +87,6 @@ export function assertExactlyOneDefault(
   translations: ReadonlyArray<{ is_default?: boolean | null }> | null | undefined,
   message = 'Exactly one translation must have is_default = true',
 ): void {
-  if ((translations ?? []).filter((t) => t.is_default === true).length !== 1) throw badRequest(message);
+  if ((translations ?? []).filter((t) => t.is_default === true).length !== 1)
+    throw badRequest(message);
 }

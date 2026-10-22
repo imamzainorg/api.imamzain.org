@@ -1,8 +1,21 @@
 import type { Context } from 'hono';
 import { Prisma } from '../../generated/prisma/client';
 import { getDb } from '../../lib/db';
-import { badRequest, conflict, forbidden, isUniqueViolation, notFound, unauthorized } from '../../lib/errors';
-import { hmacHex, KEY_INFO, resolveHmacKeyring, verifyHmacHex, type HmacKeyring } from '../../lib/hmac-keys';
+import {
+  badRequest,
+  conflict,
+  forbidden,
+  isUniqueViolation,
+  notFound,
+  unauthorized,
+} from '../../lib/errors';
+import {
+  hmacHex,
+  KEY_INFO,
+  resolveHmacKeyring,
+  verifyHmacHex,
+  type HmacKeyring,
+} from '../../lib/hmac-keys';
 import { buildPaginationMeta } from '../../lib/pagination';
 import type { AppBindings, AppEnv } from '../../lib/types';
 import type { StartInput, SubmitInput } from './schemas';
@@ -18,7 +31,8 @@ const ALREADY_PARTICIPATED = 'لقد شاركتَ في المسابقة مسبق
 // The CMS flips `contest_open`; a missing or malformed row reads as CLOSED (the contest ended in
 // September 2026, and no environment should open it by accident).
 const CONTEST_OPEN_SETTING_KEY = 'contest_open';
-const CONTEST_CLOSED_MESSAGE = 'انتهت مسابقة قطوف من الصحيفة السجادية ولم تعد تستقبل مشاركات جديدة.';
+const CONTEST_CLOSED_MESSAGE =
+  'انتهت مسابقة قطوف من الصحيفة السجادية ولم تعد تستقبل مشاركات جديدة.';
 
 const OFF_VALUES = new Set(['false', '0', 'no', 'off']);
 
@@ -35,7 +49,8 @@ export function canonicalContact(contactType: ContactType, raw: string): string 
 
 /** Every stored form of one identity: rows written before "00" was folded still carry it. */
 export function identityVariants(contactType: ContactType, canonical: string): string[] {
-  if (contactType === 'phone' && canonical.startsWith('+')) return [canonical, `00${canonical.slice(1)}`];
+  if (contactType === 'phone' && canonical.startsWith('+'))
+    return [canonical, `00${canonical.slice(1)}`];
   return [canonical];
 }
 
@@ -50,10 +65,16 @@ export function scoreIsRevealed(env: { CONTEST_REVEAL_SCORE?: string }): boolean
 
 /** A dedicated CONTEST_ATTEMPT_SECRET as-is; otherwise a key derived from JWT_SECRET (see lib/hmac-keys). */
 const attemptKeys = (env: AppBindings): HmacKeyring =>
-  resolveHmacKeyring({ dedicatedSecret: env.CONTEST_ATTEMPT_SECRET, dedicatedName: 'CONTEST_ATTEMPT_SECRET', jwtSecret: env.JWT_SECRET, info: KEY_INFO.contestAttempt });
+  resolveHmacKeyring({
+    dedicatedSecret: env.CONTEST_ATTEMPT_SECRET,
+    dedicatedName: 'CONTEST_ATTEMPT_SECRET',
+    jwtSecret: env.JWT_SECRET,
+    info: KEY_INFO.contestAttempt,
+  });
 
 /** HMAC of the attempt id: a stolen or guessed id can't be submitted without it. */
-const signAttemptToken = (env: AppBindings, attemptId: string) => hmacHex(attemptKeys(env).signingKey, attemptId);
+const signAttemptToken = (env: AppBindings, attemptId: string) =>
+  hmacHex(attemptKeys(env).signingKey, attemptId);
 
 interface Question {
   id: string;
@@ -82,11 +103,24 @@ export async function findAllAttempts(c: Ctx, page: number, limit: number, submi
       orderBy: [{ started_at: 'desc' }, { id: 'asc' }],
       skip: (page - 1) * limit,
       take: limit,
-      select: { id: true, name: true, phone: true, email: true, started_at: true, submitted_at: true, ip: true, user_agent: true, final_score: true },
+      select: {
+        id: true,
+        name: true,
+        phone: true,
+        email: true,
+        started_at: true,
+        submitted_at: true,
+        ip: true,
+        user_agent: true,
+        final_score: true,
+      },
     }),
     db.qutuf_sajjadiya_contest_attempts.count({ where }),
   ]);
-  return { message: 'Attempts fetched', data: { items, pagination: buildPaginationMeta(page, limit, total) } };
+  return {
+    message: 'Attempts fetched',
+    data: { items, pagination: buildPaginationMeta(page, limit, total) },
+  };
 }
 
 export async function listQuestions(c: Ctx) {
@@ -114,16 +148,29 @@ const findAttemptByIdentity = (c: Ctx, variants: string[]) =>
  * /start is idempotent for an attempt never submitted: a lost response must not lock the person out,
  * and handing the same attempt back costs nothing (answers are stored only at /submit).
  */
-function resumeOrReject(env: AppBindings, existing: { id: string; submitted_at: Date | null; final_score: number | null }) {
-  if (existing.submitted_at !== null || existing.final_score !== null) throw conflict(ALREADY_PARTICIPATED);
-  return { message: 'Contest resumed', data: { attempt_id: existing.id, attempt_token: signAttemptToken(env, existing.id), resumed: true } };
+function resumeOrReject(
+  env: AppBindings,
+  existing: { id: string; submitted_at: Date | null; final_score: number | null },
+) {
+  if (existing.submitted_at !== null || existing.final_score !== null)
+    throw conflict(ALREADY_PARTICIPATED);
+  return {
+    message: 'Contest resumed',
+    data: {
+      attempt_id: existing.id,
+      attempt_token: signAttemptToken(env, existing.id),
+      resumed: true,
+    },
+  };
 }
 
 export async function start(c: Ctx, dto: StartInput) {
   await assertContestOpen(c);
 
-  if (dto.contactType === 'phone' && !PHONE_RE.test(dto.contact)) throw badRequest('Invalid phone number format');
-  if (dto.contactType === 'email' && !EMAIL_RE.test(dto.contact)) throw badRequest('Invalid email format');
+  if (dto.contactType === 'phone' && !PHONE_RE.test(dto.contact))
+    throw badRequest('Invalid phone number format');
+  if (dto.contactType === 'email' && !EMAIL_RE.test(dto.contact))
+    throw badRequest('Invalid email format');
 
   const normalized = canonicalContact(dto.contactType, dto.contact);
   const variants = identityVariants(dto.contactType, normalized);
@@ -153,7 +200,14 @@ export async function start(c: Ctx, dto: StartInput) {
   }
 
   const attemptId = rows[0].id;
-  return { message: 'Contest started', data: { attempt_id: attemptId, attempt_token: signAttemptToken(c.env, attemptId), resumed: false } };
+  return {
+    message: 'Contest started',
+    data: {
+      attempt_id: attemptId,
+      attempt_token: signAttemptToken(c.env, attemptId),
+      resumed: false,
+    },
+  };
 }
 
 export async function submit(c: Ctx, dto: SubmitInput) {
@@ -162,17 +216,21 @@ export async function submit(c: Ctx, dto: SubmitInput) {
   // Optional until every frontend sends it. Nest's @IsOptional lets `null` through and then crashed
   // on it (500); an explicit null counts as absent here.
   if (dto.attempt_token != null) {
-    if (!verifyHmacHex(attemptKeys(c.env), dto.attempt_id, dto.attempt_token)) throw unauthorized('Invalid attempt token');
+    if (!verifyHmacHex(attemptKeys(c.env), dto.attempt_id, dto.attempt_token))
+      throw unauthorized('Invalid attempt token');
   } else {
-    console.warn(`Contest submit without attempt_token (attempt_id=${dto.attempt_id}); frontend should adopt token-binding`);
+    console.warn(
+      `Contest submit without attempt_token (attempt_id=${dto.attempt_id}); frontend should adopt token-binding`,
+    );
   }
 
   const db = getDb(c);
   const correct = new Map(
-    (await db.$queryRaw<Array<{ id: string; correct_answer: string }>>`SELECT id, correct_answer FROM qutuf_sajjadiya_contest_questions`).map((r) => [
-      String(r.id),
-      r.correct_answer,
-    ]),
+    (
+      await db.$queryRaw<
+        Array<{ id: string; correct_answer: string }>
+      >`SELECT id, correct_answer FROM qutuf_sajjadiya_contest_questions`
+    ).map((r) => [String(r.id), r.correct_answer]),
   );
 
   // One answer per unique question id: duplicates must not inflate the score.
@@ -190,10 +248,14 @@ export async function submit(c: Ctx, dto: SubmitInput) {
   }
 
   // Completeness on the de-duplicated, known set: duplicate or unknown ids can't pad the count.
-  if (correct.size === 0 || answers.length !== correct.size) throw conflict('All questions must be answered');
+  if (correct.size === 0 || answers.length !== correct.size)
+    throw conflict('All questions must be answered');
 
   const answerRows = Prisma.join(
-    answers.map((v) => Prisma.sql`(gen_random_uuid(), ${dto.attempt_id}::uuid, ${v.question_id}, ${v.selected}, ${v.is_correct})`),
+    answers.map(
+      (v) =>
+        Prisma.sql`(gen_random_uuid(), ${dto.attempt_id}::uuid, ${v.question_id}, ${v.selected}, ${v.is_correct})`,
+    ),
     ', ',
   );
 
@@ -221,5 +283,12 @@ export async function submit(c: Ctx, dto: SubmitInput) {
 
   // The score is always stored; whether the participant is told is a deployment choice.
   const revealed = scoreIsRevealed(c.env);
-  return { message: 'Contest submitted', data: { final_score: revealed ? finalScore : null, total_questions: correct.size, score_revealed: revealed } };
+  return {
+    message: 'Contest submitted',
+    data: {
+      final_score: revealed ? finalScore : null,
+      total_questions: correct.size,
+      score_revealed: revealed,
+    },
+  };
 }

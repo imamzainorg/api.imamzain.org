@@ -13,6 +13,7 @@ export const academicPaperCategories = categoryRoutes({
     deleted: AUDIT_ACTIONS.ACADEMIC_PAPER_CATEGORY_DELETED,
     restored: AUDIT_ACTIONS.ACADEMIC_PAPER_CATEGORY_RESTORED,
   },
-  countLiveChildren: (db, id) => db.academic_papers.count({ where: { category_id: id, deleted_at: null } }),
+  countLiveChildren: (db, id) =>
+    db.academic_papers.count({ where: { category_id: id, deleted_at: null } }),
   childConflictMessage: 'Cannot delete a category that contains academic papers',
 });

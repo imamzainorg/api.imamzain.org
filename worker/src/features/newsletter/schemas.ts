@@ -26,7 +26,11 @@ export type ConfirmInput = z.output<typeof confirmBody>;
 export type UnsubscribeInput = z.output<typeof unsubscribeBody>;
 
 // The trash list takes the same query (Nest reuses the DTO) and ignores the filters.
-export const subscriberQuery = z.object({ ...paginationShape, search: searchTerm, is_active: queryBoolean });
+export const subscriberQuery = z.object({
+  ...paginationShape,
+  search: searchTerm,
+  is_active: queryBoolean,
+});
 
 /** No uuid check: a malformed id reaches Postgres and comes back as 400 INVALID_IDENTIFIER, as in Nest. */
 export const idParams = z.object({ id: z.string() });

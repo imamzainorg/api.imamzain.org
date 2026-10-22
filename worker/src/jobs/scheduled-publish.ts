@@ -12,7 +12,10 @@ export async function runScheduledPublish(db: PrismaClient, now = new Date()): P
 
   console.log(`Auto-publishing ${due.length} scheduled post(s)`);
   const ids = due.map((d) => d.id);
-  await db.posts.updateMany({ where: { id: { in: ids } }, data: { is_published: true, updated_at: now } });
+  await db.posts.updateMany({
+    where: { id: { in: ids } },
+    data: { is_published: true, updated_at: now },
+  });
   await db.audit_logs.createMany({
     data: ids.map((id) => ({
       user_id: null,

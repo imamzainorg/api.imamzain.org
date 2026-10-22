@@ -33,7 +33,12 @@ export interface CategoryConfig {
   resourceType: string;
   /** URL segment and permission prefix, e.g. `post-categories`. */
   basePath: string;
-  audit: { created: AuditAction; updated: AuditAction; deleted: AuditAction; restored: AuditAction };
+  audit: {
+    created: AuditAction;
+    updated: AuditAction;
+    deleted: AuditAction;
+    restored: AuditAction;
+  };
   /** Live (not soft-deleted) rows that still use the category; delete is refused while there are any. */
   countLiveChildren: (db: PrismaClient, id: string) => Promise<number>;
   childConflictMessage: string;
@@ -75,16 +80,27 @@ interface TranslationDelegate {
   update(args: unknown): Promise<TranslationRow>;
 }
 
-const categories = (db: Db, cfg: CategoryConfig) => (db as unknown as Record<string, CategoryDelegate>)[cfg.model];
-const translations = (db: Db, cfg: CategoryConfig) => (db as unknown as Record<string, TranslationDelegate>)[cfg.translationModel];
-const translationsOf = (row: CategoryRow, cfg: CategoryConfig) => row[cfg.translationModel] as TranslationRow[];
+const categories = (db: Db, cfg: CategoryConfig) =>
+  (db as unknown as Record<string, CategoryDelegate>)[cfg.model];
+const translations = (db: Db, cfg: CategoryConfig) =>
+  (db as unknown as Record<string, TranslationDelegate>)[cfg.translationModel];
+const translationsOf = (row: CategoryRow, cfg: CategoryConfig) =>
+  row[cfg.translationModel] as TranslationRow[];
 
 /** Name the (lang, slug) that is taken, when a lookup can still find it. */
-async function describeSlugClash(db: PrismaClient, cfg: CategoryConfig, input: CategoryTranslationInput[], selfId?: string): Promise<string> {
+async function describeSlugClash(
+  db: PrismaClient,
+  cfg: CategoryConfig,
+  input: CategoryTranslationInput[],
+  selfId?: string,
+): Promise<string> {
   let clash: { lang: string; slug: string } | null = null;
   try {
     clash = await translations(db, cfg).findFirst({
-      where: { OR: input.map((t) => ({ lang: t.lang, slug: t.slug })), ...(selfId ? { NOT: { category_id: selfId } } : {}) },
+      where: {
+        OR: input.map((t) => ({ lang: t.lang, slug: t.slug })),
+        ...(selfId ? { NOT: { category_id: selfId } } : {}),
+      },
       select: { lang: true, slug: true },
     });
   } catch {
@@ -96,13 +112,24 @@ async function describeSlugClash(db: PrismaClient, cfg: CategoryConfig, input: C
 }
 
 /** A unique violation from a translation write as a 409 naming the field; anything else unchanged. */
-async function asTranslationConflict(db: PrismaClient, cfg: CategoryConfig, err: unknown, input: CategoryTranslationInput[], selfId?: string) {
+async function asTranslationConflict(
+  db: PrismaClient,
+  cfg: CategoryConfig,
+  err: unknown,
+  input: CategoryTranslationInput[],
+  selfId?: string,
+) {
   const target = uniqueViolationTarget(err);
   if (target === null) return err;
   if (target.includes('slug')) {
-    return conflict(await describeSlugClash(db, cfg, input, selfId), { code: UNIQUE_CONFLICT_CODES.SLUG_ALREADY_USED });
+    return conflict(await describeSlugClash(db, cfg, input, selfId), {
+      code: UNIQUE_CONFLICT_CODES.SLUG_ALREADY_USED,
+    });
   }
-  if (isDuplicateLangTarget(target)) return conflict(DUPLICATE_LANG_MESSAGE, { code: UNIQUE_CONFLICT_CODES.DUPLICATE_TRANSLATION_LANG });
+  if (isDuplicateLangTarget(target))
+    return conflict(DUPLICATE_LANG_MESSAGE, {
+      code: UNIQUE_CONFLICT_CODES.DUPLICATE_TRANSLATION_LANG,
+    });
   return err;
 }
 
@@ -120,21 +147,42 @@ export async function findAll(c: Ctx, cfg: CategoryConfig, page: number, limit: 
     categories(db, cfg).count({ where }),
     loadActiveLanguages(db),
   ]);
-  const items = rows.map((row) => ({ ...row, translation: resolveTranslation(translationsOf(row, cfg), c.get('lang'), { active }) }));
-  return { message: 'Categories fetched', data: { items, pagination: buildPaginationMeta(page, limit, total) } };
+  const items = rows.map((row) => ({
+    ...row,
+    translation: resolveTranslation(translationsOf(row, cfg), c.get('lang'), { active }),
+  }));
+  return {
+    message: 'Categories fetched',
+    data: { items, pagination: buildPaginationMeta(page, limit, total) },
+  };
 }
 
 /** `isAdmin`: hydrating a write response, so translations in retired languages still resolve. */
-export async function findOne(c: Ctx, cfg: CategoryConfig, id: string, lang: string | null, isAdmin = false) {
+export async function findOne(
+  c: Ctx,
+  cfg: CategoryConfig,
+  id: string,
+  lang: string | null,
+  isAdmin = false,
+) {
   const db = getDb(c);
   const [row, active] = await Promise.all([
-    categories(db, cfg).findFirst({ where: { id, deleted_at: null }, include: { [cfg.translationModel]: true } }),
+    categories(db, cfg).findFirst({
+      where: { id, deleted_at: null },
+      include: { [cfg.translationModel]: true },
+    }),
     isAdmin ? null : loadActiveLanguages(db),
   ]);
   if (!row) throw notFound('Category not found');
   return {
     message: 'Category fetched',
-    data: { ...row, translation: resolveTranslation(translationsOf(row, cfg), lang, { active, includeInactive: isAdmin }) },
+    data: {
+      ...row,
+      translation: resolveTranslation(translationsOf(row, cfg), lang, {
+        active,
+        includeInactive: isAdmin,
+      }),
+    },
   };
 }
 
@@ -145,7 +193,13 @@ export async function create(c: Ctx, cfg: CategoryConfig, input: CategoryTransla
     category = await db.$transaction(async (tx) => {
       const created = await categories(tx, cfg).create({ data: {} });
       await translations(tx, cfg).createMany({
-        data: input.map((t) => ({ category_id: created.id, lang: t.lang, title: t.title, slug: t.slug, description: t.description ?? null })),
+        data: input.map((t) => ({
+          category_id: created.id,
+          lang: t.lang,
+          title: t.title,
+          slug: t.slug,
+          description: t.description ?? null,
+        })),
       });
       return created;
     });
@@ -164,7 +218,12 @@ export async function create(c: Ctx, cfg: CategoryConfig, input: CategoryTransla
   return { message: 'Category created', data };
 }
 
-export async function update(c: Ctx, cfg: CategoryConfig, id: string, input: CategoryTranslationInput[] | null | undefined) {
+export async function update(
+  c: Ctx,
+  cfg: CategoryConfig,
+  id: string,
+  input: CategoryTranslationInput[] | null | undefined,
+) {
   const db = getDb(c);
   const category = await categories(db, cfg).findFirst({ where: { id, deleted_at: null } });
   if (!category) throw notFound('Category not found');
@@ -176,7 +235,13 @@ export async function update(c: Ctx, cfg: CategoryConfig, id: string, input: Cat
         input.map((t) =>
           translations(db, cfg).upsert({
             where: { category_id_lang: { category_id: id, lang: t.lang } },
-            create: { category_id: id, lang: t.lang, title: t.title, slug: t.slug, description: t.description ?? null },
+            create: {
+              category_id: id,
+              lang: t.lang,
+              title: t.title,
+              slug: t.slug,
+              description: t.description ?? null,
+            },
             update: { title: t.title, slug: t.slug, description: t.description ?? null },
           }),
         ),
@@ -213,10 +278,20 @@ export async function findTrash(c: Ctx, cfg: CategoryConfig, page: number, limit
     categories(db, cfg).count({ where }),
   ]);
   const items = rows.map((row) => {
-    const list = translationsOf(row, cfg).map((t) => ({ ...t, slug: stripSoftDeleteSuffix(t.slug) }));
-    return { ...row, [rel]: list, translation: resolveTranslation(list, null, { includeInactive: true }) };
+    const list = translationsOf(row, cfg).map((t) => ({
+      ...t,
+      slug: stripSoftDeleteSuffix(t.slug),
+    }));
+    return {
+      ...row,
+      [rel]: list,
+      translation: resolveTranslation(list, null, { includeInactive: true }),
+    };
   });
-  return { message: 'Trash fetched', data: { items, pagination: buildPaginationMeta(page, limit, total) } };
+  return {
+    message: 'Trash fetched',
+    data: { items, pagination: buildPaginationMeta(page, limit, total) },
+  };
 }
 
 /** Reverses softDelete's slug suffix; 409 if a live category has taken an original (lang, slug) since. */
@@ -228,15 +303,26 @@ export async function restore(c: Ctx, cfg: CategoryConfig, id: string) {
   });
   if (!category) throw notFound('Deleted category not found');
 
-  const restored = translationsOf(category, cfg).map((t) => ({ lang: t.lang, original: stripSoftDeleteSuffix(t.slug) }));
+  const restored = translationsOf(category, cfg).map((t) => ({
+    lang: t.lang,
+    original: stripSoftDeleteSuffix(t.slug),
+  }));
 
   await db.$transaction(async (tx) => {
     for (const { lang, original } of restored) {
-      const taken = await translations(tx, cfg).findFirst({ where: { lang, slug: original, NOT: { category_id: id } } });
-      if (taken) throw conflict(`Cannot restore: slug "${original}" (${lang}) is now used by another category`);
+      const taken = await translations(tx, cfg).findFirst({
+        where: { lang, slug: original, NOT: { category_id: id } },
+      });
+      if (taken)
+        throw conflict(
+          `Cannot restore: slug "${original}" (${lang}) is now used by another category`,
+        );
     }
     for (const { lang, original } of restored) {
-      await translations(tx, cfg).update({ where: { category_id_lang: { category_id: id, lang } }, data: { slug: original } });
+      await translations(tx, cfg).update({
+        where: { category_id_lang: { category_id: id, lang } },
+        data: { slug: original },
+      });
     }
     await categories(tx, cfg).update({ where: { id }, data: { deleted_at: null } });
   });

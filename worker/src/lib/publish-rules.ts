@@ -1,6 +1,7 @@
 import { conflict } from './errors';
 
-const sameInstant = (a: Date | null, b: Date | null): boolean => (a === null || b === null ? a === b : a.getTime() === b.getTime());
+const sameInstant = (a: Date | null, b: Date | null): boolean =>
+  a === null || b === null ? a === b : a.getTime() === b.getTime();
 
 /**
  * src/common/utils/publish-rules.util.ts: the `published_at` a create/update may store. A live row is

@@ -36,18 +36,27 @@ function decode(row: site_settings) {
 
 /** Explicit allowlist, so a column added to site_settings never leaks publicly by default. */
 function toPublic(s: ReturnType<typeof decode>) {
-  return { key: s.key, value: s.value, type: s.type, description: s.description, is_public: s.is_public, updated_at: s.updated_at };
+  return {
+    key: s.key,
+    value: s.value,
+    type: s.type,
+    description: s.description,
+    is_public: s.is_public,
+    updated_at: s.updated_at,
+  };
 }
 
 function assertValid(value: string, type: SettingType): void {
   switch (type) {
     case 'number': {
       const text = value.trim();
-      if (!DECIMAL_NUMBER.test(text) || !Number.isFinite(Number(text))) throw badRequest(`Value "${value}" is not a finite decimal number`);
+      if (!DECIMAL_NUMBER.test(text) || !Number.isFinite(Number(text)))
+        throw badRequest(`Value "${value}" is not a finite decimal number`);
       break;
     }
     case 'boolean':
-      if (value !== 'true' && value !== 'false') throw badRequest('Value must be "true" or "false" for boolean settings');
+      if (value !== 'true' && value !== 'false')
+        throw badRequest('Value must be "true" or "false" for boolean settings');
       break;
     case 'json':
       try {
@@ -65,7 +74,10 @@ export async function findAll(c: Ctx) {
 }
 
 export async function findPublic(c: Ctx) {
-  const rows = await getDb(c).site_settings.findMany({ where: { is_public: true }, orderBy: { key: 'asc' } });
+  const rows = await getDb(c).site_settings.findMany({
+    where: { is_public: true },
+    orderBy: { key: 'asc' },
+  });
   return { message: 'Public settings fetched', data: rows.map((r) => toPublic(decode(r))) };
 }
 
@@ -82,7 +94,9 @@ export async function upsert(c: Ctx, key: string, input: UpsertSettingInput) {
   const targetType: SettingType = existing ? existing.type : (input.type ?? 'string');
 
   if (existing && input.type && input.type !== existing.type) {
-    throw conflict(`Setting "${key}" already exists with type "${existing.type}"; delete it first to change the type`);
+    throw conflict(
+      `Setting "${key}" already exists with type "${existing.type}"; delete it first to change the type`,
+    );
   }
 
   assertValid(input.value, targetType);
@@ -91,7 +105,14 @@ export async function upsert(c: Ctx, key: string, input: UpsertSettingInput) {
 
   const row = await db.site_settings.upsert({
     where: { key },
-    create: { key, value: storedValue, type: targetType, description: input.description ?? null, is_public: input.is_public ?? false, updated_by: actorId },
+    create: {
+      key,
+      value: storedValue,
+      type: targetType,
+      description: input.description ?? null,
+      is_public: input.is_public ?? false,
+      updated_by: actorId,
+    },
     update: {
       value: storedValue,
       description: input.description ?? existing?.description ?? null,

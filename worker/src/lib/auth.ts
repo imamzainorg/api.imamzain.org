@@ -9,12 +9,15 @@ import type { AppEnv } from './types';
 export const JWT_ALGORITHM = 'HS256' as const;
 
 /** ENFORCE_PASSWORD_CHANGE_AFTER_RESET: off unless exactly `true`. */
-export function isPasswordChangeEnforced(env: { ENFORCE_PASSWORD_CHANGE_AFTER_RESET?: string }): boolean {
+export function isPasswordChangeEnforced(env: {
+  ENFORCE_PASSWORD_CHANGE_AFTER_RESET?: string;
+}): boolean {
   return env.ENFORCE_PASSWORD_CHANGE_AFTER_RESET?.trim().toLowerCase() === 'true';
 }
 
 /** Routes a flagged account may still call: read its profile, change the password, log out, refresh. */
-const PASSWORD_CHANGE_EXEMPT_PATH = /^(?:\/api\/v1)?\/auth\/(?:me|me\/password|logout|refresh)\/?$/i;
+const PASSWORD_CHANGE_EXEMPT_PATH =
+  /^(?:\/api\/v1)?\/auth\/(?:me|me\/password|logout|refresh)\/?$/i;
 
 export function isPasswordChangeExemptPath(path: string | undefined): boolean {
   return PASSWORD_CHANGE_EXEMPT_PATH.test((path ?? '').split('?')[0]);
@@ -42,7 +45,10 @@ export const authenticate = createMiddleware<AppEnv>(async (c, next) => {
   try {
     // iat: false because passport-jwt never rejects a future `iat`: a token Nest signs on Render must
     // work here at once, even if Render's clock is a second ahead.
-    payload = (await verify(token, c.env.JWT_SECRET, { alg: JWT_ALGORITHM, iat: false })) as AccessTokenPayload;
+    payload = (await verify(token, c.env.JWT_SECRET, {
+      alg: JWT_ALGORITHM,
+      iat: false,
+    })) as AccessTokenPayload;
   } catch {
     throw unauthorized();
   }
@@ -50,7 +56,13 @@ export const authenticate = createMiddleware<AppEnv>(async (c, next) => {
 
   const row = await getDb(c).users.findUnique({
     where: { id: payload.sub },
-    select: { id: true, username: true, token_version: true, deleted_at: true, must_change_password: true },
+    select: {
+      id: true,
+      username: true,
+      token_version: true,
+      deleted_at: true,
+      must_change_password: true,
+    },
   });
   if (!row || row.deleted_at !== null) throw unauthorized();
 
@@ -59,8 +71,14 @@ export const authenticate = createMiddleware<AppEnv>(async (c, next) => {
   }
 
   // An admin set this password, so it is not a secret the user chose.
-  if (row.must_change_password && isPasswordChangeEnforced(c.env) && !isPasswordChangeExemptPath(new URL(c.req.url).pathname)) {
-    throw forbidden('You must change your password before continuing', { code: 'PASSWORD_CHANGE_REQUIRED' });
+  if (
+    row.must_change_password &&
+    isPasswordChangeEnforced(c.env) &&
+    !isPasswordChangeExemptPath(new URL(c.req.url).pathname)
+  ) {
+    throw forbidden('You must change your password before continuing', {
+      code: 'PASSWORD_CHANGE_REQUIRED',
+    });
   }
 
   c.set('user', { id: row.id, username: row.username, permissions: payload.permissions ?? [] });

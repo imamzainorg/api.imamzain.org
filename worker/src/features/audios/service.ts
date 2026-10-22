@@ -59,19 +59,27 @@ interface ListFilters {
  * A trashed speaker is hidden from the public (`speaker: null`): an audio can outlive its speaker's
  * soft delete, and the name must not keep being served. The CMS still sees it.
  */
-function shapeSpeaker(speaker: SpeakerRow | null, lang: string | null, isPublic: boolean, active: ReadonlySet<string>) {
-  if (!speaker) return null;
-  const { deleted_at, ...rest } = speaker;
-  if (isPublic && deleted_at) return null;
-  return { ...rest, translation: resolveTranslation(speaker.speaker_translations, lang, { active }) };
-}
-
-function shapeAudio<T extends { audio_translations: { lang: string; is_default: boolean }[]; speakers?: SpeakerRow | null }>(
-  row: T,
+function shapeSpeaker(
+  speaker: SpeakerRow | null,
   lang: string | null,
   isPublic: boolean,
   active: ReadonlySet<string>,
 ) {
+  if (!speaker) return null;
+  const { deleted_at, ...rest } = speaker;
+  if (isPublic && deleted_at) return null;
+  return {
+    ...rest,
+    translation: resolveTranslation(speaker.speaker_translations, lang, { active }),
+  };
+}
+
+function shapeAudio<
+  T extends {
+    audio_translations: { lang: string; is_default: boolean }[];
+    speakers?: SpeakerRow | null;
+  },
+>(row: T, lang: string | null, isPublic: boolean, active: ReadonlySet<string>) {
   const { speakers, ...rest } = row;
   return {
     ...rest,
@@ -89,7 +97,10 @@ async function assertSlugAvailable(c: Ctx, slug: string, excludeId: string | nul
 }
 
 async function assertSpeakerExists(c: Ctx, speakerId: string) {
-  const speaker = await getDb(c).speakers.findFirst({ where: { id: speakerId, deleted_at: null }, select: { id: true } });
+  const speaker = await getDb(c).speakers.findFirst({
+    where: { id: speakerId, deleted_at: null },
+    select: { id: true },
+  });
   if (!speaker) throw notFound('Speaker not found');
 }
 
@@ -106,7 +117,13 @@ function applySearch(where: Prisma.audiosWhereInput, search: string, isPublic: b
   ];
 }
 
-async function listWith(c: Ctx, where: Prisma.audiosWhereInput, f: ListFilters, lang: string | null, isPublic: boolean) {
+async function listWith(
+  c: Ctx,
+  where: Prisma.audiosWhereInput,
+  f: ListFilters,
+  lang: string | null,
+  isPublic: boolean,
+) {
   const db = getDb(c);
   const [rows, total, active] = await Promise.all([
     db.audios.findMany({
@@ -120,7 +137,10 @@ async function listWith(c: Ctx, where: Prisma.audiosWhereInput, f: ListFilters, 
     loadActiveLanguages(db),
   ]);
   const items = rows.map((r) => shapeAudio(r, lang, isPublic, active));
-  return { message: 'Audios fetched', data: { items, pagination: buildPaginationMeta(f.page, f.limit, total) } };
+  return {
+    message: 'Audios fetched',
+    data: { items, pagination: buildPaginationMeta(f.page, f.limit, total) },
+  };
 }
 
 export function findAllPublic(c: Ctx, f: ListFilters, lang: string | null) {
@@ -139,19 +159,33 @@ export function findAllAdmin(c: Ctx, f: ListFilters, lang: string | null) {
 }
 
 /** Public callers only see published rows: a draft must not be readable just because its UUID is known. */
-export async function findOne(c: Ctx, id: string, lang: string | null, opts: { allowUnpublished?: boolean } = {}) {
+export async function findOne(
+  c: Ctx,
+  id: string,
+  lang: string | null,
+  opts: { allowUnpublished?: boolean } = {},
+) {
   const db = getDb(c);
   const where: Prisma.audiosWhereInput = { id, deleted_at: null };
   if (!opts.allowUnpublished) where.is_published = true;
-  const [audio, active] = await Promise.all([db.audios.findFirst({ where, select: AUDIO_DETAIL_SELECT }), loadActiveLanguages(db)]);
+  const [audio, active] = await Promise.all([
+    db.audios.findFirst({ where, select: AUDIO_DETAIL_SELECT }),
+    loadActiveLanguages(db),
+  ]);
   if (!audio) throw notFound('Audio not found');
-  return { message: 'Audio fetched', data: shapeAudio(audio, lang, !opts.allowUnpublished, active) };
+  return {
+    message: 'Audio fetched',
+    data: shapeAudio(audio, lang, !opts.allowUnpublished, active),
+  };
 }
 
 export async function findBySlug(c: Ctx, slug: string, lang: string | null) {
   const db = getDb(c);
   const [audio, active] = await Promise.all([
-    db.audios.findFirst({ where: { slug, deleted_at: null, is_published: true }, select: AUDIO_DETAIL_SELECT }),
+    db.audios.findFirst({
+      where: { slug, deleted_at: null, is_published: true },
+      select: AUDIO_DETAIL_SELECT,
+    }),
     loadActiveLanguages(db),
   ]);
   if (!audio) throw notFound('Audio not found');
@@ -190,7 +224,12 @@ export async function create(c: Ctx, input: CreateAudioInput, lang: string | nul
         },
       });
       await tx.audio_translations.createMany({
-        data: input.translations.map((t) => ({ audio_id: audio.id, lang: t.lang, title: t.title, is_default: t.is_default ?? false })),
+        data: input.translations.map((t) => ({
+          audio_id: audio.id,
+          lang: t.lang,
+          title: t.title,
+          is_default: t.is_default ?? false,
+        })),
       });
       return audio;
     });
@@ -198,7 +237,12 @@ export async function create(c: Ctx, input: CreateAudioInput, lang: string | nul
     rethrowP2002AsConflict(err, 'An audio with that slug or audio URL already exists');
   }
 
-  audit(c, { action: AUDIT_ACTIONS.AUDIO_CREATED, resourceType: 'audio', resourceId: created.id, changes: { method: 'POST', path: '/api/v1/audios' } });
+  audit(c, {
+    action: AUDIT_ACTIONS.AUDIO_CREATED,
+    resourceType: 'audio',
+    resourceId: created.id,
+    changes: { method: 'POST', path: '/api/v1/audios' },
+  });
 
   const { data } = await findOne(c, created.id, lang, { allowUnpublished: true });
   return { message: 'Audio created', data };
@@ -206,7 +250,10 @@ export async function create(c: Ctx, input: CreateAudioInput, lang: string | nul
 
 export async function update(c: Ctx, id: string, input: UpdateAudioInput, lang: string | null) {
   const db = getDb(c);
-  const audio = await db.audios.findFirst({ where: { id, deleted_at: null }, select: { id: true } });
+  const audio = await db.audios.findFirst({
+    where: { id, deleted_at: null },
+    select: { id: true },
+  });
   if (!audio) throw notFound('Audio not found');
 
   if (input.speaker_id) await assertSpeakerExists(c, input.speaker_id);
@@ -217,7 +264,9 @@ export async function update(c: Ctx, id: string, input: UpdateAudioInput, lang: 
       // An explicit input: request fields never reach columns that weren't meant to change.
       const data = { updated_at: new Date() } as Prisma.audiosUpdateInput;
       if (input.speaker_id !== undefined) {
-        data.speakers = input.speaker_id ? { connect: { id: input.speaker_id } } : { disconnect: true };
+        data.speakers = input.speaker_id
+          ? { connect: { id: input.speaker_id } }
+          : { disconnect: true };
       }
       if (input.audio_url !== undefined) data.audio_url = input.audio_url as string;
       if (input.pdf_url !== undefined) data.pdf_url = input.pdf_url;
@@ -238,7 +287,9 @@ export async function update(c: Ctx, id: string, input: UpdateAudioInput, lang: 
             update: row,
           });
         }
-        const defaults = await tx.audio_translations.count({ where: { audio_id: id, is_default: true } });
+        const defaults = await tx.audio_translations.count({
+          where: { audio_id: id, is_default: true },
+        });
         if (defaults !== 1) throw badRequest('Exactly one translation must have is_default: true');
       }
     });
@@ -246,7 +297,12 @@ export async function update(c: Ctx, id: string, input: UpdateAudioInput, lang: 
     rethrowP2002AsConflict(err, 'An audio with that slug or audio URL already exists');
   }
 
-  audit(c, { action: AUDIT_ACTIONS.AUDIO_UPDATED, resourceType: 'audio', resourceId: id, changes: { method: 'PATCH', path: `/api/v1/audios/${id}` } });
+  audit(c, {
+    action: AUDIT_ACTIONS.AUDIO_UPDATED,
+    resourceType: 'audio',
+    resourceId: id,
+    changes: { method: 'PATCH', path: `/api/v1/audios/${id}` },
+  });
 
   const { data } = await findOne(c, id, lang, { allowUnpublished: true });
   return { message: 'Audio updated', data };
@@ -254,7 +310,10 @@ export async function update(c: Ctx, id: string, input: UpdateAudioInput, lang: 
 
 export async function togglePublish(c: Ctx, id: string, isPublished: boolean, lang: string | null) {
   const db = getDb(c);
-  const existing = await db.audios.findFirst({ where: { id, deleted_at: null }, select: { id: true, is_published: true } });
+  const existing = await db.audios.findFirst({
+    where: { id, deleted_at: null },
+    select: { id: true, is_published: true },
+  });
   if (!existing) throw notFound('Audio not found');
 
   if (existing.is_published === isPublished) {
@@ -262,7 +321,10 @@ export async function togglePublish(c: Ctx, id: string, isPublished: boolean, la
     return { message: 'Audio already in requested state', data };
   }
 
-  await db.audios.update({ where: { id }, data: { is_published: isPublished, updated_at: new Date() } });
+  await db.audios.update({
+    where: { id },
+    data: { is_published: isPublished, updated_at: new Date() },
+  });
 
   audit(c, {
     action: isPublished ? AUDIT_ACTIONS.AUDIO_PUBLISHED : AUDIT_ACTIONS.AUDIO_UNPUBLISHED,
@@ -298,7 +360,10 @@ export async function findTrash(c: Ctx, page: number, limit: number, lang: strin
       audio_url: stripSoftDeleteSuffix(shaped.audio_url),
     };
   });
-  return { message: 'Trash fetched', data: { items, pagination: buildPaginationMeta(page, limit, total) } };
+  return {
+    message: 'Trash fetched',
+    data: { items, pagination: buildPaginationMeta(page, limit, total) },
+  };
 }
 
 export async function restore(c: Ctx, id: string) {
@@ -312,7 +377,10 @@ export async function restore(c: Ctx, id: string) {
   // Speaker soft delete only blocks on LIVE audios, so a trashed audio can keep pointing at a trashed
   // speaker; restoring it would publish that speaker's name again.
   if (audio.speakers?.deleted_at) {
-    throw conflict('Cannot restore: the speaker of this audio was deleted — restore the speaker first', { code: AUDIO_SPEAKER_DELETED });
+    throw conflict(
+      'Cannot restore: the speaker of this audio was deleted — restore the speaker first',
+      { code: AUDIO_SPEAKER_DELETED },
+    );
   }
 
   const original = audio.slug ? stripSoftDeleteSuffix(audio.slug) : null;
@@ -321,28 +389,54 @@ export async function restore(c: Ctx, id: string) {
   try {
     await db.$transaction(async (tx) => {
       if (original) {
-        const clash = await tx.audios.findFirst({ where: { slug: original, deleted_at: null, NOT: { id } }, select: { id: true } });
-        if (clash) throw conflict(`Cannot restore: slug "${original}" is now used by another audio`);
+        const clash = await tx.audios.findFirst({
+          where: { slug: original, deleted_at: null, NOT: { id } },
+          select: { id: true },
+        });
+        if (clash)
+          throw conflict(`Cannot restore: slug "${original}" is now used by another audio`);
       }
-      const urlClash = await tx.audios.findFirst({ where: { audio_url: originalAudioUrl, deleted_at: null, NOT: { id } }, select: { id: true } });
-      if (urlClash) throw conflict(`Cannot restore: audio_url "${originalAudioUrl}" is now used by another audio`);
+      const urlClash = await tx.audios.findFirst({
+        where: { audio_url: originalAudioUrl, deleted_at: null, NOT: { id } },
+        select: { id: true },
+      });
+      if (urlClash)
+        throw conflict(
+          `Cannot restore: audio_url "${originalAudioUrl}" is now used by another audio`,
+        );
       await tx.audios.update({
         where: { id },
-        data: { deleted_at: null, audio_url: originalAudioUrl, ...(original ? { slug: original } : {}), updated_at: new Date() },
+        data: {
+          deleted_at: null,
+          audio_url: originalAudioUrl,
+          ...(original ? { slug: original } : {}),
+          updated_at: new Date(),
+        },
       });
     });
   } catch (err) {
-    rethrowP2002AsConflict(err, 'Cannot restore: the original slug or audio_url was claimed by another audio');
+    rethrowP2002AsConflict(
+      err,
+      'Cannot restore: the original slug or audio_url was claimed by another audio',
+    );
   }
 
-  audit(c, { action: AUDIT_ACTIONS.AUDIO_RESTORED, resourceType: 'audio', resourceId: id, changes: { method: 'POST', path: `/api/v1/audios/${id}/restore` } });
+  audit(c, {
+    action: AUDIT_ACTIONS.AUDIO_RESTORED,
+    resourceType: 'audio',
+    resourceId: id,
+    changes: { method: 'POST', path: `/api/v1/audios/${id}/restore` },
+  });
 
   return { message: 'Audio restored', data: null };
 }
 
 export async function softDelete(c: Ctx, id: string) {
   const db = getDb(c);
-  const audio = await db.audios.findFirst({ where: { id, deleted_at: null }, select: { id: true, slug: true, audio_url: true } });
+  const audio = await db.audios.findFirst({
+    where: { id, deleted_at: null },
+    select: { id: true, slug: true, audio_url: true },
+  });
   if (!audio) throw notFound('Audio not found');
 
   // Suffixing frees the unique slug and audio_url while the row sits in trash; restore reverses both.
@@ -351,10 +445,19 @@ export async function softDelete(c: Ctx, id: string) {
   const suffix = softDeleteSuffix(deletedAt);
   await db.audios.update({
     where: { id },
-    data: { deleted_at: deletedAt, audio_url: `${audio.audio_url}${suffix}`, ...(audio.slug ? { slug: `${audio.slug}${suffix}` } : {}) },
+    data: {
+      deleted_at: deletedAt,
+      audio_url: `${audio.audio_url}${suffix}`,
+      ...(audio.slug ? { slug: `${audio.slug}${suffix}` } : {}),
+    },
   });
 
-  audit(c, { action: AUDIT_ACTIONS.AUDIO_DELETED, resourceType: 'audio', resourceId: id, changes: { method: 'DELETE', path: `/api/v1/audios/${id}` } });
+  audit(c, {
+    action: AUDIT_ACTIONS.AUDIO_DELETED,
+    resourceType: 'audio',
+    resourceId: id,
+    changes: { method: 'DELETE', path: `/api/v1/audios/${id}` },
+  });
 
   return { message: 'Audio deleted', data: null };
 }

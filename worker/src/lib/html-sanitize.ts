@@ -87,7 +87,9 @@ const SAFE_ID_RE = /^[A-Za-z][A-Za-z0-9_-]{0,63}$/;
 
 /** The namespaced form of an authored id, or null when the id is not acceptable. */
 function namespacedId(raw: string): string | null {
-  const bare = raw.startsWith(USER_CONTENT_ID_PREFIX) ? raw.slice(USER_CONTENT_ID_PREFIX.length) : raw;
+  const bare = raw.startsWith(USER_CONTENT_ID_PREFIX)
+    ? raw.slice(USER_CONTENT_ID_PREFIX.length)
+    : raw;
   return SAFE_ID_RE.test(bare) ? USER_CONTENT_ID_PREFIX + bare : null;
 }
 

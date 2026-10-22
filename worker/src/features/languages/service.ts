@@ -19,15 +19,26 @@ export async function create(c: Ctx, input: CreateLanguageInput) {
   // `code` is the PK and soft delete leaves the row in place, so a previously deleted code is revived
   // rather than inserted again.
   const existing = await db.languages.findUnique({ where: { code: input.code } });
-  if (existing && existing.deleted_at === null) throw conflict(`A language with code "${input.code}" already exists`);
+  if (existing && existing.deleted_at === null)
+    throw conflict(`A language with code "${input.code}" already exists`);
 
   const language = existing
     ? await db.languages.update({
         where: { code: input.code },
-        data: { name: input.name, native_name: input.native_name, is_active: input.is_active ?? true, deleted_at: null },
+        data: {
+          name: input.name,
+          native_name: input.native_name,
+          is_active: input.is_active ?? true,
+          deleted_at: null,
+        },
       })
     : await db.languages.create({
-        data: { code: input.code, name: input.name, native_name: input.native_name, is_active: input.is_active ?? true },
+        data: {
+          code: input.code,
+          name: input.name,
+          native_name: input.native_name,
+          is_active: input.is_active ?? true,
+        },
       });
 
   audit(c, {
@@ -41,7 +52,8 @@ export async function create(c: Ctx, input: CreateLanguageInput) {
 
 export async function update(c: Ctx, code: string, input: UpdateLanguageInput) {
   const db = getDb(c);
-  if (!(await db.languages.findFirst({ where: { code, deleted_at: null } }))) throw notFound('Language not found');
+  if (!(await db.languages.findFirst({ where: { code, deleted_at: null } })))
+    throw notFound('Language not found');
 
   // Explicit allowlist: schema additions can't silently reach the row.
   const data: Prisma.languagesUpdateInput = {};
@@ -61,7 +73,8 @@ export async function update(c: Ctx, code: string, input: UpdateLanguageInput) {
 
 export async function softDelete(c: Ctx, code: string) {
   const db = getDb(c);
-  if (!(await db.languages.findFirst({ where: { code, deleted_at: null } }))) throw notFound('Language not found');
+  if (!(await db.languages.findFirst({ where: { code, deleted_at: null } })))
+    throw notFound('Language not found');
   await db.languages.update({ where: { code }, data: { deleted_at: new Date() } });
 
   audit(c, {

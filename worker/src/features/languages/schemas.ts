@@ -7,7 +7,9 @@ export const LIMITS = { name: 100 } as const;
 const code = z
   .string()
   .transform((v) => v.toLowerCase().trim())
-  .refine((v) => /^[a-z]{2}$/.test(v), { message: 'code must be a 2-letter lowercase ISO 639-1 code' });
+  .refine((v) => /^[a-z]{2}$/.test(v), {
+    message: 'code must be a 2-letter lowercase ISO 639-1 code',
+  });
 
 export const createLanguageBody = z.object({
   code,

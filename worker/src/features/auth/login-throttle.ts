@@ -17,7 +17,8 @@ const LOGIN_LOCK_MAX_MS = 15 * 60_000;
  * SHA-256 of the trimmed, lower-cased username: people type passwords into the username box, so the
  * attempted string is never stored. Case-folded so `Admin` / `admin` share one counter.
  */
-export const loginThrottleKey = (username: string): string => createHash('sha256').update(username.trim().toLowerCase()).digest('hex');
+export const loginThrottleKey = (username: string): string =>
+  createHash('sha256').update(username.trim().toLowerCase()).digest('hex');
 
 /** Nothing below the threshold, then 1, 2, 4, 8 minutes, capped at 15. */
 export function lockDurationMs(failedCount: number): number {
@@ -33,7 +34,10 @@ export interface LoginFailureState {
 
 /** Seconds left on an active lock, or 0. */
 export async function secondsUntilUnlocked(tx: Tx, key: string, now = new Date()): Promise<number> {
-  const row = await tx.login_attempts.findUnique({ where: { username_key: key }, select: { locked_until: true } });
+  const row = await tx.login_attempts.findUnique({
+    where: { username_key: key },
+    select: { locked_until: true },
+  });
   if (!row?.locked_until || row.locked_until <= now) return 0;
   return Math.ceil((row.locked_until.getTime() - now.getTime()) / 1000);
 }
@@ -43,7 +47,11 @@ export async function secondsUntilUnlocked(tx: Tx, key: string, now = new Date()
  * full quiet window measured from the later of the last failure and the end of the last lock;
  * otherwise a 15-minute lock would expire straight into 5 fresh guesses.
  */
-export async function recordFailure(tx: Tx, key: string, now = new Date()): Promise<LoginFailureState> {
+export async function recordFailure(
+  tx: Tx,
+  key: string,
+  now = new Date(),
+): Promise<LoginFailureState> {
   const windowStart = new Date(now.getTime() - LOGIN_FAILURE_WINDOW_MS);
   const rows = await tx.$queryRaw<Array<{ failed_count: number }>>`
     INSERT INTO login_attempts (username_key, failed_count, first_failed_at, last_failed_at)
@@ -70,7 +78,10 @@ export async function recordFailure(tx: Tx, key: string, now = new Date()): Prom
   if (lockMs === 0) return { failedCount, lockedUntil: null };
 
   const lockedUntil = new Date(now.getTime() + lockMs);
-  await tx.login_attempts.update({ where: { username_key: key }, data: { locked_until: lockedUntil } });
+  await tx.login_attempts.update({
+    where: { username_key: key },
+    data: { locked_until: lockedUntil },
+  });
   return { failedCount, lockedUntil };
 }
 

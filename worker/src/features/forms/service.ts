@@ -6,7 +6,12 @@ import { badRequest, conflict, notFound, tooManyRequests } from '../../lib/error
 import { buildPaginationMeta } from '../../lib/pagination';
 import type { AppEnv } from '../../lib/types';
 import { sendProxyVisitCompletion } from '../../lib/whatsapp';
-import type { CreateContactInput, CreateProxyVisitInput, UpdateContactInput, UpdateProxyVisitInput } from './schemas';
+import type {
+  CreateContactInput,
+  CreateProxyVisitInput,
+  UpdateContactInput,
+  UpdateProxyVisitInput,
+} from './schemas';
 
 type Ctx = Context<AppEnv>;
 
@@ -22,13 +27,18 @@ export const PROXY_VISIT_TRANSITIONS: Record<proxy_visit_status, readonly proxy_
   COMPLETED: [],
 };
 
-const STALE_UPDATE_MESSAGE = 'This record was changed by someone else a moment ago — reload it and try again';
+const STALE_UPDATE_MESSAGE =
+  'This record was changed by someone else a moment ago — reload it and try again';
 
 /**
  * The compare-and-set filter: the status that was read, but only when this edit changes the status. A
  * notes-only edit doesn't depend on the status, so a concurrent status change mustn't 409 it.
  */
-const casWhere = (id: string, prevStatus: string, isTransition: boolean) => ({ id, deleted_at: null, ...(isTransition ? { status: prevStatus } : {}) });
+const casWhere = (id: string, prevStatus: string, isTransition: boolean) => ({
+  id,
+  deleted_at: null,
+  ...(isTransition ? { status: prevStatus } : {}),
+});
 
 // No e-mail from the public submissions: rows are born with notified_at = NULL and the notification
 // digest (a Nest cron until Phase 5) announces them.
@@ -37,7 +47,8 @@ export const PROXY_VISIT_DUPLICATE_WINDOW_MS = 10 * 60_000;
 /** One phone may submit for several people (a group), but not faster than this. */
 export const PROXY_VISIT_MIN_GAP_MS = 3_000;
 
-const sameName = (a: string, b: string) => a.trim().replace(/\s+/g, ' ').toLowerCase() === b.trim().replace(/\s+/g, ' ').toLowerCase();
+const sameName = (a: string, b: string) =>
+  a.trim().replace(/\s+/g, ' ').toLowerCase() === b.trim().replace(/\s+/g, ' ').toLowerCase();
 
 export async function submitProxyVisit(c: Ctx, dto: CreateProxyVisitInput) {
   const { record, created } = await getDb(c).$transaction(async (tx) => {
@@ -46,7 +57,11 @@ export async function submitProxyVisit(c: Ctx, dto: CreateProxyVisitInput) {
 
     const now = Date.now();
     const recent = await tx.proxy_visit_requests.findMany({
-      where: { phone: dto.visitor_phone, deleted_at: null, submitted_at: { gte: new Date(now - PROXY_VISIT_DUPLICATE_WINDOW_MS) } },
+      where: {
+        phone: dto.visitor_phone,
+        deleted_at: null,
+        submitted_at: { gte: new Date(now - PROXY_VISIT_DUPLICATE_WINDOW_MS) },
+      },
       orderBy: { submitted_at: 'desc' },
     });
 
@@ -55,11 +70,19 @@ export async function submitProxyVisit(c: Ctx, dto: CreateProxyVisitInput) {
 
     const last = recent[0];
     if (last && now - last.submitted_at.getTime() < PROXY_VISIT_MIN_GAP_MS) {
-      throw tooManyRequests('Please wait a few seconds before sending another request from this phone number', { retryAfterSeconds: PROXY_VISIT_MIN_GAP_MS / 1000 });
+      throw tooManyRequests(
+        'Please wait a few seconds before sending another request from this phone number',
+        { retryAfterSeconds: PROXY_VISIT_MIN_GAP_MS / 1000 },
+      );
     }
 
     const row = await tx.proxy_visit_requests.create({
-      data: { name: dto.visitor_name, phone: dto.visitor_phone, country: dto.visitor_country, status: 'PENDING' },
+      data: {
+        name: dto.visitor_name,
+        phone: dto.visitor_phone,
+        country: dto.visitor_country,
+        status: 'PENDING',
+      },
     });
     return { record: row, created: true };
   });
@@ -78,7 +101,12 @@ export async function submitProxyVisit(c: Ctx, dto: CreateProxyVisitInput) {
   return { message: 'Proxy visit request submitted', data: record };
 }
 
-export async function updateProxyVisit(c: Ctx, id: string, dto: UpdateProxyVisitInput, adminId: string) {
+export async function updateProxyVisit(
+  c: Ctx,
+  id: string,
+  dto: UpdateProxyVisitInput,
+  adminId: string,
+) {
   const db = getDb(c);
   const record = await db.proxy_visit_requests.findFirst({ where: { id, deleted_at: null } });
   if (!record) throw notFound('Request not found');
@@ -113,7 +141,10 @@ export async function updateProxyVisit(c: Ctx, id: string, dto: UpdateProxyVisit
   // Compare-and-set: two admins completing one request at once both passed the check above; exactly
   // one UPDATE matches, so exactly one WhatsApp goes out. An empty PATCH has nothing to write.
   if (Object.keys(data).length > 0) {
-    const result = await db.proxy_visit_requests.updateMany({ where: casWhere(id, prevStatus, isTransition) as Prisma.proxy_visit_requestsWhereInput, data });
+    const result = await db.proxy_visit_requests.updateMany({
+      where: casWhere(id, prevStatus, isTransition) as Prisma.proxy_visit_requestsWhereInput,
+      data,
+    });
     if (result.count === 0) throw conflict(STALE_UPDATE_MESSAGE);
   }
 
@@ -121,7 +152,10 @@ export async function updateProxyVisit(c: Ctx, id: string, dto: UpdateProxyVisit
     defer(
       c,
       sendProxyVisitCompletion(c.env, record.phone ?? '', record.name).then((ok) => {
-        if (!ok) console.warn(`Proxy-visit completion WhatsApp not delivered for ${id} (send returned false)`);
+        if (!ok)
+          console.warn(
+            `Proxy-visit completion WhatsApp not delivered for ${id} (send returned false)`,
+          );
       }),
     );
   }
@@ -131,10 +165,18 @@ export async function updateProxyVisit(c: Ctx, id: string, dto: UpdateProxyVisit
     action: AUDIT_ACTIONS.PROXY_VISIT_UPDATED,
     resourceType: 'proxy_visit_request',
     resourceId: id,
-    changes: { method: 'PATCH', path: `/api/v1/forms/proxy-visits/${id}`, from: prevStatus, to: nextStatus },
+    changes: {
+      method: 'PATCH',
+      path: `/api/v1/forms/proxy-visits/${id}`,
+      from: prevStatus,
+      to: nextStatus,
+    },
   });
 
-  return { message: 'Request updated', data: await db.proxy_visit_requests.findUniqueOrThrow({ where: { id } }) };
+  return {
+    message: 'Request updated',
+    data: await db.proxy_visit_requests.findUniqueOrThrow({ where: { id } }),
+  };
 }
 
 export async function softDeleteProxyVisit(c: Ctx, id: string, adminId: string) {
@@ -155,32 +197,61 @@ export async function softDeleteProxyVisit(c: Ctx, id: string, adminId: string) 
   return { message: 'Request deleted', data: null };
 }
 
-export async function findAllProxyVisits(c: Ctx, page: number, limit: number, status?: proxy_visit_status) {
+export async function findAllProxyVisits(
+  c: Ctx,
+  page: number,
+  limit: number,
+  status?: proxy_visit_status,
+) {
   const db = getDb(c);
-  const where: Prisma.proxy_visit_requestsWhereInput = { deleted_at: null, ...(status ? { status } : {}) };
+  const where: Prisma.proxy_visit_requestsWhereInput = {
+    deleted_at: null,
+    ...(status ? { status } : {}),
+  };
   const [items, total] = await Promise.all([
-    db.proxy_visit_requests.findMany({ where, orderBy: [{ submitted_at: 'desc' }, { id: 'asc' }], skip: (page - 1) * limit, take: limit }),
+    db.proxy_visit_requests.findMany({
+      where,
+      orderBy: [{ submitted_at: 'desc' }, { id: 'asc' }],
+      skip: (page - 1) * limit,
+      take: limit,
+    }),
     db.proxy_visit_requests.count({ where }),
   ]);
-  return { message: 'Requests fetched', data: { items, pagination: buildPaginationMeta(page, limit, total) } };
+  return {
+    message: 'Requests fetched',
+    data: { items, pagination: buildPaginationMeta(page, limit, total) },
+  };
 }
 
 export async function findTrashProxyVisits(c: Ctx, page: number, limit: number) {
   const db = getDb(c);
   const where: Prisma.proxy_visit_requestsWhereInput = { deleted_at: { not: null } };
   const [items, total] = await Promise.all([
-    db.proxy_visit_requests.findMany({ where, orderBy: [{ deleted_at: 'desc' }, { id: 'asc' }], skip: (page - 1) * limit, take: limit }),
+    db.proxy_visit_requests.findMany({
+      where,
+      orderBy: [{ deleted_at: 'desc' }, { id: 'asc' }],
+      skip: (page - 1) * limit,
+      take: limit,
+    }),
     db.proxy_visit_requests.count({ where }),
   ]);
-  return { message: 'Trash fetched', data: { items, pagination: buildPaginationMeta(page, limit, total) } };
+  return {
+    message: 'Trash fetched',
+    data: { items, pagination: buildPaginationMeta(page, limit, total) },
+  };
 }
 
 export async function restoreProxyVisit(c: Ctx, id: string, adminId: string) {
   const db = getDb(c);
-  const record = await db.proxy_visit_requests.findFirst({ where: { id, deleted_at: { not: null } } });
+  const record = await db.proxy_visit_requests.findFirst({
+    where: { id, deleted_at: { not: null } },
+  });
   if (!record) throw notFound('Deleted request not found');
 
-  const updated = await db.proxy_visit_requests.update({ where: { id }, data: { deleted_at: null } });
+  const updated = await db.proxy_visit_requests.update({
+    where: { id },
+    data: { deleted_at: null },
+  });
 
   audit(c, {
     actorId: adminId,
@@ -195,7 +266,13 @@ export async function restoreProxyVisit(c: Ctx, id: string, adminId: string) {
 
 export async function submitContact(c: Ctx, dto: CreateContactInput) {
   const record = await getDb(c).contact_submissions.create({
-    data: { name: dto.name, email: dto.email, country: dto.country ?? null, message: dto.message, status: 'NEW' },
+    data: {
+      name: dto.name,
+      email: dto.email,
+      country: dto.country ?? null,
+      message: dto.message,
+      status: 'NEW',
+    },
   });
 
   audit(c, {
@@ -233,7 +310,10 @@ export async function updateContact(c: Ctx, id: string, dto: UpdateContactInput,
   }
 
   if (Object.keys(data).length > 0) {
-    const result = await db.contact_submissions.updateMany({ where: casWhere(id, prevStatus, isTransition) as Prisma.contact_submissionsWhereInput, data });
+    const result = await db.contact_submissions.updateMany({
+      where: casWhere(id, prevStatus, isTransition) as Prisma.contact_submissionsWhereInput,
+      data,
+    });
     if (result.count === 0) throw conflict(STALE_UPDATE_MESSAGE);
   }
 
@@ -242,10 +322,18 @@ export async function updateContact(c: Ctx, id: string, dto: UpdateContactInput,
     action: AUDIT_ACTIONS.CONTACT_UPDATED,
     resourceType: 'contact_submission',
     resourceId: id,
-    changes: { method: 'PATCH', path: `/api/v1/forms/contacts/${id}`, from: prevStatus, to: nextStatus },
+    changes: {
+      method: 'PATCH',
+      path: `/api/v1/forms/contacts/${id}`,
+      from: prevStatus,
+      to: nextStatus,
+    },
   });
 
-  return { message: 'Submission updated', data: await db.contact_submissions.findUniqueOrThrow({ where: { id } }) };
+  return {
+    message: 'Submission updated',
+    data: await db.contact_submissions.findUniqueOrThrow({ where: { id } }),
+  };
 }
 
 export async function softDeleteContact(c: Ctx, id: string, adminId: string) {
@@ -266,32 +354,61 @@ export async function softDeleteContact(c: Ctx, id: string, adminId: string) {
   return { message: 'Submission deleted', data: null };
 }
 
-export async function findAllContacts(c: Ctx, page: number, limit: number, status?: contact_status) {
+export async function findAllContacts(
+  c: Ctx,
+  page: number,
+  limit: number,
+  status?: contact_status,
+) {
   const db = getDb(c);
-  const where: Prisma.contact_submissionsWhereInput = { deleted_at: null, ...(status ? { status } : {}) };
+  const where: Prisma.contact_submissionsWhereInput = {
+    deleted_at: null,
+    ...(status ? { status } : {}),
+  };
   const [items, total] = await Promise.all([
-    db.contact_submissions.findMany({ where, orderBy: [{ submitted_at: 'desc' }, { id: 'asc' }], skip: (page - 1) * limit, take: limit }),
+    db.contact_submissions.findMany({
+      where,
+      orderBy: [{ submitted_at: 'desc' }, { id: 'asc' }],
+      skip: (page - 1) * limit,
+      take: limit,
+    }),
     db.contact_submissions.count({ where }),
   ]);
-  return { message: 'Submissions fetched', data: { items, pagination: buildPaginationMeta(page, limit, total) } };
+  return {
+    message: 'Submissions fetched',
+    data: { items, pagination: buildPaginationMeta(page, limit, total) },
+  };
 }
 
 export async function findTrashContacts(c: Ctx, page: number, limit: number) {
   const db = getDb(c);
   const where: Prisma.contact_submissionsWhereInput = { deleted_at: { not: null } };
   const [items, total] = await Promise.all([
-    db.contact_submissions.findMany({ where, orderBy: [{ deleted_at: 'desc' }, { id: 'asc' }], skip: (page - 1) * limit, take: limit }),
+    db.contact_submissions.findMany({
+      where,
+      orderBy: [{ deleted_at: 'desc' }, { id: 'asc' }],
+      skip: (page - 1) * limit,
+      take: limit,
+    }),
     db.contact_submissions.count({ where }),
   ]);
-  return { message: 'Trash fetched', data: { items, pagination: buildPaginationMeta(page, limit, total) } };
+  return {
+    message: 'Trash fetched',
+    data: { items, pagination: buildPaginationMeta(page, limit, total) },
+  };
 }
 
 export async function restoreContact(c: Ctx, id: string, adminId: string) {
   const db = getDb(c);
-  const record = await db.contact_submissions.findFirst({ where: { id, deleted_at: { not: null } } });
+  const record = await db.contact_submissions.findFirst({
+    where: { id, deleted_at: { not: null } },
+  });
   if (!record) throw notFound('Deleted submission not found');
 
-  const updated = await db.contact_submissions.update({ where: { id }, data: { deleted_at: null } });
+  const updated = await db.contact_submissions.update({
+    where: { id },
+    data: { deleted_at: null },
+  });
 
   audit(c, {
     actorId: adminId,

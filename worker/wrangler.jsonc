@@ -65,7 +65,7 @@
   ],
 
   "vars": {
-    "ALLOWED_ORIGINS": "https://imamzain.org,https://cms.imamzain.com,https://app.imamzain.org",
+    "ALLOWED_ORIGINS": "https://imamzain.org,https://cms.imamzain.org,https://app.imamzain.org",
     "R2_PUBLIC_BASE_URL": "https://cdn.imamzain.org",
     "EMAIL_FROM": "imamzain.org <info@imamzain.org>"
   }

@@ -10,13 +10,18 @@ import { conflict, forbidden } from './errors';
 
 type RbacClient = Prisma.TransactionClient | PrismaClient;
 
-export const MANAGE_USER_ENVELOPE_MESSAGE = 'You cannot manage a user who holds permissions beyond your own';
+export const MANAGE_USER_ENVELOPE_MESSAGE =
+  'You cannot manage a user who holds permissions beyond your own';
 
 export const LAST_ADMINISTRATOR_MESSAGE =
   'This change would leave no active user holding every permission — grant another account the full permission set first';
 
 /** 403 unless the actor holds every `subjectPermissions` entry. Equal sets pass: peers may manage each other. */
-export function assertWithinActorEnvelope(actorPermissions: Iterable<string> | undefined, subjectPermissions: Iterable<string>, message: string): void {
+export function assertWithinActorEnvelope(
+  actorPermissions: Iterable<string> | undefined,
+  subjectPermissions: Iterable<string>,
+  message: string,
+): void {
   const own = new Set(actorPermissions ?? []);
   for (const permission of subjectPermissions) {
     if (!own.has(permission)) throw forbidden(message);
@@ -33,12 +38,21 @@ interface UserRolesSnapshot {
   user_roles: { role_id: string; roles: { role_permissions: { permission_id: string }[] } }[];
 }
 
-function effectivePermissionIds(user: UserRolesSnapshot, change: AdministratorChange | null): Set<string> {
+function effectivePermissionIds(
+  user: UserRolesSnapshot,
+  change: AdministratorChange | null,
+): Set<string> {
   const ids = new Set<string>();
   for (const ur of user.user_roles) {
-    if (change?.kind === 'remove-role' && change.userId === user.id && change.roleId === ur.role_id) continue;
+    if (change?.kind === 'remove-role' && change.userId === user.id && change.roleId === ur.role_id)
+      continue;
     for (const rp of ur.roles.role_permissions) {
-      if (change?.kind === 'remove-permission' && change.roleId === ur.role_id && change.permissionId === rp.permission_id) continue;
+      if (
+        change?.kind === 'remove-permission' &&
+        change.roleId === ur.role_id &&
+        change.permissionId === rp.permission_id
+      )
+        continue;
       ids.add(rp.permission_id);
     }
   }
@@ -50,21 +64,35 @@ function effectivePermissionIds(user: UserRolesSnapshot, change: AdministratorCh
  * client so the check and the write share one snapshot. If nobody holds the full set already, the
  * change is let through: refusing would block the repair.
  */
-export async function assertNotLastAdministrator(db: RbacClient, change: AdministratorChange): Promise<void> {
+export async function assertNotLastAdministrator(
+  db: RbacClient,
+  change: AdministratorChange,
+): Promise<void> {
   const [totalPermissions, users] = await Promise.all([
     db.permissions.count(),
     db.users.findMany({
       where: { deleted_at: null },
-      select: { id: true, user_roles: { select: { role_id: true, roles: { select: { role_permissions: { select: { permission_id: true } } } } } } },
+      select: {
+        id: true,
+        user_roles: {
+          select: {
+            role_id: true,
+            roles: { select: { role_permissions: { select: { permission_id: true } } } },
+          },
+        },
+      },
     }),
   ]);
   if (totalPermissions === 0) return;
 
-  const isAdministrator = (user: UserRolesSnapshot, applied: AdministratorChange | null) => effectivePermissionIds(user, applied).size >= totalPermissions;
+  const isAdministrator = (user: UserRolesSnapshot, applied: AdministratorChange | null) =>
+    effectivePermissionIds(user, applied).size >= totalPermissions;
 
   const before = users.filter((u) => isAdministrator(u, null)).length;
   if (before === 0) return;
 
-  const after = users.filter((u) => !(change.kind === 'delete-user' && u.id === change.userId) && isAdministrator(u, change)).length;
+  const after = users.filter(
+    (u) => !(change.kind === 'delete-user' && u.id === change.userId) && isAdministrator(u, change),
+  ).length;
   if (after === 0) throw conflict(LAST_ADMINISTRATOR_MESSAGE);
 }

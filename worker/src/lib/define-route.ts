@@ -37,7 +37,11 @@ const strict = (s: z.ZodType): z.ZodType => (s instanceof z.ZodObject ? s.strict
  * Top-level query and body objects are made strict here (Nest's `forbidNonWhitelisted`); nested
  * objects still need `z.strictObject`.
  */
-export function defineRoute<Q extends Schema = undefined, P extends Schema = undefined, B extends Schema = undefined>(
+export function defineRoute<
+  Q extends Schema = undefined,
+  P extends Schema = undefined,
+  B extends Schema = undefined,
+>(
   app: OpenAPIHono<AppEnv>,
   cfg: RouteConfig<Q, P, B>,
   handler: (c: Context<AppEnv>, input: Input<Q, P, B>) => unknown | Promise<unknown>,
@@ -46,7 +50,11 @@ export function defineRoute<Q extends Schema = undefined, P extends Schema = und
   const tier = typeof cfg.limit === 'number' ? tierFor(cfg.limit) : cfg.limit;
   const middleware = [
     ...(tier ? [rateLimit(tier)] : []),
-    ...(cfg.auth === true ? [authenticate] : Array.isArray(cfg.auth) ? [requirePermission(...cfg.auth)] : []),
+    ...(cfg.auth === true
+      ? [authenticate]
+      : Array.isArray(cfg.auth)
+        ? [requirePermission(...cfg.auth)]
+        : []),
   ];
   const envelope = z.object({
     success: z.boolean(),
@@ -64,9 +72,15 @@ export function defineRoute<Q extends Schema = undefined, P extends Schema = und
     request: {
       ...(cfg.query ? { query: strict(cfg.query) as z.ZodObject } : {}),
       ...(cfg.params ? { params: cfg.params as z.ZodObject } : {}),
-      ...(cfg.body ? { body: { content: { 'application/json': { schema: strict(cfg.body) } }, required: true } } : {}),
+      ...(cfg.body
+        ? {
+            body: { content: { 'application/json': { schema: strict(cfg.body) } }, required: true },
+          }
+        : {}),
     },
-    responses: { [status]: { description: 'OK', content: { 'application/json': { schema: envelope } } } },
+    responses: {
+      [status]: { description: 'OK', content: { 'application/json': { schema: envelope } } },
+    },
   });
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any

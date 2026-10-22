@@ -18,7 +18,11 @@ export function envelope(body: unknown): Record<string, unknown> {
 /** Express's `res.json` content type; Hono's `c.json` alone omits the charset. */
 export const JSON_HEADERS = { 'Content-Type': 'application/json; charset=utf-8' };
 
-export function respond(c: Context<AppEnv>, body: unknown, status: ContentfulStatusCode = 200): Response {
+export function respond(
+  c: Context<AppEnv>,
+  body: unknown,
+  status: ContentfulStatusCode = 200,
+): Response {
   return c.json(envelope(body), status, JSON_HEADERS);
 }
 
@@ -26,7 +30,11 @@ export function respond(c: Context<AppEnv>, body: unknown, status: ContentfulSta
  * `@PublicCache(maxAge, sMaxAge)`: public GETs the CDN may hold; `Vary: Accept-Language` is mandatory
  * for anything that resolves translations. Defaults match Nest (s-maxage = 5 × max-age).
  */
-export function publicCache(c: Context<AppEnv>, maxAgeSeconds = 60, sMaxAgeSeconds = maxAgeSeconds * 5): void {
+export function publicCache(
+  c: Context<AppEnv>,
+  maxAgeSeconds = 60,
+  sMaxAgeSeconds = maxAgeSeconds * 5,
+): void {
   c.header('Cache-Control', `public, max-age=${maxAgeSeconds}, s-maxage=${sMaxAgeSeconds}`);
   c.header('Vary', 'Accept-Language');
 }

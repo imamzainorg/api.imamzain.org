@@ -3,7 +3,15 @@ import { isoDate } from '../../lib/iso-date';
 import { paginationShape } from '../../lib/pagination';
 
 /** DTO_LIMITS in src/common/validators/dto-limits.ts; the CMS forms use the same numbers. */
-export const LIMITS = { title: 500, summary: 5000, person: 300, label: 200, metaTitle: 300, metaDescription: 500, listItems: 50 } as const;
+export const LIMITS = {
+  title: 500,
+  summary: 5000,
+  person: 300,
+  label: 200,
+  metaTitle: 300,
+  metaDescription: 500,
+  listItems: 50,
+} as const;
 
 // Checks are listed in the order class-validator reports them (its decorators, bottom-up).
 export const galleryTranslationSchema = z.strictObject({
@@ -49,9 +57,17 @@ export type UpdateGalleryInput = z.output<typeof updateGalleryBody>;
 export const listQuery = z.object(paginationShape);
 
 // @Transform: a single `?tags=a` becomes ['a'].
-const queryList = z.preprocess((v) => (v === undefined || Array.isArray(v) ? v : [v]), labels.optional());
+const queryList = z.preprocess(
+  (v) => (v === undefined || Array.isArray(v) ? v : [v]),
+  labels.optional(),
+);
 
-export const galleryQuery = z.object({ ...paginationShape, category_id: z.uuid().optional(), tags: queryList, locations: queryList });
+export const galleryQuery = z.object({
+  ...paginationShape,
+  category_id: z.uuid().optional(),
+  tags: queryList,
+  locations: queryList,
+});
 
 /** No uuid check: a malformed id reaches Postgres and comes back as 400 INVALID_IDENTIFIER, as in Nest. */
 export const idParams = z.object({ id: z.string() });

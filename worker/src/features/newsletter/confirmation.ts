@@ -15,12 +15,20 @@ export const DEFAULT_CONFIRM_MAX_PER_HOUR = 30;
 export const DEFAULT_CONFIRM_URL_BASE = 'https://imamzain.org/newsletter/confirm';
 export const DEFAULT_UNSUBSCRIBE_URL_BASE = 'https://imamzain.org/newsletter/unsubscribe';
 
-export function resolveConfirmConfig(env: { NEWSLETTER_CONFIRM_MAX_PER_HOUR?: string; NEWSLETTER_CONFIRM_URL_BASE?: string; NEWSLETTER_UNSUBSCRIBE_URL_BASE?: string }) {
+export function resolveConfirmConfig(env: {
+  NEWSLETTER_CONFIRM_MAX_PER_HOUR?: string;
+  NEWSLETTER_CONFIRM_URL_BASE?: string;
+  NEWSLETTER_UNSUBSCRIBE_URL_BASE?: string;
+}) {
   const raw = env.NEWSLETTER_CONFIRM_MAX_PER_HOUR;
   const parsed = raw === undefined || raw.trim() === '' ? NaN : Number(raw);
-  const maxPerHour = Number.isInteger(parsed) && parsed >= 1 && parsed <= 10_000 ? parsed : DEFAULT_CONFIRM_MAX_PER_HOUR;
+  const maxPerHour =
+    Number.isInteger(parsed) && parsed >= 1 && parsed <= 10_000
+      ? parsed
+      : DEFAULT_CONFIRM_MAX_PER_HOUR;
   const urlBase = env.NEWSLETTER_CONFIRM_URL_BASE?.trim() || DEFAULT_CONFIRM_URL_BASE;
-  const unsubscribeUrlBase = env.NEWSLETTER_UNSUBSCRIBE_URL_BASE?.trim() || DEFAULT_UNSUBSCRIBE_URL_BASE;
+  const unsubscribeUrlBase =
+    env.NEWSLETTER_UNSUBSCRIBE_URL_BASE?.trim() || DEFAULT_UNSUBSCRIBE_URL_BASE;
   return { maxPerHour, urlBase, unsubscribeUrlBase };
 }
 
@@ -36,7 +44,10 @@ export function confirmationUrl(base: string, email: string, token: string): str
  * Arabic first with an English copy underneath. It names no one and says nothing about the state of the
  * address, so a stranger who typed someone else's e-mail learns nothing from it.
  */
-export function buildConfirmationEmail(confirmUrl: string, unsubscribeUrl: string): { subject: string; html: string; text: string } {
+export function buildConfirmationEmail(
+  confirmUrl: string,
+  unsubscribeUrl: string,
+): { subject: string; html: string; text: string } {
   const href = escapeHtml(confirmUrl);
   const unsubHref = escapeHtml(unsubscribeUrl);
 
@@ -79,5 +90,9 @@ export function buildConfirmationEmail(confirmUrl: string, unsubscribeUrl: strin
     unsubscribeUrl,
   ].join('\n');
 
-  return { subject: 'تأكيد الاشتراك في النشرة البريدية | Confirm your newsletter subscription', html, text };
+  return {
+    subject: 'تأكيد الاشتراك في النشرة البريدية | Confirm your newsletter subscription',
+    html,
+    text,
+  };
 }

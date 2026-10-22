@@ -34,7 +34,9 @@ export function stripSensitive(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(stripSensitive);
   if (value && typeof value === 'object') {
     return Object.fromEntries(
-      Object.entries(value as Record<string, unknown>).flatMap(([k, v]) => (FORBIDDEN_KEYS.has(k.toLowerCase()) ? [] : [[k, stripSensitive(v)]])),
+      Object.entries(value as Record<string, unknown>).flatMap(([k, v]) =>
+        FORBIDDEN_KEYS.has(k.toLowerCase()) ? [] : [[k, stripSensitive(v)]],
+      ),
     );
   }
   return value;
@@ -46,7 +48,8 @@ function row(c: Context<AppEnv>, p: AuditWriteParams) {
     action: p.action,
     resource_type: p.resourceType,
     resource_id: p.resourceId ?? null,
-    changes: p.changes === undefined ? undefined : (stripSensitive(p.changes) as Prisma.InputJsonValue),
+    changes:
+      p.changes === undefined ? undefined : (stripSensitive(p.changes) as Prisma.InputJsonValue),
     ip_address: c.get('ip') || null,
     user_agent: c.req.header('user-agent') || null,
   };
@@ -69,7 +72,9 @@ export async function auditSync(c: Context<AppEnv>, params: AuditWriteParams): P
     await getDb(c).audit_logs.create({ data: row(c, params) });
     return true;
   } catch (err) {
-    console.warn(`Failed to write an audit log for ${params.resourceType} ${params.resourceId ?? '-'}: ${err}`);
+    console.warn(
+      `Failed to write an audit log for ${params.resourceType} ${params.resourceId ?? '-'}: ${err}`,
+    );
     return false;
   }
 }

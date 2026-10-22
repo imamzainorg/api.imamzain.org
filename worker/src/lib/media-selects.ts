@@ -1,7 +1,12 @@
 import type { Prisma } from '../generated/prisma/client';
 
 // src/common/crud/media-selects.ts
-export const MEDIA_VARIANT_SELECT = { id: true, width: true, url: true, format: true } satisfies Prisma.media_variantsSelect;
+export const MEDIA_VARIANT_SELECT = {
+  id: true,
+  width: true,
+  url: true,
+  format: true,
+} satisfies Prisma.media_variantsSelect;
 
 // Feed shape (homepage, search): the original `url` plus srcset-ready variants.
 export const MEDIA_URL_WITH_VARIANTS_SELECT = {

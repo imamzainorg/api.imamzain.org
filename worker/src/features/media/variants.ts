@@ -3,7 +3,11 @@
 import type { Context } from 'hono';
 import { getDb } from '../../lib/db';
 import { parseImageHeader, type ImageHeader } from '../../lib/image-header';
-import { plannedWidthsFor, VARIANT_WIDTHS, type VariantPassOutcome } from '../../lib/media-variants';
+import {
+  plannedWidthsFor,
+  VARIANT_WIDTHS,
+  type VariantPassOutcome,
+} from '../../lib/media-variants';
 import { deleteObject, getObjectBytes, headObject, putObject, variantKey } from '../../lib/r2';
 import type { AppEnv } from '../../lib/types';
 
@@ -49,7 +53,12 @@ export async function processMedia(
   originalKey: string,
   options: { sanitizeOriginal?: boolean } = {},
 ): Promise<VariantPassResult> {
-  const result: VariantPassResult = { outcome: 'ok', variants: [], mediaPatch: {}, sanitized: false };
+  const result: VariantPassResult = {
+    outcome: 'ok',
+    variants: [],
+    mediaPatch: {},
+    sanitized: false,
+  };
 
   let original: Uint8Array | null;
   try {
@@ -86,13 +95,22 @@ export async function processMedia(
 }
 
 export function findForMedia(c: Ctx, mediaId: string): Promise<VariantRow[]> {
-  return getDb(c).media_variants.findMany({ where: { media_id: mediaId }, orderBy: { width: 'asc' } });
+  return getDb(c).media_variants.findMany({
+    where: { media_id: mediaId },
+    orderBy: { width: 'asc' },
+  });
 }
 
-export async function findForMediaIds(c: Ctx, mediaIds: string[]): Promise<Map<string, VariantRow[]>> {
+export async function findForMediaIds(
+  c: Ctx,
+  mediaIds: string[],
+): Promise<Map<string, VariantRow[]>> {
   const map = new Map<string, VariantRow[]>();
   if (mediaIds.length === 0) return map;
-  const rows = await getDb(c).media_variants.findMany({ where: { media_id: { in: mediaIds } }, orderBy: [{ media_id: 'asc' }, { width: 'asc' }] });
+  const rows = await getDb(c).media_variants.findMany({
+    where: { media_id: { in: mediaIds } },
+    orderBy: [{ media_id: 'asc' }, { width: 'asc' }],
+  });
   for (const r of rows) map.set(r.media_id, [...(map.get(r.media_id) ?? []), r]);
   return map;
 }
@@ -114,7 +132,12 @@ export async function deleteR2Variants(c: Ctx, mediaId: string): Promise<string[
   return failed;
 }
 
-async function reconcileDimensions(c: Ctx, media: { id: string; width?: number | null; height?: number | null }, size: ImageHeader, result: VariantPassResult) {
+async function reconcileDimensions(
+  c: Ctx,
+  media: { id: string; width?: number | null; height?: number | null },
+  size: ImageHeader,
+  result: VariantPassResult,
+) {
   const patch: { width?: number; height?: number } = {};
   if (media.width !== size.width) patch.width = size.width;
   if (media.height !== size.height) patch.height = size.height;
@@ -128,7 +151,12 @@ async function reconcileDimensions(c: Ctx, media: { id: string; width?: number |
   }
 }
 
-async function writeVariants(c: Ctx, mediaId: string, original: Uint8Array, widths: number[]): Promise<VariantRow[]> {
+async function writeVariants(
+  c: Ctx,
+  mediaId: string,
+  original: Uint8Array,
+  widths: number[],
+): Promise<VariantRow[]> {
   const results = await Promise.allSettled(
     widths.map(async (width) => {
       const out = await c.env.IMAGES.input(streamOf(original))
@@ -159,14 +187,28 @@ async function writeVariants(c: Ctx, mediaId: string, original: Uint8Array, widt
  * the only full-resolution copy; a JPEG whose EXIF holds a copyright tag keeps it (Cloudflare's
  * default) and so stays untouched.
  */
-async function sanitizeOriginal(c: Ctx, mediaId: string, originalKey: string, original: Uint8Array, header: ImageHeader): Promise<number | null> {
+async function sanitizeOriginal(
+  c: Ctx,
+  mediaId: string,
+  originalKey: string,
+  original: Uint8Array,
+  header: ImageHeader,
+): Promise<number | null> {
   if (!header.hasMetadata || header.format === 'gif' || header.cmyk) return null;
   try {
-    const out = await c.env.IMAGES.input(streamOf(original)).output({ format: OUTPUT_MIME[header.format], quality: ORIGINAL_REENCODE_QUALITY });
+    const out = await c.env.IMAGES.input(streamOf(original)).output({
+      format: OUTPUT_MIME[header.format],
+      quality: ORIGINAL_REENCODE_QUALITY,
+    });
     const cleaned = new Uint8Array(await out.response().arrayBuffer());
 
     const check = parseImageHeader(cleaned);
-    if (!check || check.hasMetadata || check.width !== header.width || check.height !== header.height) {
+    if (
+      !check ||
+      check.hasMetadata ||
+      check.width !== header.width ||
+      check.height !== header.height
+    ) {
       console.warn(`Sanitised copy of ${originalKey} failed verification; original left untouched`);
       return null;
     }
@@ -180,9 +222,14 @@ async function sanitizeOriginal(c: Ctx, mediaId: string, originalKey: string, or
 
     // Only a size that reached the row is reported (Nest reported it either way).
     try {
-      await getDb(c).media.updateMany({ where: { id: mediaId }, data: { file_size: cleaned.length } });
+      await getDb(c).media.updateMany({
+        where: { id: mediaId },
+        data: { file_size: cleaned.length },
+      });
     } catch (err) {
-      console.warn(`Original of media ${mediaId} was sanitised but file_size was not updated: ${err}`);
+      console.warn(
+        `Original of media ${mediaId} was sanitised but file_size was not updated: ${err}`,
+      );
       return null;
     }
     return cleaned.length;

@@ -6,14 +6,24 @@ import { searchTerm } from '../../lib/search-term';
 import { SLUG_PATTERN } from '../../lib/translatable-category/schemas';
 
 /** DTO_LIMITS in src/common/validators/dto-limits.ts, plus the post DTO's own constants. */
-export const LIMITS = { title: 500, summary: 5000, slug: 200, metaTitle: 120, metaDescription: 320, listItems: 50, ids: 200 } as const;
+export const LIMITS = {
+  title: 500,
+  summary: 5000,
+  slug: 200,
+  metaTitle: 120,
+  metaDescription: 320,
+  listItems: 50,
+  ids: 200,
+} as const;
 
 // @IsUUID alone: a missing value reads "must be a UUID", not "must be a string".
-const requiredUuid = (field: string) => z.custom<string>((v) => z.uuid().safeParse(v).success, `${field} must be a UUID`);
+const requiredUuid = (field: string) =>
+  z.custom<string>((v) => z.uuid().safeParse(v).success, `${field} must be a UUID`);
 
 // iso-instant-offset.validator.ts: an ISO-8601 instant that names its time zone, so a value without one
 // is not read in the server's zone and fired hours late. Impossible days ("2026-02-31") are rejected too.
-const ISO_INSTANT_WITH_OFFSET = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2})(?:\.\d{1,9})?)?(?:Z|[+-](\d{2}):(\d{2}))$/;
+const ISO_INSTANT_WITH_OFFSET =
+  /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2})(?:\.\d{1,9})?)?(?:Z|[+-](\d{2}):(\d{2}))$/;
 
 function isIsoInstantWithOffset(value: unknown): boolean {
   if (typeof value !== 'string') return false;
@@ -36,7 +46,12 @@ const publishedAt = z.custom<string>(
 // @ArrayUnique(uuidIdentity): Postgres compares uuids case-insensitively, so ids differing only by case collide.
 // Listed before the size caps: class-validator reports the decorators bottom-up.
 const uuidList = (field: string) =>
-  z.array(z.uuid()).refine((ids) => new Set(ids.map((id) => id.toLowerCase())).size === ids.length, `All ${field}'s elements must be unique`);
+  z
+    .array(z.uuid())
+    .refine(
+      (ids) => new Set(ids.map((id) => id.toLowerCase())).size === ids.length,
+      `All ${field}'s elements must be unique`,
+    );
 
 // Checks are listed in the order class-validator reports them (its decorators, bottom-up).
 export const postTranslationSchema = z.strictObject({

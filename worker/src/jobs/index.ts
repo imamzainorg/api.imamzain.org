@@ -31,13 +31,21 @@ const JOBS: Record<string, [name: string, job: Job][]> = {
     // Reads sistani.org only while today's Hijri date is unknown or provisional (the day after a 29th).
     ['hijri-date', (_db, env) => checkHijriDate(env, siteDate(siteTimezone(env.SITE_TIMEZONE)))],
     // Nest ran it at 0 */6 * * *; one hourly trigger covers both jobs.
-    ['youtube-sync', (db, env, scheduled) => (scheduled.getUTCHours() % 6 === 0 ? runGuardedSync(db, env) : Promise.resolve())],
+    [
+      'youtube-sync',
+      (db, env, scheduled) =>
+        scheduled.getUTCHours() % 6 === 0 ? runGuardedSync(db, env) : Promise.resolve(),
+    ],
   ],
   [CRONS.daily]: [['retention', (db) => runRetention(db)]],
 };
 
 /** Runs the jobs of one trigger in order; a failing job is logged and doesn't stop the next one. */
-export async function runScheduled(cron: string, env: AppBindings, scheduledTime: number): Promise<void> {
+export async function runScheduled(
+  cron: string,
+  env: AppBindings,
+  scheduledTime: number,
+): Promise<void> {
   const jobs = JOBS[cron];
   if (!jobs) {
     console.warn(`No jobs for cron "${cron}"`);

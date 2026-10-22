@@ -3,11 +3,22 @@ import type { Prisma, newsletter_subscribers } from '../../generated/prisma/clie
 import { AUDIT_ACTIONS, audit } from '../../lib/audit';
 import { defer, getDb } from '../../lib/db';
 import { isUniqueViolation, notFound, unauthorized } from '../../lib/errors';
-import { KEY_INFO, hmacHex, resolveHmacKeyring, verifyHmacHex, type HmacKeyring } from '../../lib/hmac-keys';
+import {
+  KEY_INFO,
+  hmacHex,
+  resolveHmacKeyring,
+  verifyHmacHex,
+  type HmacKeyring,
+} from '../../lib/hmac-keys';
 import { isMailConfigured, sendMail } from '../../lib/mail';
 import { buildPaginationMeta } from '../../lib/pagination';
 import type { AppBindings, AppEnv } from '../../lib/types';
-import { CONFIRM_RESEND_COOLDOWN_MS, buildConfirmationEmail, confirmationUrl, resolveConfirmConfig } from './confirmation';
+import {
+  CONFIRM_RESEND_COOLDOWN_MS,
+  buildConfirmationEmail,
+  confirmationUrl,
+  resolveConfirmConfig,
+} from './confirmation';
 import type { ConfirmInput, SubscribeInput, UnsubscribeInput } from './schemas';
 
 type Ctx = Context<AppEnv>;
@@ -25,7 +36,12 @@ const INVALID_LINK_MESSAGE = 'This confirmation link is invalid or has expired';
 
 /** A dedicated NEWSLETTER_UNSUBSCRIBE_SECRET as-is for both token types; otherwise one derived key each (lib/hmac-keys). */
 const tokenKeys = (env: AppBindings, info: string): HmacKeyring =>
-  resolveHmacKeyring({ dedicatedSecret: env.NEWSLETTER_UNSUBSCRIBE_SECRET, dedicatedName: 'NEWSLETTER_UNSUBSCRIBE_SECRET', jwtSecret: env.JWT_SECRET, info });
+  resolveHmacKeyring({
+    dedicatedSecret: env.NEWSLETTER_UNSUBSCRIBE_SECRET,
+    dedicatedName: 'NEWSLETTER_UNSUBSCRIBE_SECRET',
+    jwtSecret: env.JWT_SECRET,
+    info,
+  });
 
 /** Embedded in the confirmation e-mail's unsubscribe link; the same MAC every unsubscribe uses. */
 const signUnsubscribeToken = (env: AppBindings, subscriberId: string) =>
@@ -35,16 +51,30 @@ const verifyUnsubscribeToken = (env: AppBindings, subscriberId: string, token: s
   verifyHmacHex(tokenKeys(env, KEY_INFO.newsletterUnsubscribe), subscriberId, token);
 
 /** Bound to (subscriber, the moment that e-mail was claimed): a newer confirmation e-mail kills every older link. */
-const confirmationMessage = (subscriberId: string, issuedAt: Date) => `confirm:${subscriberId}:${issuedAt.getTime()}`;
+const confirmationMessage = (subscriberId: string, issuedAt: Date) =>
+  `confirm:${subscriberId}:${issuedAt.getTime()}`;
 
 const signConfirmationToken = (env: AppBindings, subscriberId: string, issuedAt: Date) =>
-  hmacHex(tokenKeys(env, KEY_INFO.newsletterConfirm).signingKey, confirmationMessage(subscriberId, issuedAt));
+  hmacHex(
+    tokenKeys(env, KEY_INFO.newsletterConfirm).signingKey,
+    confirmationMessage(subscriberId, issuedAt),
+  );
 
-const verifyConfirmationToken = (env: AppBindings, subscriberId: string, issuedAt: Date, token: string) =>
-  verifyHmacHex(tokenKeys(env, KEY_INFO.newsletterConfirm), confirmationMessage(subscriberId, issuedAt), token);
+const verifyConfirmationToken = (
+  env: AppBindings,
+  subscriberId: string,
+  issuedAt: Date,
+  token: string,
+) =>
+  verifyHmacHex(
+    tokenKeys(env, KEY_INFO.newsletterConfirm),
+    confirmationMessage(subscriberId, issuedAt),
+    token,
+  );
 
 /** On the list and mailable right now. */
-const isLive = (s: Pick<newsletter_subscribers, 'is_active' | 'deleted_at'>) => s.is_active && s.deleted_at === null;
+const isLive = (s: Pick<newsletter_subscribers, 'is_active' | 'deleted_at'>) =>
+  s.is_active && s.deleted_at === null;
 
 /**
  * Ask to join the list. Nobody is subscribed by this call: the address gets a confirmation e-mail and only
@@ -106,7 +136,9 @@ async function sendConfirmation(c: Ctx, subscriber: newsletter_subscribers): Pro
   const config = resolveConfirmConfig(c.env);
   const now = new Date();
 
-  const claimedLastHour = await db.newsletter_subscribers.count({ where: { confirmation_sent_at: { gte: new Date(now.getTime() - ONE_HOUR_MS) } } });
+  const claimedLastHour = await db.newsletter_subscribers.count({
+    where: { confirmation_sent_at: { gte: new Date(now.getTime() - ONE_HOUR_MS) } },
+  });
   if (claimedLastHour >= config.maxPerHour) {
     console.warn(`Newsletter confirmation held back: hourly cap of ${config.maxPerHour} reached`);
     return;
@@ -115,7 +147,10 @@ async function sendConfirmation(c: Ctx, subscriber: newsletter_subscribers): Pro
   const claim = await db.newsletter_subscribers.updateMany({
     where: {
       id: subscriber.id,
-      OR: [{ confirmation_sent_at: null }, { confirmation_sent_at: { lt: new Date(now.getTime() - CONFIRM_RESEND_COOLDOWN_MS) } }],
+      OR: [
+        { confirmation_sent_at: null },
+        { confirmation_sent_at: { lt: new Date(now.getTime() - CONFIRM_RESEND_COOLDOWN_MS) } },
+      ],
     },
     data: { confirmation_sent_at: now },
   });
@@ -124,24 +159,39 @@ async function sendConfirmation(c: Ctx, subscriber: newsletter_subscribers): Pro
   defer(c, deliverConfirmation(c, subscriber, now, subscriber.confirmation_sent_at, config));
 }
 
-async function deliverConfirmation(c: Ctx, subscriber: newsletter_subscribers, claimedAt: Date, previousSentAt: Date | null, config: ReturnType<typeof resolveConfirmConfig>): Promise<void> {
+async function deliverConfirmation(
+  c: Ctx,
+  subscriber: newsletter_subscribers,
+  claimedAt: Date,
+  previousSentAt: Date | null,
+  config: ReturnType<typeof resolveConfirmConfig>,
+): Promise<void> {
   let delivered = false;
   try {
     const token = signConfirmationToken(c.env, subscriber.id, claimedAt);
     const message = buildConfirmationEmail(
       confirmationUrl(config.urlBase, subscriber.email, token),
-      confirmationUrl(config.unsubscribeUrlBase, subscriber.email, signUnsubscribeToken(c.env, subscriber.id)),
+      confirmationUrl(
+        config.unsubscribeUrlBase,
+        subscriber.email,
+        signUnsubscribeToken(c.env, subscriber.id),
+      ),
     );
     const result = await sendMail(c.env, { to: subscriber.email, ...message });
     delivered = result.ok;
     if (!result.ok) console.warn(`Newsletter confirmation e-mail failed: ${result.error}`);
   } catch (err) {
-    console.error(`Newsletter confirmation e-mail failed: ${err instanceof Error ? err.message : String(err)}`);
+    console.error(
+      `Newsletter confirmation e-mail failed: ${err instanceof Error ? err.message : String(err)}`,
+    );
   }
 
   if (!delivered) {
     // Nothing reached the inbox, so neither the cool-down nor the hourly cap should stay spent on it.
-    await getDb(c).newsletter_subscribers.updateMany({ where: { id: subscriber.id, confirmation_sent_at: claimedAt }, data: { confirmation_sent_at: previousSentAt } });
+    await getDb(c).newsletter_subscribers.updateMany({
+      where: { id: subscriber.id, confirmation_sent_at: claimedAt },
+      data: { confirmation_sent_at: previousSentAt },
+    });
   }
 }
 
@@ -153,7 +203,11 @@ export async function confirm(c: Ctx, dto: ConfirmInput) {
   const db = getDb(c);
   const subscriber = await db.newsletter_subscribers.findUnique({ where: { email: dto.email } });
   const issuedAt = subscriber?.confirmation_sent_at ?? null;
-  if (!subscriber || !issuedAt || !verifyConfirmationToken(c.env, subscriber.id, issuedAt, dto.token)) {
+  if (
+    !subscriber ||
+    !issuedAt ||
+    !verifyConfirmationToken(c.env, subscriber.id, issuedAt, dto.token)
+  ) {
     throw unauthorized(INVALID_LINK_MESSAGE);
   }
 
@@ -163,7 +217,10 @@ export async function confirm(c: Ctx, dto: ConfirmInput) {
   const now = new Date();
   if (now.getTime() - issuedAt.getTime() > CONFIRM_TTL_MS) throw unauthorized(INVALID_LINK_MESSAGE);
   // Opted out (or removed by an admin) AFTER this link was sent: it no longer speaks for them.
-  if ((subscriber.unsubscribed_at && subscriber.unsubscribed_at > issuedAt) || (subscriber.deleted_at && subscriber.deleted_at > issuedAt)) {
+  if (
+    (subscriber.unsubscribed_at && subscriber.unsubscribed_at > issuedAt) ||
+    (subscriber.deleted_at && subscriber.deleted_at > issuedAt)
+  ) {
     throw unauthorized(INVALID_LINK_MESSAGE);
   }
 
@@ -180,7 +237,10 @@ export async function confirm(c: Ctx, dto: ConfirmInput) {
 
   audit(c, {
     actorId: null,
-    action: subscriber.confirmed_at === null ? AUDIT_ACTIONS.NEWSLETTER_SUBSCRIBED : AUDIT_ACTIONS.NEWSLETTER_RESUBSCRIBED,
+    action:
+      subscriber.confirmed_at === null
+        ? AUDIT_ACTIONS.NEWSLETTER_SUBSCRIBED
+        : AUDIT_ACTIONS.NEWSLETTER_RESUBSCRIBED,
     resourceType: 'newsletter_subscriber',
     resourceId: subscriber.id,
     changes: { method: 'POST', path: '/api/v1/newsletter/confirm' },
@@ -194,12 +254,16 @@ export async function unsubscribe(c: Ctx, dto: UnsubscribeInput) {
   const subscriber = await db.newsletter_subscribers.findUnique({ where: { email: dto.email } });
 
   // "Not found" and "invalid token" give the same error so subscribers can't be enumerated.
-  if (!subscriber || !verifyUnsubscribeToken(c.env, subscriber.id, dto.token)) throw unauthorized('Invalid unsubscribe token');
+  if (!subscriber || !verifyUnsubscribeToken(c.env, subscriber.id, dto.token))
+    throw unauthorized('Invalid unsubscribe token');
 
   // Idempotent: double-clicking the link must not surface a confusing 404.
   if (!subscriber.is_active) return { message: 'Already unsubscribed', data: subscriber };
 
-  const updated = await db.newsletter_subscribers.update({ where: { id: subscriber.id }, data: { is_active: false, unsubscribed_at: new Date() } });
+  const updated = await db.newsletter_subscribers.update({
+    where: { id: subscriber.id },
+    data: { is_active: false, unsubscribed_at: new Date() },
+  });
 
   audit(c, {
     actorId: null,
@@ -212,17 +276,33 @@ export async function unsubscribe(c: Ctx, dto: UnsubscribeInput) {
   return { message: 'Successfully unsubscribed', data: updated };
 }
 
-export async function findAll(c: Ctx, page: number, limit: number, filters: { search?: string; is_active?: boolean }) {
+export async function findAll(
+  c: Ctx,
+  page: number,
+  limit: number,
+  filters: { search?: string; is_active?: boolean },
+) {
   const db = getDb(c);
-  const where: Prisma.newsletter_subscribersWhereInput = { deleted_at: null, is_active: filters.is_active ?? true };
+  const where: Prisma.newsletter_subscribersWhereInput = {
+    deleted_at: null,
+    is_active: filters.is_active ?? true,
+  };
   if (filters.search) where.email = { contains: filters.search, mode: 'insensitive' };
 
   const [items, total] = await Promise.all([
-    db.newsletter_subscribers.findMany({ where, orderBy: [{ subscribed_at: 'desc' }, { id: 'asc' }], skip: (page - 1) * limit, take: limit }),
+    db.newsletter_subscribers.findMany({
+      where,
+      orderBy: [{ subscribed_at: 'desc' }, { id: 'asc' }],
+      skip: (page - 1) * limit,
+      take: limit,
+    }),
     db.newsletter_subscribers.count({ where }),
   ]);
 
-  return { message: 'Subscribers fetched', data: { items, pagination: buildPaginationMeta(page, limit, total) } };
+  return {
+    message: 'Subscribers fetched',
+    data: { items, pagination: buildPaginationMeta(page, limit, total) },
+  };
 }
 
 /** Admin-side unsubscribe: authorised by `newsletter:update` instead of the inbox-ownership token. Idempotent. */
@@ -233,7 +313,10 @@ export async function unsubscribeAsAdmin(c: Ctx, id: string, actorId: string) {
 
   if (!subscriber.is_active) return { message: 'Already unsubscribed', data: subscriber };
 
-  const updated = await db.newsletter_subscribers.update({ where: { id }, data: { is_active: false, unsubscribed_at: new Date() } });
+  const updated = await db.newsletter_subscribers.update({
+    where: { id },
+    data: { is_active: false, unsubscribed_at: new Date() },
+  });
 
   audit(c, {
     actorId,
@@ -254,7 +337,10 @@ export async function resubscribeAsAdmin(c: Ctx, id: string, actorId: string) {
 
   if (subscriber.is_active) return { message: 'Already subscribed', data: subscriber };
 
-  const updated = await db.newsletter_subscribers.update({ where: { id }, data: { is_active: true, unsubscribed_at: null, confirmed_at: new Date() } });
+  const updated = await db.newsletter_subscribers.update({
+    where: { id },
+    data: { is_active: true, unsubscribed_at: null, confirmed_at: new Date() },
+  });
 
   audit(c, {
     actorId,
@@ -273,7 +359,10 @@ export async function softDelete(c: Ctx, id: string, actorId: string) {
   if (!subscriber) throw notFound('Subscriber not found');
 
   // is_active is cleared too, so a deleted row never reads is_active=true.
-  await db.newsletter_subscribers.update({ where: { id }, data: { deleted_at: new Date(), is_active: false } });
+  await db.newsletter_subscribers.update({
+    where: { id },
+    data: { deleted_at: new Date(), is_active: false },
+  });
 
   audit(c, {
     actorId,
@@ -290,10 +379,18 @@ export async function findTrash(c: Ctx, page: number, limit: number) {
   const db = getDb(c);
   const where: Prisma.newsletter_subscribersWhereInput = { deleted_at: { not: null } };
   const [items, total] = await Promise.all([
-    db.newsletter_subscribers.findMany({ where, orderBy: [{ deleted_at: 'desc' }, { id: 'asc' }], skip: (page - 1) * limit, take: limit }),
+    db.newsletter_subscribers.findMany({
+      where,
+      orderBy: [{ deleted_at: 'desc' }, { id: 'asc' }],
+      skip: (page - 1) * limit,
+      take: limit,
+    }),
     db.newsletter_subscribers.count({ where }),
   ]);
-  return { message: 'Trash fetched', data: { items, pagination: buildPaginationMeta(page, limit, total) } };
+  return {
+    message: 'Trash fetched',
+    data: { items, pagination: buildPaginationMeta(page, limit, total) },
+  };
 }
 
 /**
@@ -302,18 +399,27 @@ export async function findTrash(c: Ctx, page: number, limit: number) {
  */
 export async function restore(c: Ctx, id: string, actorId: string) {
   const db = getDb(c);
-  const subscriber = await db.newsletter_subscribers.findFirst({ where: { id, deleted_at: { not: null } } });
+  const subscriber = await db.newsletter_subscribers.findFirst({
+    where: { id, deleted_at: { not: null } },
+  });
   if (!subscriber) throw notFound('Deleted subscriber not found');
 
   const wasSubscribed = subscriber.unsubscribed_at === null && subscriber.confirmed_at !== null;
-  const updated = await db.newsletter_subscribers.update({ where: { id }, data: { deleted_at: null, is_active: wasSubscribed } });
+  const updated = await db.newsletter_subscribers.update({
+    where: { id },
+    data: { deleted_at: null, is_active: wasSubscribed },
+  });
 
   audit(c, {
     actorId,
     action: AUDIT_ACTIONS.NEWSLETTER_SUBSCRIBER_RESTORED,
     resourceType: 'newsletter_subscriber',
     resourceId: id,
-    changes: { method: 'POST', path: `/api/v1/newsletter/subscribers/${id}/restore`, is_active: wasSubscribed },
+    changes: {
+      method: 'POST',
+      path: `/api/v1/newsletter/subscribers/${id}/restore`,
+      is_active: wasSubscribed,
+    },
   });
 
   return { message: 'Subscriber restored', data: updated };

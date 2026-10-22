@@ -20,7 +20,8 @@ export const unauthorized = (m = 'Unauthorized', o?: Opts) => new ApiError(401, 
 export const forbidden = (m = 'Forbidden', o?: Opts) => new ApiError(403, m, o);
 export const notFound = (m = 'Not Found', o?: Opts) => new ApiError(404, m, o);
 export const conflict = (m = 'Conflict', o?: Opts) => new ApiError(409, m, o);
-export const tooManyRequests = (m = 'ThrottlerException: Too Many Requests', o?: Opts) => new ApiError(429, m, o);
+export const tooManyRequests = (m = 'ThrottlerException: Too Many Requests', o?: Opts) =>
+  new ApiError(429, m, o);
 
 const STATUS_CODES: Record<number, string> = {
   400: 'BAD_REQUEST',
@@ -39,7 +40,11 @@ export function defaultCodeForStatus(status: number): string {
 }
 
 /** What adapter-pg puts in `meta.driverAdapterError.cause` (the Rust engine's `meta.target` is never set). */
-type AdapterCause = { kind?: string; originalCode?: string; constraint?: { fields?: string[]; index?: string } };
+type AdapterCause = {
+  kind?: string;
+  originalCode?: string;
+  constraint?: { fields?: string[]; index?: string };
+};
 type PrismaLike = {
   name?: string;
   code?: string;
@@ -48,13 +53,17 @@ type PrismaLike = {
 };
 
 const isKnownPrisma = (e: unknown): e is PrismaLike & { code: string } =>
-  typeof e === 'object' && e !== null && (e as PrismaLike).name === 'PrismaClientKnownRequestError' && typeof (e as PrismaLike).code === 'string';
+  typeof e === 'object' &&
+  e !== null &&
+  (e as PrismaLike).name === 'PrismaClientKnownRequestError' &&
+  typeof (e as PrismaLike).code === 'string';
 
 /**
  * A non-UUID string reaching a @db.Uuid column (in practice a bad `:id` param). Nest's Rust engine
  * raised P2023; through adapter-pg it is Postgres 22P02 with no Prisma code, only this text.
  */
-const isInvalidUuid = (e: unknown) => e instanceof Error && /invalid input syntax for type uuid/i.test(e.message);
+const isInvalidUuid = (e: unknown) =>
+  e instanceof Error && /invalid input syntax for type uuid/i.test(e.message);
 
 /** CHECK-constraint violation (SQLSTATE 23514): always the client's fault, a 400. */
 function asCheckViolation(e: unknown): { constraint: string | null } | null {
@@ -91,7 +100,8 @@ export function errorHandler(err: unknown, c: Context<AppEnv>): Response {
       message = 'Validation failed';
       code = code ?? 'VALIDATION_FAILED';
     }
-    if (err.opts.retryAfterSeconds && err.opts.retryAfterSeconds > 0) retryAfter = Math.ceil(err.opts.retryAfterSeconds);
+    if (err.opts.retryAfterSeconds && err.opts.retryAfterSeconds > 0)
+      retryAfter = Math.ceil(err.opts.retryAfterSeconds);
   } else if (client) {
     ({ status, message } = client);
   } else if (isInvalidUuid(err) || (isKnownPrisma(err) && err.code === 'P2023')) {
@@ -105,7 +115,9 @@ export function errorHandler(err: unknown, c: Context<AppEnv>): Response {
       ? `The submitted values violate a data rule (${check.constraint})`
       : 'The submitted values violate a data rule';
     code = 'CHECK_CONSTRAINT_VIOLATION';
-    console.warn(`CHECK constraint rejected a write: ${check.constraint ?? 'unknown'} (${c.req.method} ${c.req.url})`);
+    console.warn(
+      `CHECK constraint rejected a write: ${check.constraint ?? 'unknown'} (${c.req.method} ${c.req.url})`,
+    );
   } else if (isKnownPrisma(err)) {
     if (err.code === 'P2002') {
       status = 409;
@@ -153,7 +165,11 @@ function uniqueTargetOf(err: PrismaLike): string {
 }
 
 /** Mirrors prisma-error.util.ts: P2002 (or its raw-query form) as a 409 with a domain message. */
-export function rethrowP2002AsConflict(err: unknown, message: string, byTarget?: Record<string, string>): never {
+export function rethrowP2002AsConflict(
+  err: unknown,
+  message: string,
+  byTarget?: Record<string, string>,
+): never {
   if (isKnownPrisma(err) && err.code === 'P2002') {
     if (byTarget) {
       const target = uniqueTargetOf(err);
@@ -169,7 +185,10 @@ export function rethrowP2002AsConflict(err: unknown, message: string, byTarget?:
 export function isUniqueViolation(err: unknown): boolean {
   if (!isKnownPrisma(err)) return false;
   if (err.code === 'P2002') return true;
-  return err.code === 'P2010' && (err.meta?.code === '23505' || err.meta?.driverAdapterError?.cause?.originalCode === '23505');
+  return (
+    err.code === 'P2010' &&
+    (err.meta?.code === '23505' || err.meta?.driverAdapterError?.cause?.originalCode === '23505')
+  );
 }
 
 /**
@@ -193,4 +212,5 @@ export function isDuplicateLangTarget(target: string): boolean {
   return target.includes('lang') || target.includes('pkey');
 }
 
-export const DUPLICATE_LANG_MESSAGE = 'translations lists the same language more than once; send one entry per language';
+export const DUPLICATE_LANG_MESSAGE =
+  'translations lists the same language more than once; send one entry per language';

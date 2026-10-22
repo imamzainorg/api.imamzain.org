@@ -5,7 +5,11 @@ import { currentUser } from '../../lib/auth';
 import { getDb } from '../../lib/db';
 import { badRequest, conflict, notFound, rethrowP2002AsConflict } from '../../lib/errors';
 import { assertExactlyOneDefault, loadActiveLanguages, resolveTranslation } from '../../lib/i18n';
-import { MEDIA_VARIANT_SELECT, OG_IMAGE_SELECT, PUBLIC_MEDIA_SELECT } from '../../lib/media-selects';
+import {
+  MEDIA_VARIANT_SELECT,
+  OG_IMAGE_SELECT,
+  PUBLIC_MEDIA_SELECT,
+} from '../../lib/media-selects';
 import { buildPaginationMeta } from '../../lib/pagination';
 import { assertSlugRenameAllowed, resolvePublishedAt } from '../../lib/publish-rules';
 import { withinLimit } from '../../lib/rate-limit';
@@ -20,9 +24,19 @@ type Ctx = Context<AppEnv>;
 const POST_DETAIL_INCLUDE = {
   post_translations: { include: { og_image: { select: OG_IMAGE_SELECT } } },
   post_categories: { include: { post_category_translations: true } },
-  media: { include: { media_variants: { select: MEDIA_VARIANT_SELECT, orderBy: { width: 'asc' as const } } } },
+  media: {
+    include: {
+      media_variants: { select: MEDIA_VARIANT_SELECT, orderBy: { width: 'asc' as const } },
+    },
+  },
   post_attachments: {
-    include: { media: { include: { media_variants: { select: MEDIA_VARIANT_SELECT, orderBy: { width: 'asc' as const } } } } },
+    include: {
+      media: {
+        include: {
+          media_variants: { select: MEDIA_VARIANT_SELECT, orderBy: { width: 'asc' as const } },
+        },
+      },
+    },
     orderBy: { display_order: 'asc' as const },
   },
 } satisfies Prisma.postsInclude;
@@ -45,7 +59,12 @@ const POST_PUBLIC_DETAIL_SELECT = {
   post_categories: { include: { post_category_translations: true } },
   media: { select: PUBLIC_MEDIA_SELECT },
   post_attachments: {
-    select: { post_id: true, media_id: true, display_order: true, media: { select: PUBLIC_MEDIA_SELECT } },
+    select: {
+      post_id: true,
+      media_id: true,
+      display_order: true,
+      media: { select: PUBLIC_MEDIA_SELECT },
+    },
     orderBy: { display_order: 'asc' as const },
   },
 } satisfies Prisma.postsSelect;
@@ -79,30 +98,45 @@ const POST_LIST_SELECT = {
     select: {
       id: true,
       created_at: true,
-      post_category_translations: { select: { category_id: true, lang: true, title: true, slug: true, description: true } },
+      post_category_translations: {
+        select: { category_id: true, lang: true, title: true, slug: true, description: true },
+      },
     },
   },
   media: { select: PUBLIC_MEDIA_SELECT },
   post_attachments: {
     take: 1,
-    select: { post_id: true, media_id: true, display_order: true, media: { select: { id: true, url: true, mime_type: true, filename: true } } },
+    select: {
+      post_id: true,
+      media_id: true,
+      display_order: true,
+      media: { select: { id: true, url: true, mime_type: true, filename: true } },
+    },
     orderBy: { display_order: 'asc' as const },
   },
 } satisfies Prisma.postsSelect;
 
 // A list translation carries no body, so its reading time is unknown and reported as 0.
 const withZeroReadingTime = <T extends object>(t: T) => ({ ...t, reading_time_minutes: 0 });
-const withReadingTime = <T extends { body?: string | null }>(t: T) => ({ ...t, reading_time_minutes: readingTimeMinutes(t.body ?? null) });
+const withReadingTime = <T extends { body?: string | null }>(t: T) => ({
+  ...t,
+  reading_time_minutes: readingTimeMinutes(t.body ?? null),
+});
 
 const OG_IMAGE_NOT_FOUND = 'One or more og_image_id values do not match any media record';
 
 // Only the slug index may say "slug already used": the other unique keys a post write can hit are the
 // (post, lang) and (post, media) keys of its child tables.
-function postConflictMessages(slug: string | null | undefined): { fallback: string; byTarget: Record<string, string> } {
+function postConflictMessages(slug: string | null | undefined): {
+  fallback: string;
+  byTarget: Record<string, string>;
+} {
   return {
     fallback: 'A value in this request is already in use by another record',
     byTarget: {
-      slug: slug ? `Slug "${slug}" is already used by another post` : 'The slug is already used by another post',
+      slug: slug
+        ? `Slug "${slug}" is already used by another post`
+        : 'The slug is already used by another post',
       post_translations: 'The same language appears more than once in translations',
       lang: 'The same language appears more than once in translations',
       post_attachments: 'The same media file appears more than once in attachment_ids',
@@ -136,7 +170,12 @@ export async function findAll(c: Ctx, query: PostQuery, lang: string | null, isA
     where.post_translations = {
       some: {
         AND: [
-          { OR: [{ title: { contains: query.search, mode: 'insensitive' } }, { body: { contains: query.search, mode: 'insensitive' } }] },
+          {
+            OR: [
+              { title: { contains: query.search, mode: 'insensitive' } },
+              { body: { contains: query.search, mode: 'insensitive' } },
+            ],
+          },
           lang ? { OR: [{ lang }, { is_default: true }] } : { is_default: true },
         ],
       },
@@ -144,29 +183,49 @@ export async function findAll(c: Ctx, query: PostQuery, lang: string | null, isA
   }
 
   const orderBy: Prisma.postsOrderByWithRelationInput[] =
-    query.sort === 'views' ? [{ views: 'desc' }, { id: 'asc' }] : [{ published_at: 'desc' }, { created_at: 'desc' }, { id: 'asc' }];
+    query.sort === 'views'
+      ? [{ views: 'desc' }, { id: 'asc' }]
+      : [{ published_at: 'desc' }, { created_at: 'desc' }, { id: 'asc' }];
 
   const [items, total, active] = await Promise.all([
-    db.posts.findMany({ where, select: POST_LIST_SELECT, orderBy, skip: (query.page - 1) * query.limit, take: query.limit }),
+    db.posts.findMany({
+      where,
+      select: POST_LIST_SELECT,
+      orderBy,
+      skip: (query.page - 1) * query.limit,
+      take: query.limit,
+    }),
     db.posts.count({ where }),
     loadActiveLanguages(db),
   ]);
 
   const mapped = items.map((post) => {
     const decorated = post.post_translations.map(withZeroReadingTime);
-    return { ...post, post_translations: decorated, translation: resolveTranslation(decorated, lang, { active }) };
+    return {
+      ...post,
+      post_translations: decorated,
+      translation: resolveTranslation(decorated, lang, { active }),
+    };
   });
 
-  return { message: 'Posts fetched', data: { items: mapped, pagination: buildPaginationMeta(query.page, query.limit, total) } };
+  return {
+    message: 'Posts fetched',
+    data: { items: mapped, pagination: buildPaginationMeta(query.page, query.limit, total) },
+  };
 }
 
-function presentDetail<T extends { post_translations: { body?: string | null; lang?: string; is_default?: boolean }[] }>(
-  post: T,
-  lang: string | null,
-  active: ReadonlySet<string>,
-) {
+function presentDetail<
+  T extends { post_translations: { body?: string | null; lang?: string; is_default?: boolean }[] },
+>(post: T, lang: string | null, active: ReadonlySet<string>) {
   const decorated = post.post_translations.map(withReadingTime);
-  return { message: 'Post fetched', data: { ...post, post_translations: decorated, translation: resolveTranslation(decorated, lang, { active }) } };
+  return {
+    message: 'Post fetched',
+    data: {
+      ...post,
+      post_translations: decorated,
+      translation: resolveTranslation(decorated, lang, { active }),
+    },
+  };
 }
 
 export async function findOne(c: Ctx, id: string, lang: string | null, isAdmin = false) {
@@ -176,7 +235,9 @@ export async function findOne(c: Ctx, id: string, lang: string | null, isAdmin =
 
   // Two literal query shapes: the admin `include` and the public allow-list `select` type differently.
   const [post, active] = await Promise.all([
-    isAdmin ? db.posts.findFirst({ where, include: POST_DETAIL_INCLUDE }) : db.posts.findFirst({ where, select: POST_PUBLIC_DETAIL_SELECT }),
+    isAdmin
+      ? db.posts.findFirst({ where, include: POST_DETAIL_INCLUDE })
+      : db.posts.findFirst({ where, select: POST_PUBLIC_DETAIL_SELECT }),
     loadActiveLanguages(db),
   ]);
   if (!post) throw notFound('Post not found');
@@ -186,7 +247,10 @@ export async function findOne(c: Ctx, id: string, lang: string | null, isAdmin =
 export async function findBySlug(c: Ctx, slug: string, lang: string | null) {
   const db = getDb(c);
   const [post, active] = await Promise.all([
-    db.posts.findFirst({ where: { slug, deleted_at: null, is_published: true }, select: POST_PUBLIC_DETAIL_SELECT }),
+    db.posts.findFirst({
+      where: { slug, deleted_at: null, is_published: true },
+      select: POST_PUBLIC_DETAIL_SELECT,
+    }),
     loadActiveLanguages(db),
   ]);
   if (!post) throw notFound('Post not found');
@@ -194,7 +258,9 @@ export async function findBySlug(c: Ctx, slug: string, lang: string | null) {
 }
 
 async function assertOgImagesExist(c: Ctx, translations: { og_image_id?: string | null }[]) {
-  const ids = translations.map((t) => t.og_image_id).filter((v): v is string => typeof v === 'string');
+  const ids = translations
+    .map((t) => t.og_image_id)
+    .filter((v): v is string => typeof v === 'string');
   if (ids.length === 0) return;
   const found = await getDb(c).media.findMany({ where: { id: { in: ids } }, select: { id: true } });
   if (found.length !== new Set(ids).size) throw notFound(OG_IMAGE_NOT_FOUND);
@@ -202,13 +268,18 @@ async function assertOgImagesExist(c: Ctx, translations: { og_image_id?: string 
 
 // A trashed post's slug is suffixed, so it can't clash here.
 async function assertSlugAvailable(c: Ctx, slug: string, excludePostId: string | null) {
-  const clash = await getDb(c).posts.findFirst({ where: { slug, ...(excludePostId ? { NOT: { id: excludePostId } } : {}) }, select: { id: true } });
+  const clash = await getDb(c).posts.findFirst({
+    where: { slug, ...(excludePostId ? { NOT: { id: excludePostId } } : {}) },
+    select: { id: true },
+  });
   if (clash) throw conflict(`Slug "${slug}" is already used by another post`);
 }
 
 export async function create(c: Ctx, input: CreatePostInput, lang: string | null) {
   const db = getDb(c);
-  const category = await db.post_categories.findFirst({ where: { id: input.category_id, deleted_at: null } });
+  const category = await db.post_categories.findFirst({
+    where: { id: input.category_id, deleted_at: null },
+  });
   if (!category) throw notFound('Category not found');
 
   if (input.cover_image_id) {
@@ -264,7 +335,11 @@ export async function create(c: Ctx, input: CreatePostInput, lang: string | null
 
       if (input.attachment_ids && input.attachment_ids.length > 0) {
         await tx.post_attachments.createMany({
-          data: input.attachment_ids.map((mediaId, index) => ({ post_id: created.id, media_id: mediaId, display_order: index })),
+          data: input.attachment_ids.map((mediaId, index) => ({
+            post_id: created.id,
+            media_id: mediaId,
+            display_order: index,
+          })),
         });
       }
 
@@ -275,7 +350,12 @@ export async function create(c: Ctx, input: CreatePostInput, lang: string | null
     rethrowP2002AsConflict(err, fallback, byTarget);
   }
 
-  audit(c, { action: AUDIT_ACTIONS.POST_CREATED, resourceType: 'post', resourceId: post.id, changes: { method: 'POST', path: '/api/v1/posts' } });
+  audit(c, {
+    action: AUDIT_ACTIONS.POST_CREATED,
+    resourceType: 'post',
+    resourceId: post.id,
+    changes: { method: 'POST', path: '/api/v1/posts' },
+  });
 
   const { data } = await findOne(c, post.id, lang, true);
   return { message: 'Post created', data };
@@ -287,7 +367,9 @@ export async function update(c: Ctx, id: string, input: UpdatePostInput, lang: s
   if (!post) throw notFound('Post not found');
 
   if (input.category_id !== undefined && input.category_id !== post.category_id) {
-    const category = await db.post_categories.findFirst({ where: { id: input.category_id as string, deleted_at: null } });
+    const category = await db.post_categories.findFirst({
+      where: { id: input.category_id as string, deleted_at: null },
+    });
     if (!category) throw notFound('Category not found');
   }
 
@@ -310,8 +392,12 @@ export async function update(c: Ctx, id: string, input: UpdatePostInput, lang: s
   try {
     await db.$transaction(async (tx) => {
       const data: Prisma.postsUpdateInput = { updated_at: new Date() };
-      if (input.category_id !== undefined) data.post_categories = { connect: { id: input.category_id as string } };
-      if (input.cover_image_id !== undefined) data.media = input.cover_image_id ? { connect: { id: input.cover_image_id } } : { disconnect: true };
+      if (input.category_id !== undefined)
+        data.post_categories = { connect: { id: input.category_id as string } };
+      if (input.cover_image_id !== undefined)
+        data.media = input.cover_image_id
+          ? { connect: { id: input.cover_image_id } }
+          : { disconnect: true };
       if (input.slug !== undefined) data.slug = input.slug as string;
       if (input.is_published !== undefined) data.is_published = input.is_published as boolean;
       if (input.is_featured !== undefined) data.is_featured = input.is_featured as boolean;
@@ -323,9 +409,15 @@ export async function update(c: Ctx, id: string, input: UpdatePostInput, lang: s
         willBePublished: input.is_published ?? post.is_published,
         wasPublished: post.is_published,
         stored: post.published_at,
-        requested: input.published_at === undefined ? undefined : input.published_at ? new Date(input.published_at) : null,
+        requested:
+          input.published_at === undefined
+            ? undefined
+            : input.published_at
+              ? new Date(input.published_at)
+              : null,
       });
-      if (nextPublishedAt?.getTime() !== post.published_at?.getTime()) data.published_at = nextPublishedAt;
+      if (nextPublishedAt?.getTime() !== post.published_at?.getTime())
+        data.published_at = nextPublishedAt;
 
       await tx.posts.update({ where: { id }, data });
 
@@ -348,7 +440,9 @@ export async function update(c: Ctx, id: string, input: UpdatePostInput, lang: s
         }
 
         // A partial update that flips is_default on one row must not leave 0 or 2+ defaults.
-        const defaults = await tx.post_translations.count({ where: { post_id: id, is_default: true } });
+        const defaults = await tx.post_translations.count({
+          where: { post_id: id, is_default: true },
+        });
         if (defaults !== 1) throw badRequest('Exactly one translation must have is_default: true');
       }
 
@@ -356,7 +450,11 @@ export async function update(c: Ctx, id: string, input: UpdatePostInput, lang: s
         await tx.post_attachments.deleteMany({ where: { post_id: id } });
         if (input.attachment_ids && input.attachment_ids.length > 0) {
           await tx.post_attachments.createMany({
-            data: input.attachment_ids.map((mediaId, index) => ({ post_id: id, media_id: mediaId, display_order: index })),
+            data: input.attachment_ids.map((mediaId, index) => ({
+              post_id: id,
+              media_id: mediaId,
+              display_order: index,
+            })),
           });
         }
       }
@@ -366,7 +464,12 @@ export async function update(c: Ctx, id: string, input: UpdatePostInput, lang: s
     rethrowP2002AsConflict(err, fallback, byTarget);
   }
 
-  audit(c, { action: AUDIT_ACTIONS.POST_UPDATED, resourceType: 'post', resourceId: id, changes: { method: 'PATCH', path: `/api/v1/posts/${id}` } });
+  audit(c, {
+    action: AUDIT_ACTIONS.POST_UPDATED,
+    resourceType: 'post',
+    resourceId: id,
+    changes: { method: 'PATCH', path: `/api/v1/posts/${id}` },
+  });
 
   const { data } = await findOne(c, id, lang, true);
   return { message: 'Post updated', data };
@@ -374,7 +477,10 @@ export async function update(c: Ctx, id: string, input: UpdatePostInput, lang: s
 
 export async function togglePublish(c: Ctx, id: string, isPublished: boolean, lang: string | null) {
   const db = getDb(c);
-  const post = await db.posts.findFirst({ where: { id, deleted_at: null }, select: { id: true, is_published: true, published_at: true } });
+  const post = await db.posts.findFirst({
+    where: { id, deleted_at: null },
+    select: { id: true, is_published: true, published_at: true },
+  });
   if (!post) throw notFound('Post not found');
 
   // Already in the requested state: no write, no audit row, no updated_at bump. A schedule on an
@@ -422,7 +528,10 @@ export async function trackView(c: Ctx, id: string) {
     return { message: 'View tracked', data: null };
   }
 
-  const result = await db.posts.updateMany({ where: { id, deleted_at: null, is_published: true }, data: { views: { increment: 1 } } });
+  const result = await db.posts.updateMany({
+    where: { id, deleted_at: null, is_published: true },
+    data: { views: { increment: 1 } },
+  });
   if (result.count === 0) throw notFound('Post not found');
   return { message: 'View tracked', data: null };
 }
@@ -431,7 +540,13 @@ export async function findTrash(c: Ctx, page: number, limit: number) {
   const db = getDb(c);
   const where: Prisma.postsWhereInput = { deleted_at: { not: null } };
   const [items, total, active] = await Promise.all([
-    db.posts.findMany({ where, select: POST_LIST_SELECT, orderBy: [{ deleted_at: 'desc' }, { id: 'asc' }], skip: (page - 1) * limit, take: limit }),
+    db.posts.findMany({
+      where,
+      select: POST_LIST_SELECT,
+      orderBy: [{ deleted_at: 'desc' }, { id: 'asc' }],
+      skip: (page - 1) * limit,
+      take: limit,
+    }),
     db.posts.count({ where }),
     loadActiveLanguages(db),
   ]);
@@ -447,7 +562,10 @@ export async function findTrash(c: Ctx, page: number, limit: number) {
     };
   });
 
-  return { message: 'Trash fetched', data: { items: mapped, pagination: buildPaginationMeta(page, limit, total) } };
+  return {
+    message: 'Trash fetched',
+    data: { items: mapped, pagination: buildPaginationMeta(page, limit, total) },
+  };
 }
 
 export async function restore(c: Ctx, id: string) {
@@ -457,21 +575,33 @@ export async function restore(c: Ctx, id: string) {
 
   // The category may have been soft-deleted while the post sat in the trash (a category only blocks on
   // LIVE children), so a live post is never restored under a deleted category.
-  const liveCategory = await db.post_categories.findFirst({ where: { id: post.category_id, deleted_at: null }, select: { id: true } });
-  if (!liveCategory) throw conflict('Cannot restore: the parent category was deleted — restore the category first');
+  const liveCategory = await db.post_categories.findFirst({
+    where: { id: post.category_id, deleted_at: null },
+    select: { id: true },
+  });
+  if (!liveCategory)
+    throw conflict('Cannot restore: the parent category was deleted — restore the category first');
 
   const originalSlug = post.slug ? stripSoftDeleteSuffix(post.slug) : null;
 
   try {
     await db.$transaction(async (tx) => {
       if (originalSlug) {
-        const clash = await tx.posts.findFirst({ where: { slug: originalSlug, deleted_at: null, NOT: { id } }, select: { id: true } });
-        if (clash) throw conflict(`Cannot restore: slug "${originalSlug}" is now used by another post`);
+        const clash = await tx.posts.findFirst({
+          where: { slug: originalSlug, deleted_at: null, NOT: { id } },
+          select: { id: true },
+        });
+        if (clash)
+          throw conflict(`Cannot restore: slug "${originalSlug}" is now used by another post`);
       }
 
       await tx.posts.update({
         where: { id },
-        data: { deleted_at: null, updated_at: new Date(), ...(originalSlug ? { slug: originalSlug } : {}) },
+        data: {
+          deleted_at: null,
+          updated_at: new Date(),
+          ...(originalSlug ? { slug: originalSlug } : {}),
+        },
       });
     });
   } catch (err) {
@@ -479,7 +609,12 @@ export async function restore(c: Ctx, id: string) {
     rethrowP2002AsConflict(err, 'Cannot restore: the original slug was claimed by another post');
   }
 
-  audit(c, { action: AUDIT_ACTIONS.POST_RESTORED, resourceType: 'post', resourceId: id, changes: { method: 'POST', path: `/api/v1/posts/${id}/restore` } });
+  audit(c, {
+    action: AUDIT_ACTIONS.POST_RESTORED,
+    resourceType: 'post',
+    resourceId: id,
+    changes: { method: 'POST', path: `/api/v1/posts/${id}/restore` },
+  });
 
   return { message: 'Post restored', data: null };
 }
@@ -518,11 +653,16 @@ export async function bulkSetPublish(c: Ctx, ids: string[], isPublished: boolean
       await tx.posts.updateMany({
         where: { id: { in: idsAlreadyStamped } },
         // Unpublishing clears published_at, see togglePublish.
-        data: isPublished ? { is_published: true, updated_at: now } : { is_published: false, updated_at: now, published_at: null },
+        data: isPublished
+          ? { is_published: true, updated_at: now }
+          : { is_published: false, updated_at: now, published_at: null },
       });
     }
     if (idsNeedingStamp.length > 0) {
-      await tx.posts.updateMany({ where: { id: { in: idsNeedingStamp } }, data: { is_published: isPublished, updated_at: now, published_at: now } });
+      await tx.posts.updateMany({
+        where: { id: { in: idsNeedingStamp } },
+        data: { is_published: isPublished, updated_at: now, published_at: now },
+      });
     }
   });
 
@@ -533,22 +673,34 @@ export async function bulkSetPublish(c: Ctx, ids: string[], isPublished: boolean
       action,
       resourceType: 'post',
       resourceId,
-      changes: { method: 'POST', path: '/api/v1/posts/bulk/publish', is_published: isPublished, bulk: true },
+      changes: {
+        method: 'POST',
+        path: '/api/v1/posts/bulk/publish',
+        is_published: isPublished,
+        bulk: true,
+      },
     })),
   );
 
-  return { message: `${targetCount} post(s) ${isPublished ? 'published' : 'unpublished'}`, data: { affected: targetCount, skipped } };
+  return {
+    message: `${targetCount} post(s) ${isPublished ? 'published' : 'unpublished'}`,
+    data: { affected: targetCount, skipped },
+  };
 }
 
 export async function bulkDelete(c: Ctx, ids: string[]) {
   const db = getDb(c);
   const uniqueIds = Array.from(new Set(ids));
-  const existing = await db.posts.findMany({ where: { id: { in: uniqueIds }, deleted_at: null }, select: { id: true } });
+  const existing = await db.posts.findMany({
+    where: { id: { in: uniqueIds }, deleted_at: null },
+    select: { id: true },
+  });
   const existingIds = new Set(existing.map((p) => p.id));
 
   const skipped = uniqueIds.filter((id) => !existingIds.has(id));
   const targetIds = uniqueIds.filter((id) => existingIds.has(id));
-  if (targetIds.length === 0) return { message: 'No posts deleted', data: { affected: 0, skipped } };
+  if (targetIds.length === 0)
+    return { message: 'No posts deleted', data: { affected: 0, skipped } };
 
   const deletedAt = new Date();
   const suffix = softDeleteSuffix(deletedAt);
@@ -556,7 +708,10 @@ export async function bulkDelete(c: Ctx, ids: string[]) {
   await db.$transaction(async (tx) => {
     // One raw UPDATE suffixes every slug in the batch instead of N reads and writes.
     await tx.$executeRaw`UPDATE posts SET slug = slug || ${suffix} WHERE id = ANY(${targetIds}::uuid[])`;
-    await tx.posts.updateMany({ where: { id: { in: targetIds } }, data: { deleted_at: deletedAt } });
+    await tx.posts.updateMany({
+      where: { id: { in: targetIds } },
+      data: { deleted_at: deletedAt },
+    });
   });
 
   auditMany(
@@ -569,7 +724,10 @@ export async function bulkDelete(c: Ctx, ids: string[]) {
     })),
   );
 
-  return { message: `${targetIds.length} post(s) deleted`, data: { affected: targetIds.length, skipped } };
+  return {
+    message: `${targetIds.length} post(s) deleted`,
+    data: { affected: targetIds.length, skipped },
+  };
 }
 
 export async function softDelete(c: Ctx, id: string) {
@@ -579,9 +737,20 @@ export async function softDelete(c: Ctx, id: string) {
 
   // Suffixing frees the slug's unique index while the post sits in the trash; restore strips it back off.
   const deletedAt = new Date();
-  await db.posts.update({ where: { id }, data: { deleted_at: deletedAt, ...(post.slug ? { slug: `${post.slug}${softDeleteSuffix(deletedAt)}` } : {}) } });
+  await db.posts.update({
+    where: { id },
+    data: {
+      deleted_at: deletedAt,
+      ...(post.slug ? { slug: `${post.slug}${softDeleteSuffix(deletedAt)}` } : {}),
+    },
+  });
 
-  audit(c, { action: AUDIT_ACTIONS.POST_DELETED, resourceType: 'post', resourceId: id, changes: { method: 'DELETE', path: `/api/v1/posts/${id}` } });
+  audit(c, {
+    action: AUDIT_ACTIONS.POST_DELETED,
+    resourceType: 'post',
+    resourceId: id,
+    changes: { method: 'DELETE', path: `/api/v1/posts/${id}` },
+  });
 
   return { message: 'Post deleted', data: null };
 }

@@ -17,12 +17,15 @@ export interface ImageHeader {
   cmyk: boolean;
 }
 
-const ascii = (b: Uint8Array, start: number, end: number) => String.fromCharCode(...b.subarray(start, Math.min(end, b.length)));
+const ascii = (b: Uint8Array, start: number, end: number) =>
+  String.fromCharCode(...b.subarray(start, Math.min(end, b.length)));
 const u16be = (b: Uint8Array, i: number) => (b[i] << 8) | b[i + 1];
 const u16le = (b: Uint8Array, i: number) => b[i] | (b[i + 1] << 8);
 const u24le = (b: Uint8Array, i: number) => b[i] | (b[i + 1] << 8) | (b[i + 2] << 16);
-const u32be = (b: Uint8Array, i: number) => ((b[i] << 24) >>> 0) + ((b[i + 1] << 16) | (b[i + 2] << 8) | b[i + 3]);
-const u32le = (b: Uint8Array, i: number) => ((b[i + 3] << 24) >>> 0) + ((b[i + 2] << 16) | (b[i + 1] << 8) | b[i]);
+const u32be = (b: Uint8Array, i: number) =>
+  ((b[i] << 24) >>> 0) + ((b[i + 1] << 16) | (b[i + 2] << 8) | b[i + 3]);
+const u32le = (b: Uint8Array, i: number) =>
+  ((b[i + 3] << 24) >>> 0) + ((b[i + 2] << 16) | (b[i + 1] << 8) | b[i]);
 
 /** The Orientation tag (0x0112) of a TIFF-structured EXIF block, or undefined. */
 export function exifOrientation(tiff: Uint8Array): number | undefined {
@@ -44,7 +47,9 @@ export function exifOrientation(tiff: Uint8Array): number | undefined {
 }
 
 const oriented = (width: number, height: number, orientation: number | undefined) =>
-  orientation !== undefined && orientation >= 5 && orientation <= 8 ? { width: height, height: width } : { width, height };
+  orientation !== undefined && orientation >= 5 && orientation <= 8
+    ? { width: height, height: width }
+    : { width, height };
 
 const XMP_JPEG = 'http://ns.adobe.com/xap/1.0/\0';
 
@@ -82,7 +87,13 @@ function parseJpeg(b: Uint8Array): ImageHeader | null {
       const height = u16be(b, seg + 1);
       const width = u16be(b, seg + 3);
       if (!width || !height) return null;
-      return { format: 'jpeg', ...oriented(width, height, orientation), animated: false, hasMetadata: exif || xmp || iptc, cmyk: b[seg + 5] === 4 };
+      return {
+        format: 'jpeg',
+        ...oriented(width, height, orientation),
+        animated: false,
+        hasMetadata: exif || xmp || iptc,
+        cmyk: b[seg + 5] === 4,
+      };
     }
     i += 2 + len;
   }
@@ -98,7 +109,7 @@ function parsePng(b: Uint8Array): ImageHeader | null {
   let xmp = false;
   let orientation: number | undefined;
   // Ancillary chunks up to the image data (or the end of what was read).
-  for (let i = 8; i + 8 <= b.length; ) {
+  for (let i = 8; i + 8 <= b.length;) {
     const len = u32be(b, i);
     const type = ascii(b, i + 4, i + 8);
     const data = b.subarray(i + 8, i + 8 + len);
@@ -106,12 +117,21 @@ function parsePng(b: Uint8Array): ImageHeader | null {
     if (type === 'eXIf') {
       exif = true;
       orientation = exifOrientation(data);
-    } else if ((type === 'iTXt' || type === 'tEXt' || type === 'zTXt') && ascii(data, 0, 17) === 'XML:com.adobe.xmp') {
+    } else if (
+      (type === 'iTXt' || type === 'tEXt' || type === 'zTXt') &&
+      ascii(data, 0, 17) === 'XML:com.adobe.xmp'
+    ) {
       xmp = true;
     }
     i += 12 + len;
   }
-  return { format: 'png', ...oriented(width, height, orientation), animated: false, hasMetadata: exif || xmp, cmyk: false };
+  return {
+    format: 'png',
+    ...oriented(width, height, orientation),
+    animated: false,
+    hasMetadata: exif || xmp,
+    cmyk: false,
+  };
 }
 
 /** Frames in a GIF, walking its blocks; stops early once two are seen. */
@@ -148,7 +168,14 @@ function parseGif(b: Uint8Array): ImageHeader | null {
   const width = u16le(b, 6);
   const height = u16le(b, 8);
   if (!width || !height) return null;
-  return { format: 'gif', width, height, animated: gifFrames(b) > 1, hasMetadata: false, cmyk: false };
+  return {
+    format: 'gif',
+    width,
+    height,
+    animated: gifFrames(b) > 1,
+    hasMetadata: false,
+    cmyk: false,
+  };
 }
 
 function parseWebp(b: Uint8Array): ImageHeader | null {
@@ -179,7 +206,7 @@ function parseWebp(b: Uint8Array): ImageHeader | null {
     return null;
   }
   let orientation: number | undefined;
-  for (let i = 12; i + 8 <= b.length; ) {
+  for (let i = 12; i + 8 <= b.length;) {
     const len = u32le(b, i + 4);
     if (ascii(b, i, i + 4) === 'EXIF') {
       exif = true;
@@ -192,7 +219,13 @@ function parseWebp(b: Uint8Array): ImageHeader | null {
     i += 8 + len + (len % 2);
   }
   if (!width || !height) return null;
-  return { format: 'webp', ...oriented(width, height, orientation), animated, hasMetadata: exif || xmp, cmyk: false };
+  return {
+    format: 'webp',
+    ...oriented(width, height, orientation),
+    animated,
+    hasMetadata: exif || xmp,
+    cmyk: false,
+  };
 }
 
 /**
@@ -202,8 +235,10 @@ function parseWebp(b: Uint8Array): ImageHeader | null {
 export function parseImageHeader(b: Uint8Array): ImageHeader | null {
   if (b.length >= 3 && b[0] === 0xff && b[1] === 0xd8 && b[2] === 0xff) return parseJpeg(b);
   if (b.length >= 8 && b[0] === 0x89 && ascii(b, 1, 8) === 'PNG\r\n\x1a\n') return parsePng(b);
-  if (b.length >= 6 && (ascii(b, 0, 6) === 'GIF87a' || ascii(b, 0, 6) === 'GIF89a')) return parseGif(b);
-  if (b.length >= 12 && ascii(b, 0, 4) === 'RIFF' && ascii(b, 8, 12) === 'WEBP') return parseWebp(b);
+  if (b.length >= 6 && (ascii(b, 0, 6) === 'GIF87a' || ascii(b, 0, 6) === 'GIF89a'))
+    return parseGif(b);
+  if (b.length >= 12 && ascii(b, 0, 4) === 'RIFF' && ascii(b, 8, 12) === 'WEBP')
+    return parseWebp(b);
   return null;
 }
 
@@ -216,7 +251,9 @@ export type SniffedImageMime = 'image/jpeg' | 'image/png' | 'image/gif' | 'image
 export function sniffImageMime(b: Uint8Array): SniffedImageMime | null {
   if (b.length >= 3 && b[0] === 0xff && b[1] === 0xd8 && b[2] === 0xff) return 'image/jpeg';
   if (b.length >= 8 && b[0] === 0x89 && ascii(b, 1, 8) === 'PNG\r\n\x1a\n') return 'image/png';
-  if (b.length >= 6 && (ascii(b, 0, 6) === 'GIF87a' || ascii(b, 0, 6) === 'GIF89a')) return 'image/gif';
-  if (b.length >= 12 && ascii(b, 0, 4) === 'RIFF' && ascii(b, 8, 12) === 'WEBP') return 'image/webp';
+  if (b.length >= 6 && (ascii(b, 0, 6) === 'GIF87a' || ascii(b, 0, 6) === 'GIF89a'))
+    return 'image/gif';
+  if (b.length >= 12 && ascii(b, 0, 4) === 'RIFF' && ascii(b, 8, 12) === 'WEBP')
+    return 'image/webp';
   return null;
 }

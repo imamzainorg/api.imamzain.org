@@ -16,7 +16,12 @@ export const submitBody = z.object({
   attempt_id: z.custom<string>((v) => z.uuid().safeParse(v).success, 'attempt_id must be a UUID'),
   attempt_token: z.string().max(LIMITS.token).nullish(),
   answers: z
-    .array(z.strictObject({ question_id: z.string().max(LIMITS.questionId), answer: z.enum(['A', 'B', 'C', 'D']) }))
+    .array(
+      z.strictObject({
+        question_id: z.string().max(LIMITS.questionId),
+        answer: z.enum(['A', 'B', 'C', 'D']),
+      }),
+    )
     .max(LIMITS.answersMax)
     .min(1),
 });

@@ -15,6 +15,7 @@ export function bcryptRounds(env: { BCRYPT_ROUNDS?: string }): number {
   return Number.isFinite(parsed) && parsed >= 4 && parsed <= 15 ? parsed : DEFAULT_BCRYPT_ROUNDS;
 }
 
-export const hashPassword = (password: string, env: { BCRYPT_ROUNDS?: string }) => bcrypt.hash(password, bcryptRounds(env));
+export const hashPassword = (password: string, env: { BCRYPT_ROUNDS?: string }) =>
+  bcrypt.hash(password, bcryptRounds(env));
 
 export const verifyPassword = (password: string, hash: string) => bcrypt.compare(password, hash);

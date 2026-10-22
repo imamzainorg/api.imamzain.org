@@ -13,6 +13,7 @@ export const galleryCategories = categoryRoutes({
     deleted: AUDIT_ACTIONS.GALLERY_CATEGORY_DELETED,
     restored: AUDIT_ACTIONS.GALLERY_CATEGORY_RESTORED,
   },
-  countLiveChildren: (db, id) => db.gallery_images.count({ where: { category_id: id, deleted_at: null } }),
+  countLiveChildren: (db, id) =>
+    db.gallery_images.count({ where: { category_id: id, deleted_at: null } }),
   childConflictMessage: 'Cannot delete a category that contains gallery images',
 });

@@ -4,19 +4,31 @@ import { paginationShape } from '../../lib/pagination';
 import { searchTerm } from '../../lib/search-term';
 
 /** DTO_LIMITS in src/common/validators/dto-limits.ts; the CMS forms use the same numbers. */
-export const LIMITS = { title: 500, summary: 5000, person: 300, label: 200, code: 64, url: 2048, listItems: 50 } as const;
+export const LIMITS = {
+  title: 500,
+  summary: 5000,
+  person: 300,
+  label: 200,
+  code: 64,
+  url: 2048,
+  listItems: 50,
+} as const;
 
 const urlShape = { protocol: /^(https?|ftp)$/, hostname: z.regexes.domain };
 
 // class-validator's bare @IsUrl() (validator.js isURL): protocol optional, http(s)/ftp, a dotted host.
 // A value without `://` is checked as if it had a scheme, which is what isURL's no-protocol branch does.
 const isUrl = (v: string) =>
-  z.url(urlShape).safeParse(v).success || (!v.includes('://') && z.url(urlShape).safeParse(`http://${v}`).success);
+  z.url(urlShape).safeParse(v).success ||
+  (!v.includes('://') && z.url(urlShape).safeParse(`http://${v}`).success);
 
 const pdfUrl = z.string().max(LIMITS.url).refine(isUrl, 'pdf_url must be a URL address');
 
 // @IsUUID alone: a missing value reads "must be a UUID", not "must be a string".
-const categoryId = z.custom<string>((v) => z.uuid().safeParse(v).success, 'category_id must be a UUID');
+const categoryId = z.custom<string>(
+  (v) => z.uuid().safeParse(v).success,
+  'category_id must be a UUID',
+);
 
 // Checks are listed in the order class-validator reports them (its decorators, bottom-up).
 export const paperTranslationSchema = z.strictObject({
@@ -59,7 +71,11 @@ export type UpdatePaperInput = z.output<typeof updatePaperBody>;
 
 export const listQuery = z.object(paginationShape);
 
-export const paperQuery = z.object({ ...paginationShape, category_id: z.uuid().optional(), search: searchTerm });
+export const paperQuery = z.object({
+  ...paginationShape,
+  category_id: z.uuid().optional(),
+  search: searchTerm,
+});
 
 /** No uuid check: a malformed id reaches Postgres and comes back as 400 INVALID_IDENTIFIER, as in Nest. */
 export const idParams = z.object({ id: z.string() });

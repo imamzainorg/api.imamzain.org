@@ -18,22 +18,33 @@ export interface MailMessage {
   replyTo?: string;
 }
 
-export type MailResult = { ok: true; messageId: string | null } | { ok: false; unconfigured: boolean; error: string };
+export type MailResult =
+  { ok: true; messageId: string | null } | { ok: false; unconfigured: boolean; error: string };
 
 export function escapeHtml(value: unknown): string {
   if (value === null || value === undefined) return '';
-  return String(value).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+  return String(value)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
 }
 
 /** CR/LF would let a form field start a new header line. */
 export function sanitizeHeaderValue(value: unknown): string {
   if (value === null || value === undefined) return '';
-  return String(value).replace(/[\r\n]/g, ' ').trim();
+  return String(value)
+    .replace(/[\r\n]/g, ' ')
+    .trim();
 }
 
 /** Crude HTML to plain text; links are dropped, so callers pass `text` whenever a URL must survive. */
 export function stripHtml(html: string): string {
-  return html.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
+  return html
+    .replace(/<[^>]*>/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
 }
 
 /** `Name <addr>` becomes the binding's `{ email, name }`; a bare address stays a string. */
@@ -48,7 +59,8 @@ export const isMailConfigured = (env: MailEnv): boolean => Boolean(env.EMAIL);
 
 /** Never throws: a failed send is a result the caller decides about. */
 export async function sendMail(env: MailEnv, message: MailMessage): Promise<MailResult> {
-  if (!env.EMAIL) return { ok: false, unconfigured: true, error: 'Email binding is not configured' };
+  if (!env.EMAIL)
+    return { ok: false, unconfigured: true, error: 'Email binding is not configured' };
   try {
     const sent = await env.EMAIL.send({
       from: parseSender(env.EMAIL_FROM || DEFAULT_EMAIL_FROM),

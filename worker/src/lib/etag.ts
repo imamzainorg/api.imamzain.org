@@ -9,7 +9,10 @@ export async function envelopeEtag(body: string): Promise<string> {
   const at = body.lastIndexOf(TIMESTAMP_KEY);
   const stable = at >= 0 && TIMESTAMP_TAIL.test(body.slice(at)) ? body.slice(0, at) : body;
   const digest = await crypto.subtle.digest('SHA-1', new TextEncoder().encode(stable));
-  const b64 = btoa(String.fromCharCode(...new Uint8Array(digest))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+  const b64 = btoa(String.fromCharCode(...new Uint8Array(digest)))
+    .replace(/\+/g, '-')
+    .replace(/\//g, '_')
+    .replace(/=+$/, '');
   return `W/"${b64}"`;
 }
 
@@ -33,7 +36,12 @@ export const etag = createMiddleware<AppEnv>(async (c, next) => {
   const tag = await envelopeEtag(await res.clone().text());
   c.header('ETag', tag);
   const method = c.req.method;
-  if ((method === 'GET' || method === 'HEAD') && res.status >= 200 && res.status < 300 && isFresh(c.req.raw, tag)) {
+  if (
+    (method === 'GET' || method === 'HEAD') &&
+    res.status >= 200 &&
+    res.status < 300 &&
+    isFresh(c.req.raw, tag)
+  ) {
     const headers = new Headers(c.res.headers);
     headers.delete('content-type');
     headers.delete('content-length');

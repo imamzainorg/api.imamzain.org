@@ -4,11 +4,19 @@ import { tooManyRequests } from './errors';
 import type { AppEnv } from './types';
 
 /** One Rate Limiting binding per limit tier (wrangler.jsonc); the binding's limit is fixed, so the tier IS the limit. */
-export type RateTier = 'RL_GLOBAL' | 'RL_120' | 'RL_60' | 'RL_30' | 'RL_20' | 'RL_10' | 'RL_5' | 'RL_VIEW';
+export type RateTier =
+  'RL_GLOBAL' | 'RL_120' | 'RL_60' | 'RL_30' | 'RL_20' | 'RL_10' | 'RL_5' | 'RL_VIEW';
 
 /** RL_GLOBAL's limit per 60 s in wrangler.jsonc (Nest's 3,000 / 15 min per IP). */
 const GLOBAL_PER_MINUTE = 200;
-const TIER_BY_LIMIT: Record<number, RateTier> = { 120: 'RL_120', 60: 'RL_60', 30: 'RL_30', 20: 'RL_20', 10: 'RL_10', 5: 'RL_5' };
+const TIER_BY_LIMIT: Record<number, RateTier> = {
+  120: 'RL_120',
+  60: 'RL_60',
+  30: 'RL_30',
+  20: 'RL_20',
+  10: 'RL_10',
+  5: 'RL_5',
+};
 
 /**
  * Nest's `@Throttle({ default: { limit, ttl } })` → the binding tier for that route. The bindings only
@@ -21,7 +29,8 @@ const TIER_BY_LIMIT: Record<number, RateTier> = { 120: 'RL_120', 60: 'RL_60', 30
 export function tierFor(limit: number): RateTier | null {
   if (limit >= GLOBAL_PER_MINUTE) return null;
   const tier = TIER_BY_LIMIT[limit];
-  if (!tier) throw new Error(`No rate-limit binding for ${limit} per 60 s; add one to wrangler.jsonc`);
+  if (!tier)
+    throw new Error(`No rate-limit binding for ${limit} per 60 s; add one to wrangler.jsonc`);
   return tier;
 }
 
@@ -39,7 +48,11 @@ export async function withinLimit(env: Env, tier: RateTier, key: string): Promis
 export function rateLimit(tier: RateTier, key?: (c: Context<AppEnv>) => string) {
   return createMiddleware<AppEnv>(async (c, next) => {
     const ip = c.get('ip');
-    const bucket = key ? key(c) : tier === 'RL_GLOBAL' ? ip : `${c.req.method}:${c.req.routePath}:${ip}`;
+    const bucket = key
+      ? key(c)
+      : tier === 'RL_GLOBAL'
+        ? ip
+        : `${c.req.method}:${c.req.routePath}:${ip}`;
     if (!(await withinLimit(c.env, tier, bucket))) {
       c.header(tier === 'RL_GLOBAL' ? 'Retry-After-global' : 'Retry-After', '60');
       throw tooManyRequests();

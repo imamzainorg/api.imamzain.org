@@ -42,5 +42,8 @@ export async function findAll(c: Ctx, query: AuditLogQuery) {
     db.audit_logs.count({ where }),
   ]);
 
-  return { message: 'Audit logs fetched', data: { items, pagination: buildPaginationMeta(page, limit, total) } };
+  return {
+    message: 'Audit logs fetched',
+    data: { items, pagination: buildPaginationMeta(page, limit, total) },
+  };
 }

@@ -21,7 +21,13 @@ import {
 } from '../../lib/r2';
 import type { AppEnv } from '../../lib/types';
 import type { ConfirmInput, UpdateMediaInput } from './schemas';
-import { deleteR2Variants, findForMedia, findForMediaIds, processMedia, type VariantRow } from './variants';
+import {
+  deleteR2Variants,
+  findForMedia,
+  findForMediaIds,
+  processMedia,
+  type VariantRow,
+} from './variants';
 
 type Ctx = Context<AppEnv>;
 type Db = Prisma.TransactionClient;
@@ -54,15 +60,27 @@ interface ReferenceList {
 }
 
 /** The media row with its variants and the derived `planned_widths` / `variants_status`. */
-function withVariants<M extends { mime_type: string; width: number | null; created_at: Date }>(media: M, variants: VariantRow[], outcome?: VariantPassOutcome) {
+function withVariants<M extends { mime_type: string; width: number | null; created_at: Date }>(
+  media: M,
+  variants: VariantRow[],
+  outcome?: VariantPassOutcome,
+) {
   return { ...media, variants, ...describeVariants(media, variants, { outcome }) };
 }
 
-export async function requestUploadUrl(c: Ctx, dto: { filename: string; mime_type: string }, userId: string) {
+export async function requestUploadUrl(
+  c: Ctx,
+  dto: { filename: string; mime_type: string },
+  userId: string,
+) {
   const result = await generateImageUploadUrl(c.env, dto.filename, dto.mime_type);
   await getDb(c).pending_media_uploads.create({
     // The row outlives the URL it tracks (same constant caps the URL's lifetime).
-    data: { key: result.key, requested_by: userId, expires_at: new Date(Date.now() + PENDING_UPLOAD_TTL_SECONDS * 1000) },
+    data: {
+      key: result.key,
+      requested_by: userId,
+      expires_at: new Date(Date.now() + PENDING_UPLOAD_TTL_SECONDS * 1000),
+    },
   });
   return { message: 'Upload URL generated', data: result };
 }
@@ -72,7 +90,9 @@ export async function requestUploadUrl(c: Ctx, dto: { filename: string; mime_typ
  * valid, a re-PUT could land, and only the row lets the hourly sweep find that object too.
  */
 async function discardRejectedUpload(c: Ctx, key: string): Promise<void> {
-  await deleteObject(c.env, key).catch((err) => console.warn(`Failed to delete rejected R2 object ${key}: ${err}`));
+  await deleteObject(c.env, key).catch((err) =>
+    console.warn(`Failed to delete rejected R2 object ${key}: ${err}`),
+  );
 }
 
 const NOT_AN_IMAGE = 'Uploaded file is not a JPEG, PNG, GIF or WebP image';
@@ -86,7 +106,8 @@ export async function confirmUpload(c: Ctx, dto: ConfirmInput, userId: string) {
   const pending = await db.pending_media_uploads.findFirst({ where: { key: dto.key } });
   if (!pending) throw notFound('No pending upload for that key — request a new upload URL');
   if (pending.requested_by !== userId) throw forbidden('Upload key was issued to a different user');
-  if (pending.expires_at < new Date()) throw new ApiError(410, 'Upload URL has expired — request a new one');
+  if (pending.expires_at < new Date())
+    throw new ApiError(410, 'Upload URL has expired — request a new one');
 
   const head = await headObject(c.env, dto.key).catch((err) => {
     console.warn(`HeadObject failed for ${dto.key}: ${err}`);
@@ -99,20 +120,30 @@ export async function confirmUpload(c: Ctx, dto: ConfirmInput, userId: string) {
   const actualMime = head.contentType;
   if (!actualMime || !ALLOWED_IMAGE_MIMES.has(actualMime)) {
     await discardRejectedUpload(c, dto.key);
-    throw badRequest(`Stored object type "${actualMime ?? 'unknown'}" is not an allowed image type`);
+    throw badRequest(
+      `Stored object type "${actualMime ?? 'unknown'}" is not an allowed image type`,
+    );
   }
   const actualSize = head.contentLength ?? dto.file_size;
 
   const maxBytes = maxBytesFor(actualMime);
   if (actualSize > maxBytes) {
     await discardRejectedUpload(c, dto.key);
-    throw new ApiError(413, `File exceeds the ${Math.round(maxBytes / 1024 / 1024)} MB limit for ${actualMime}`);
+    throw new ApiError(
+      413,
+      `File exceeds the ${Math.round(maxBytes / 1024 / 1024)} MB limit for ${actualMime}`,
+    );
   }
 
   // The bytes are the truth: an HTML / SVG payload labelled image/png must never become a media row
   // served from the CDN. The same read carries the header, so the row gets the file's real size.
   // An empty object has no range to read (Nest answered it with a 500).
-  const prefix = actualSize > 0 ? await getObjectPrefix(c.env, dto.key, UPLOAD_HEADER_PROBE_BYTES).catch(() => new Uint8Array()) : new Uint8Array();
+  const prefix =
+    actualSize > 0
+      ? await getObjectPrefix(c.env, dto.key, UPLOAD_HEADER_PROBE_BYTES).catch(
+          () => new Uint8Array(),
+        )
+      : new Uint8Array();
   const sniffed = sniffImageMime(prefix);
   if (!sniffed) {
     await discardRejectedUpload(c, dto.key);
@@ -121,7 +152,9 @@ export async function confirmUpload(c: Ctx, dto: ConfirmInput, userId: string) {
   // A PNG stored as image/jpeg would be served with the wrong type (Nest stored the label as is).
   if (sniffed !== actualMime) {
     await discardRejectedUpload(c, dto.key);
-    throw badRequest(`Stored object type "${actualMime}" does not match the file, which is ${sniffed}`);
+    throw badRequest(
+      `Stored object type "${actualMime}" does not match the file, which is ${sniffed}`,
+    );
   }
   const probed = parseImageHeader(prefix);
 
@@ -148,7 +181,9 @@ export async function confirmUpload(c: Ctx, dto: ConfirmInput, userId: string) {
   // Variants after the response: clients poll GET /media/:id until variants_status leaves "processing".
   defer(
     c,
-    processMedia(c, media, dto.key).catch((err) => console.warn(`Background variant generation failed for ${media.id}: ${err}`)),
+    processMedia(c, media, dto.key).catch((err) =>
+      console.warn(`Background variant generation failed for ${media.id}: ${err}`),
+    ),
   );
 
   audit(c, {
@@ -177,29 +212,51 @@ export async function regenerateVariants(c: Ctx, id: string, actorId: string) {
     action: AUDIT_ACTIONS.MEDIA_VARIANTS_REGENERATED,
     resourceType: 'media',
     resourceId: id,
-    changes: { method: 'POST', path: `/api/v1/media/${id}/regenerate-variants`, variants_generated: pass.variants.length, variants_status: data.variants_status },
+    changes: {
+      method: 'POST',
+      path: `/api/v1/media/${id}/regenerate-variants`,
+      variants_generated: pass.variants.length,
+      variants_status: data.variants_status,
+    },
   });
 
   return { message: 'Variants regenerated', data };
 }
 
-export async function findAll(c: Ctx, query: { page?: number; limit?: number; search?: string; mime_type?: string }) {
+export async function findAll(
+  c: Ctx,
+  query: { page?: number; limit?: number; search?: string; mime_type?: string },
+) {
   const { page, limit, skip } = resolvePagination(query);
   const where: Prisma.mediaWhereInput = {};
   if (query.mime_type) where.mime_type = query.mime_type;
   if (query.search) {
-    where.OR = [{ filename: { contains: query.search, mode: 'insensitive' } }, { alt_text: { contains: query.search, mode: 'insensitive' } }];
+    where.OR = [
+      { filename: { contains: query.search, mode: 'insensitive' } },
+      { alt_text: { contains: query.search, mode: 'insensitive' } },
+    ];
   }
 
   const db = getDb(c);
   const [items, total] = await Promise.all([
-    db.media.findMany({ where, orderBy: [{ created_at: 'desc' }, { id: 'asc' }], skip, take: limit }),
+    db.media.findMany({
+      where,
+      orderBy: [{ created_at: 'desc' }, { id: 'asc' }],
+      skip,
+      take: limit,
+    }),
     db.media.count({ where }),
   ]);
-  const variants = await findForMediaIds(c, items.map((m) => m.id));
+  const variants = await findForMediaIds(
+    c,
+    items.map((m) => m.id),
+  );
   return {
     message: 'Media fetched',
-    data: { items: items.map((m) => withVariants(m, variants.get(m.id) ?? [])), pagination: buildPaginationMeta(page, limit, total) },
+    data: {
+      items: items.map((m) => withVariants(m, variants.get(m.id) ?? [])),
+      pagination: buildPaginationMeta(page, limit, total),
+    },
   };
 }
 
@@ -219,7 +276,13 @@ export async function update(c: Ctx, id: string, dto: UpdateMediaInput, userId: 
   if (dto.filename !== undefined) data.filename = dto.filename as string;
   const updated = await db.media.update({ where: { id }, data });
 
-  audit(c, { actorId: userId, action: AUDIT_ACTIONS.MEDIA_UPDATED, resourceType: 'media', resourceId: id, changes: { method: 'PATCH', path: `/api/v1/media/${id}` } });
+  audit(c, {
+    actorId: userId,
+    action: AUDIT_ACTIONS.MEDIA_UPDATED,
+    resourceType: 'media',
+    resourceId: id,
+    changes: { method: 'PATCH', path: `/api/v1/media/${id}` },
+  });
 
   return { message: 'Media updated', data: updated };
 }
@@ -230,7 +293,10 @@ export async function findReferences(c: Ctx, id: string) {
   const media = await db.media.findUnique({ where: { id }, select: { id: true } });
   if (!media) throw notFound('Media not found');
   const { total, items } = await listReferences(db, id);
-  return { message: 'Media references fetched', data: { media_id: id, total, shown: items.length, truncated: total > items.length, items } };
+  return {
+    message: 'Media references fetched',
+    data: { media_id: id, total, shown: items.length, truncated: total > items.length, items },
+  };
 }
 
 export async function remove(c: Ctx, id: string, userId: string) {
@@ -252,11 +318,20 @@ export async function remove(c: Ctx, id: string, userId: string) {
   });
   if (stillReferenced) throw await mediaInUse(db, id);
 
-  audit(c, { actorId: userId, action: AUDIT_ACTIONS.MEDIA_DELETED, resourceType: 'media', resourceId: id, changes: { method: 'DELETE', path: `/api/v1/media/${id}` } });
+  audit(c, {
+    actorId: userId,
+    action: AUDIT_ACTIONS.MEDIA_DELETED,
+    resourceType: 'media',
+    resourceId: id,
+    changes: { method: 'DELETE', path: `/api/v1/media/${id}` },
+  });
 
   // Best effort now: a failure orphans a blob nothing references, logged for cleanup; the delete succeeded.
   const failed = await deleteStoredFiles(c, id, media.url);
-  if (failed.length > 0) console.error(`Media ${id} deleted, but R2 cleanup failed for ${failed.join(', ')} — orphaned blob(s)`);
+  if (failed.length > 0)
+    console.error(
+      `Media ${id} deleted, but R2 cleanup failed for ${failed.join(', ')} — orphaned blob(s)`,
+    );
 
   return { message: 'Media deleted', data: null };
 }
@@ -289,7 +364,11 @@ async function countReferences(db: Db, id: string): Promise<number> {
 }
 
 /** One source: capped rows, and the real total only when the cap was hit. */
-async function collect<Row>(rows: Promise<Row[]>, count: () => Promise<number>, toReference: (row: Row) => MediaReference): Promise<ReferenceList> {
+async function collect<Row>(
+  rows: Promise<Row[]>,
+  count: () => Promise<number>,
+  toReference: (row: Row) => MediaReference,
+): Promise<ReferenceList> {
   const found = await rows;
   const total = found.length < MEDIA_REFERENCE_LIMIT ? found.length : await count();
   return { total, items: found.map(toReference) };
@@ -301,14 +380,34 @@ async function listReferences(db: Db, id: string): Promise<ReferenceList> {
 
   const sources = await Promise.all([
     collect(
-      db.posts.findMany({ where: { cover_image_id: id }, select: { id: true, deleted_at: true }, orderBy: { id: 'asc' }, take }),
+      db.posts.findMany({
+        where: { cover_image_id: id },
+        select: { id: true, deleted_at: true },
+        orderBy: { id: 'asc' },
+        take,
+      }),
       () => db.posts.count({ where: { cover_image_id: id } }),
-      (r): MediaReference => ({ type: 'post', id: r.id, field: 'cover_image', trashed: trashed(r) }),
+      (r): MediaReference => ({
+        type: 'post',
+        id: r.id,
+        field: 'cover_image',
+        trashed: trashed(r),
+      }),
     ),
     collect(
-      db.post_attachments.findMany({ where: { media_id: id }, select: { post_id: true, posts: { select: { deleted_at: true } } }, orderBy: { post_id: 'asc' }, take }),
+      db.post_attachments.findMany({
+        where: { media_id: id },
+        select: { post_id: true, posts: { select: { deleted_at: true } } },
+        orderBy: { post_id: 'asc' },
+        take,
+      }),
       () => db.post_attachments.count({ where: { media_id: id } }),
-      (r): MediaReference => ({ type: 'post', id: r.post_id, field: 'attachment', trashed: trashed(r.posts) }),
+      (r): MediaReference => ({
+        type: 'post',
+        id: r.post_id,
+        field: 'attachment',
+        trashed: trashed(r.posts),
+      }),
     ),
     collect(
       db.post_translations.findMany({
@@ -318,12 +417,28 @@ async function listReferences(db: Db, id: string): Promise<ReferenceList> {
         take,
       }),
       () => db.post_translations.count({ where: { og_image_id: id } }),
-      (r): MediaReference => ({ type: 'post', id: r.post_id, field: 'og_image', lang: r.lang, trashed: trashed(r.posts) }),
+      (r): MediaReference => ({
+        type: 'post',
+        id: r.post_id,
+        field: 'og_image',
+        lang: r.lang,
+        trashed: trashed(r.posts),
+      }),
     ),
     collect(
-      db.books.findMany({ where: { cover_image_id: id }, select: { id: true, deleted_at: true }, orderBy: { id: 'asc' }, take }),
+      db.books.findMany({
+        where: { cover_image_id: id },
+        select: { id: true, deleted_at: true },
+        orderBy: { id: 'asc' },
+        take,
+      }),
       () => db.books.count({ where: { cover_image_id: id } }),
-      (r): MediaReference => ({ type: 'book', id: r.id, field: 'cover_image', trashed: trashed(r) }),
+      (r): MediaReference => ({
+        type: 'book',
+        id: r.id,
+        field: 'cover_image',
+        trashed: trashed(r),
+      }),
     ),
     collect(
       db.book_translations.findMany({
@@ -333,7 +448,13 @@ async function listReferences(db: Db, id: string): Promise<ReferenceList> {
         take,
       }),
       () => db.book_translations.count({ where: { og_image_id: id } }),
-      (r): MediaReference => ({ type: 'book', id: r.book_id, field: 'og_image', lang: r.lang, trashed: trashed(r.books) }),
+      (r): MediaReference => ({
+        type: 'book',
+        id: r.book_id,
+        field: 'og_image',
+        lang: r.lang,
+        trashed: trashed(r.books),
+      }),
     ),
     collect(
       db.static_page_translations.findMany({
@@ -343,13 +464,28 @@ async function listReferences(db: Db, id: string): Promise<ReferenceList> {
         take,
       }),
       () => db.static_page_translations.count({ where: { og_image_id: id } }),
-      (r): MediaReference => ({ type: 'static_page', id: r.page_id, field: 'og_image', lang: r.lang, trashed: trashed(r.static_pages) }),
+      (r): MediaReference => ({
+        type: 'static_page',
+        id: r.page_id,
+        field: 'og_image',
+        lang: r.lang,
+        trashed: trashed(r.static_pages),
+      }),
     ),
     // A gallery item's primary key IS the media id.
     collect(
-      db.gallery_images.findMany({ where: { media_id: id }, select: { media_id: true, deleted_at: true }, take }),
+      db.gallery_images.findMany({
+        where: { media_id: id },
+        select: { media_id: true, deleted_at: true },
+        take,
+      }),
       () => db.gallery_images.count({ where: { media_id: id } }),
-      (r): MediaReference => ({ type: 'gallery_image', id: r.media_id, field: 'gallery_item', trashed: trashed(r) }),
+      (r): MediaReference => ({
+        type: 'gallery_image',
+        id: r.media_id,
+        field: 'gallery_item',
+        trashed: trashed(r),
+      }),
     ),
     collect(
       db.gallery_image_translations.findMany({
@@ -359,27 +495,44 @@ async function listReferences(db: Db, id: string): Promise<ReferenceList> {
         take,
       }),
       () => db.gallery_image_translations.count({ where: { og_image_id: id } }),
-      (r): MediaReference => ({ type: 'gallery_image', id: r.media_id, field: 'og_image', lang: r.lang, trashed: trashed(r.gallery_images) }),
+      (r): MediaReference => ({
+        type: 'gallery_image',
+        id: r.media_id,
+        field: 'og_image',
+        lang: r.lang,
+        trashed: trashed(r.gallery_images),
+      }),
     ),
   ]);
 
-  return { total: sources.reduce((sum, s) => sum + s.total, 0), items: sources.flatMap((s) => s.items).slice(0, MEDIA_REFERENCE_LIMIT) };
+  return {
+    total: sources.reduce((sum, s) => sum + s.total, 0),
+    items: sources.flatMap((s) => s.items).slice(0, MEDIA_REFERENCE_LIMIT),
+  };
 }
 
 /** The 409 for a media still in use: the message names the first few records; the full list is one GET away. */
 async function mediaInUse(db: Db, id: string): Promise<ApiError> {
   const { total, items } = await listReferences(db, id);
   const shown = items.slice(0, REFERENCES_IN_MESSAGE).map((r) => {
-    const where = r.lang ? `${r.type} ${r.id} (${r.field}, ${r.lang})` : `${r.type} ${r.id} (${r.field})`;
+    const where = r.lang
+      ? `${r.type} ${r.id} (${r.field}, ${r.lang})`
+      : `${r.type} ${r.id} (${r.field})`;
     return r.trashed ? `${where}, in the trash` : where;
   });
   const more = total > shown.length ? `, and ${total - shown.length} more` : '';
-  const hints = ['Detach the image from those records first; a record in the trash still holds its reference until the image is changed on the record itself.'];
+  const hints = [
+    'Detach the image from those records first; a record in the trash still holds its reference until the image is changed on the record itself.',
+  ];
   if (items.some((r) => r.type === 'gallery_image' && r.field === 'gallery_item')) {
-    hints.push('A gallery item uses the media id as its own id, so this file IS that gallery item: delete the gallery item first.');
+    hints.push(
+      'A gallery item uses the media id as its own id, so this file IS that gallery item: delete the gallery item first.',
+    );
   }
   return conflict(
-    `Media is still referenced by ${total} record${total === 1 ? '' : 's'}` + (shown.length > 0 ? ` (${shown.join('; ')}${more})` : '') + `. ${hints.join(' ')} Full list: GET /media/${id}/references`,
+    `Media is still referenced by ${total} record${total === 1 ? '' : 's'}` +
+      (shown.length > 0 ? ` (${shown.join('; ')}${more})` : '') +
+      `. ${hints.join(' ')} Full list: GET /media/${id}/references`,
     { code: 'MEDIA_IN_USE' },
   );
 }

@@ -70,4 +70,6 @@ export const app = new Hono<AppEnv>();
 for (const [prefix, router] of Object.entries(routes)) app.route(prefix, router);
 
 // Same text and envelope as Nest's unknown-route 404.
-app.notFound((c) => errorHandler(notFound(`Cannot ${c.req.method} ${new URL(c.req.url).pathname}`), c));
+app.notFound((c) =>
+  errorHandler(notFound(`Cannot ${c.req.method} ${new URL(c.req.url).pathname}`), c),
+);

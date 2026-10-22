@@ -11,11 +11,24 @@ const AUDIT_LOG_RETENTION_DAYS = 365;
 export async function runRetention(db: PrismaClient, now = new Date()): Promise<void> {
   await sweep('refresh_tokens', () =>
     db.refresh_tokens.deleteMany({
-      where: { OR: [{ expires_at: { lt: now } }, { revoked_at: { lt: new Date(now.getTime() - REVOKED_TOKEN_GRACE_DAYS * DAY_MS) } }] },
+      where: {
+        OR: [
+          { expires_at: { lt: now } },
+          { revoked_at: { lt: new Date(now.getTime() - REVOKED_TOKEN_GRACE_DAYS * DAY_MS) } },
+        ],
+      },
     }),
   );
-  await sweep('login_attempts', () => db.login_attempts.deleteMany({ where: { last_failed_at: { lt: new Date(now.getTime() - DAY_MS) } } }));
-  await sweep('audit_logs', () => db.audit_logs.deleteMany({ where: { created_at: { lt: new Date(now.getTime() - AUDIT_LOG_RETENTION_DAYS * DAY_MS) } } }));
+  await sweep('login_attempts', () =>
+    db.login_attempts.deleteMany({
+      where: { last_failed_at: { lt: new Date(now.getTime() - DAY_MS) } },
+    }),
+  );
+  await sweep('audit_logs', () =>
+    db.audit_logs.deleteMany({
+      where: { created_at: { lt: new Date(now.getTime() - AUDIT_LOG_RETENTION_DAYS * DAY_MS) } },
+    }),
+  );
 }
 
 async function sweep(table: string, run: () => Promise<{ count: number }>): Promise<void> {

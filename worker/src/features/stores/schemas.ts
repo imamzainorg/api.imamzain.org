@@ -1,7 +1,15 @@
 import { z } from '@hono/zod-openapi';
 import { paginationShape } from '../../lib/pagination';
 
-export const LIMITS = { cityName: 200, locationName: 300, address: 500, phone: 50, url: 2000, listItems: 50, ids: 200 } as const;
+export const LIMITS = {
+  cityName: 200,
+  locationName: 300,
+  address: 500,
+  phone: 50,
+  url: 2000,
+  listItems: 50,
+  ids: 200,
+} as const;
 
 // class-validator's @IsUrl({ require_protocol: true }): http(s)/ftp and a dotted host.
 const url = z.url({ protocol: /^(https?|ftp)$/, hostname: z.regexes.domain }).max(LIMITS.url);

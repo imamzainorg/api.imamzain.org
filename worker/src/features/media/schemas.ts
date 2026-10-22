@@ -5,7 +5,10 @@ import { searchTerm } from '../../lib/search-term';
 /** DTO_LIMITS in src/common/validators/dto-limits.ts. */
 const LIMITS = { filename: 255, caption: 500, mimeType: 127, storageKey: 1024 } as const;
 
-const imageMime = z.string().max(LIMITS.mimeType).regex(/^image\//);
+const imageMime = z
+  .string()
+  .max(LIMITS.mimeType)
+  .regex(/^image\//);
 
 export const uploadUrlBody = z.object({
   filename: z.string().max(LIMITS.filename),

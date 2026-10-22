@@ -16,7 +16,14 @@ function formatter(timeZone: string): Intl.DateTimeFormat {
   let f = formatters.get(timeZone);
   if (!f) {
     // Fixed locale, calendar and digits: a Hijri / Arabic-Indic default must never leak in.
-    f = new Intl.DateTimeFormat('en-US', { timeZone, calendar: 'gregory', numberingSystem: 'latn', year: 'numeric', month: '2-digit', day: '2-digit' });
+    f = new Intl.DateTimeFormat('en-US', {
+      timeZone,
+      calendar: 'gregory',
+      numberingSystem: 'latn',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+    });
     formatters.set(timeZone, f);
   }
   return f;
@@ -30,14 +37,19 @@ export function siteTimezone(raw: string | undefined): string {
     formatter(name);
     return name;
   } catch {
-    console.warn(`SITE_TIMEZONE="${name}" is not a valid IANA time zone name; falling back to ${DEFAULT_SITE_TIMEZONE}`);
+    console.warn(
+      `SITE_TIMEZONE="${name}" is not a valid IANA time zone name; falling back to ${DEFAULT_SITE_TIMEZONE}`,
+    );
     return DEFAULT_SITE_TIMEZONE;
   }
 }
 
 /** The calendar date (`YYYY-MM-DD`) at `now` in `timeZone`. */
 export function siteDate(timeZone: string, now: Date = new Date()): string {
-  const part = (type: string) => formatter(timeZone).formatToParts(now).find((p) => p.type === type)?.value ?? '';
+  const part = (type: string) =>
+    formatter(timeZone)
+      .formatToParts(now)
+      .find((p) => p.type === type)?.value ?? '';
   return `${part('year').padStart(4, '0')}-${part('month')}-${part('day')}`;
 }
 
@@ -64,7 +76,15 @@ export function clampToSiteMidnight(configuredSeconds: number, secondsLeft: numb
 }
 
 /** `@PublicCache(a, b, { untilSiteMidnight: true })`: call after the handler's work, on success only. */
-export function publicCacheUntilSiteMidnight(c: Context<AppEnv>, maxAgeSeconds: number, sMaxAgeSeconds: number): void {
+export function publicCacheUntilSiteMidnight(
+  c: Context<AppEnv>,
+  maxAgeSeconds: number,
+  sMaxAgeSeconds: number,
+): void {
   const left = secondsUntilSiteMidnight(siteTimezone(c.env.SITE_TIMEZONE));
-  publicCache(c, clampToSiteMidnight(maxAgeSeconds, left), clampToSiteMidnight(sMaxAgeSeconds, left));
+  publicCache(
+    c,
+    clampToSiteMidnight(maxAgeSeconds, left),
+    clampToSiteMidnight(sMaxAgeSeconds, left),
+  );
 }

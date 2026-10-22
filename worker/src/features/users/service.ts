@@ -5,7 +5,11 @@ import { getDb, lockKey } from '../../lib/db';
 import { conflict, forbidden, notFound, rethrowP2002AsConflict } from '../../lib/errors';
 import { buildPaginationMeta } from '../../lib/pagination';
 import { hashPassword } from '../../lib/password';
-import { assertNotLastAdministrator, assertWithinActorEnvelope, MANAGE_USER_ENVELOPE_MESSAGE } from '../../lib/rbac';
+import {
+  assertNotLastAdministrator,
+  assertWithinActorEnvelope,
+  MANAGE_USER_ENVELOPE_MESSAGE,
+} from '../../lib/rbac';
 import { softDeleteSuffix, stripSoftDeleteSuffix } from '../../lib/soft-delete';
 import type { AppEnv, CurrentUser } from '../../lib/types';
 
@@ -13,7 +17,9 @@ type Ctx = Context<AppEnv>;
 
 /** Roles → permissions joins needed to compute a user's effective permission set. */
 const USER_PERMISSIONS_INCLUDE = {
-  user_roles: { include: { roles: { include: { role_permissions: { include: { permissions: true } } } } } },
+  user_roles: {
+    include: { roles: { include: { role_permissions: { include: { permissions: true } } } } },
+  },
 } satisfies Prisma.usersInclude;
 
 type UserWithPermissions = Prisma.usersGetPayload<{ include: typeof USER_PERMISSIONS_INCLUDE }>;
@@ -29,7 +35,8 @@ const LIST_SELECT = {
 
 function flattenPermissions(user: UserWithPermissions): string[] {
   const names = new Set<string>();
-  for (const ur of user.user_roles) for (const rp of ur.roles.role_permissions) names.add(rp.permissions.name);
+  for (const ur of user.user_roles)
+    for (const rp of ur.roles.role_permissions) names.add(rp.permissions.name);
   return Array.from(names);
 }
 
@@ -37,17 +44,29 @@ export async function findAll(c: Ctx, page: number, limit: number) {
   const db = getDb(c);
   const where = { deleted_at: null };
   const [items, total] = await Promise.all([
-    db.users.findMany({ where, select: LIST_SELECT, orderBy: [{ created_at: 'desc' }, { id: 'asc' }], skip: (page - 1) * limit, take: limit }),
+    db.users.findMany({
+      where,
+      select: LIST_SELECT,
+      orderBy: [{ created_at: 'desc' }, { id: 'asc' }],
+      skip: (page - 1) * limit,
+      take: limit,
+    }),
     db.users.count({ where }),
   ]);
   return {
     message: 'Users fetched',
-    data: { items: items.map(({ deleted_at, ...u }) => ({ ...u, is_active: deleted_at === null })), pagination: buildPaginationMeta(page, limit, total) },
+    data: {
+      items: items.map(({ deleted_at, ...u }) => ({ ...u, is_active: deleted_at === null })),
+      pagination: buildPaginationMeta(page, limit, total),
+    },
   };
 }
 
 export async function findOne(c: Ctx, id: string) {
-  const user = await getDb(c).users.findFirst({ where: { id, deleted_at: null }, include: USER_PERMISSIONS_INCLUDE });
+  const user = await getDb(c).users.findFirst({
+    where: { id, deleted_at: null },
+    include: USER_PERMISSIONS_INCLUDE,
+  });
   if (!user) throw notFound('User not found');
   return {
     message: 'User fetched',
@@ -67,10 +86,21 @@ export async function findOne(c: Ctx, id: string) {
  * A live user, refused (403) when they hold any permission the actor lacks. Every route that changes
  * another account's credentials, identity or existence goes through this.
  */
-async function loadManagedUser(c: Ctx, id: string, actor: CurrentUser): Promise<UserWithPermissions> {
-  const user = await getDb(c).users.findFirst({ where: { id, deleted_at: null }, include: USER_PERMISSIONS_INCLUDE });
+async function loadManagedUser(
+  c: Ctx,
+  id: string,
+  actor: CurrentUser,
+): Promise<UserWithPermissions> {
+  const user = await getDb(c).users.findFirst({
+    where: { id, deleted_at: null },
+    include: USER_PERMISSIONS_INCLUDE,
+  });
   if (!user) throw notFound('User not found');
-  assertWithinActorEnvelope(actor.permissions, flattenPermissions(user), MANAGE_USER_ENVELOPE_MESSAGE);
+  assertWithinActorEnvelope(
+    actor.permissions,
+    flattenPermissions(user),
+    MANAGE_USER_ENVELOPE_MESSAGE,
+  );
   return user;
 }
 
@@ -79,10 +109,19 @@ async function loadManagedUser(c: Ctx, id: string, actor: CurrentUser): Promise<
  * index is case-sensitive, so the check runs under a lock on the lowercased name: two concurrent
  * `Admin` / `admin` writes can't both pass.
  */
-async function assertUsernameAvailable(tx: Prisma.TransactionClient, username: string, exceptId?: string, message = 'Username is already taken'): Promise<void> {
+async function assertUsernameAvailable(
+  tx: Prisma.TransactionClient,
+  username: string,
+  exceptId?: string,
+  message = 'Username is already taken',
+): Promise<void> {
   await lockKey(tx, `users.username:${username.toLowerCase()}`);
   const taken = await tx.users.findFirst({
-    where: { username: { equals: username, mode: 'insensitive' }, deleted_at: null, ...(exceptId ? { NOT: { id: exceptId } } : {}) },
+    where: {
+      username: { equals: username, mode: 'insensitive' },
+      deleted_at: null,
+      ...(exceptId ? { NOT: { id: exceptId } } : {}),
+    },
     select: { id: true },
   });
   if (taken) throw conflict(message);
@@ -96,13 +135,23 @@ export async function create(c: Ctx, dto: { username: string; password: string }
     return tx.users.create({ data: { username, password_hash } });
   });
 
-  audit(c, { action: AUDIT_ACTIONS.USER_CREATED, resourceType: 'user', resourceId: user.id, changes: { method: 'POST', path: '/api/v1/users' } });
+  audit(c, {
+    action: AUDIT_ACTIONS.USER_CREATED,
+    resourceType: 'user',
+    resourceId: user.id,
+    changes: { method: 'POST', path: '/api/v1/users' },
+  });
 
   const { data } = await findOne(c, user.id);
   return { message: 'User created', data };
 }
 
-export async function update(c: Ctx, id: string, dto: { username?: string | null }, actor: CurrentUser) {
+export async function update(
+  c: Ctx,
+  id: string,
+  dto: { username?: string | null },
+  actor: CurrentUser,
+) {
   const user = await loadManagedUser(c, id, actor);
 
   const username = dto.username?.trim();
@@ -120,7 +169,11 @@ export async function update(c: Ctx, id: string, dto: { username?: string | null
     action: AUDIT_ACTIONS.USER_UPDATED,
     resourceType: 'user',
     resourceId: id,
-    changes: { method: 'PATCH', path: `/api/v1/users/${id}`, ...(renamed ? { username: { before: user.username, after: username } } : {}) },
+    changes: {
+      method: 'PATCH',
+      path: `/api/v1/users/${id}`,
+      ...(renamed ? { username: { before: user.username, after: username } } : {}),
+    },
   });
 
   const { data: shaped } = await findOne(c, id);
@@ -132,7 +185,12 @@ export async function update(c: Ctx, id: string, dto: { username?: string | null
  * revokes every refresh token, and flags the account to change the password. The admin hands the
  * password over out-of-band.
  */
-export async function adminResetPassword(c: Ctx, userId: string, newPassword: string, actor: CurrentUser) {
+export async function adminResetPassword(
+  c: Ctx,
+  userId: string,
+  newPassword: string,
+  actor: CurrentUser,
+) {
   await loadManagedUser(c, userId, actor);
 
   const password_hash = await hashPassword(newPassword, c.env);
@@ -140,9 +198,17 @@ export async function adminResetPassword(c: Ctx, userId: string, newPassword: st
   await db.$transaction([
     db.users.update({
       where: { id: userId },
-      data: { password_hash, updated_at: new Date(), token_version: { increment: 1 }, must_change_password: true },
+      data: {
+        password_hash,
+        updated_at: new Date(),
+        token_version: { increment: 1 },
+        must_change_password: true,
+      },
     }),
-    db.refresh_tokens.updateMany({ where: { user_id: userId, revoked_at: null }, data: { revoked_at: new Date() } }),
+    db.refresh_tokens.updateMany({
+      where: { user_id: userId, revoked_at: null },
+      data: { revoked_at: new Date() },
+    }),
   ]);
 
   audit(c, {
@@ -165,10 +231,19 @@ export async function softDelete(c: Ctx, id: string, actor: CurrentUser) {
   const deletedAt = new Date();
   await getDb(c).$transaction(async (tx) => {
     await assertNotLastAdministrator(tx, { kind: 'delete-user', userId: id });
-    await tx.users.update({ where: { id }, data: { deleted_at: deletedAt, username: `${user.username}${softDeleteSuffix(deletedAt)}` } });
+    await tx.users.update({
+      where: { id },
+      data: { deleted_at: deletedAt, username: `${user.username}${softDeleteSuffix(deletedAt)}` },
+    });
   });
 
-  audit(c, { actorId: actor.id, action: AUDIT_ACTIONS.USER_DELETED, resourceType: 'user', resourceId: id, changes: { method: 'DELETE', path: `/api/v1/users/${id}` } });
+  audit(c, {
+    actorId: actor.id,
+    action: AUDIT_ACTIONS.USER_DELETED,
+    resourceType: 'user',
+    resourceId: id,
+    changes: { method: 'DELETE', path: `/api/v1/users/${id}` },
+  });
 
   return { message: 'User deleted', data: null };
 }
@@ -178,13 +253,23 @@ export async function findTrash(c: Ctx, page: number, limit: number) {
   const db = getDb(c);
   const where: Prisma.usersWhereInput = { deleted_at: { not: null } };
   const [items, total] = await Promise.all([
-    db.users.findMany({ where, select: LIST_SELECT, orderBy: [{ deleted_at: 'desc' }, { id: 'asc' }], skip: (page - 1) * limit, take: limit }),
+    db.users.findMany({
+      where,
+      select: LIST_SELECT,
+      orderBy: [{ deleted_at: 'desc' }, { id: 'asc' }],
+      skip: (page - 1) * limit,
+      take: limit,
+    }),
     db.users.count({ where }),
   ]);
   return {
     message: 'Trash fetched',
     data: {
-      items: items.map(({ deleted_at, username, ...u }) => ({ ...u, username: stripSoftDeleteSuffix(username), is_active: false })),
+      items: items.map(({ deleted_at, username, ...u }) => ({
+        ...u,
+        username: stripSoftDeleteSuffix(username),
+        is_active: false,
+      })),
       pagination: buildPaginationMeta(page, limit, total),
     },
   };
@@ -196,32 +281,56 @@ export async function findTrash(c: Ctx, page: number, limit: number) {
  */
 export async function restore(c: Ctx, id: string, actor: CurrentUser) {
   const db = getDb(c);
-  const user = await db.users.findFirst({ where: { id, deleted_at: { not: null } }, include: USER_PERMISSIONS_INCLUDE });
+  const user = await db.users.findFirst({
+    where: { id, deleted_at: { not: null } },
+    include: USER_PERMISSIONS_INCLUDE,
+  });
   if (!user) throw notFound('Deleted user not found');
-  assertWithinActorEnvelope(actor.permissions, flattenPermissions(user), MANAGE_USER_ENVELOPE_MESSAGE);
+  assertWithinActorEnvelope(
+    actor.permissions,
+    flattenPermissions(user),
+    MANAGE_USER_ENVELOPE_MESSAGE,
+  );
 
   const originalUsername = stripSoftDeleteSuffix(user.username);
   const message = `Cannot restore: username "${originalUsername}" is now used by another user`;
   try {
     await db.$transaction(async (tx) => {
       await assertUsernameAvailable(tx, originalUsername, id, message);
-      await tx.users.update({ where: { id }, data: { deleted_at: null, username: originalUsername, updated_at: new Date() } });
+      await tx.users.update({
+        where: { id },
+        data: { deleted_at: null, username: originalUsername, updated_at: new Date() },
+      });
     });
   } catch (err) {
     // The unique index is the backstop for a writer that skipped the lock (Nest, until cutover).
     rethrowP2002AsConflict(err, message);
   }
 
-  audit(c, { actorId: actor.id, action: AUDIT_ACTIONS.USER_RESTORED, resourceType: 'user', resourceId: id, changes: { method: 'POST', path: `/api/v1/users/${id}/restore` } });
+  audit(c, {
+    actorId: actor.id,
+    action: AUDIT_ACTIONS.USER_RESTORED,
+    resourceType: 'user',
+    resourceId: id,
+    changes: { method: 'POST', path: `/api/v1/users/${id}/restore` },
+  });
 
   const { data } = await findOne(c, id);
   return { message: 'User restored', data };
 }
 
-const roleWithPermissionNames = { role_permissions: { select: { permissions: { select: { name: true } } } } } satisfies Prisma.rolesInclude;
+const roleWithPermissionNames = {
+  role_permissions: { select: { permissions: { select: { name: true } } } },
+} satisfies Prisma.rolesInclude;
 
 /** An actor may only grant or revoke a role whose permissions are all within their own. */
-async function loadUserAndRole(c: Ctx, userId: string, roleId: string, actor: CurrentUser, verb: 'assign' | 'remove') {
+async function loadUserAndRole(
+  c: Ctx,
+  userId: string,
+  roleId: string,
+  actor: CurrentUser,
+  verb: 'assign' | 'remove',
+) {
   const db = getDb(c);
   const [user, role] = await Promise.all([
     db.users.findFirst({ where: { id: userId, deleted_at: null } }),
@@ -240,7 +349,10 @@ export async function assignRole(c: Ctx, userId: string, roleId: string, actor: 
   await loadUserAndRole(c, userId, roleId, actor, 'assign');
 
   const db = getDb(c);
-  const existing = await db.user_roles.findUnique({ where: { user_id_role_id: { user_id: userId, role_id: roleId } }, select: { user_id: true } });
+  const existing = await db.user_roles.findUnique({
+    where: { user_id_role_id: { user_id: userId, role_id: roleId } },
+    select: { user_id: true },
+  });
   if (!existing) {
     await db.user_roles.create({ data: { user_id: userId, role_id: roleId } });
     // Permissions are baked into access tokens: the new role takes effect on the next request.

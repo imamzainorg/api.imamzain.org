@@ -4,7 +4,11 @@ import { deleteObject } from '../lib/r2';
 import type { AppBindings } from '../lib/types';
 
 /** Deletes the R2 objects of image uploads whose presigned URL expired without a confirm. */
-export async function cleanupOrphanUploads(db: PrismaClient, env: AppBindings, now = new Date()): Promise<number> {
+export async function cleanupOrphanUploads(
+  db: PrismaClient,
+  env: AppBindings,
+  now = new Date(),
+): Promise<number> {
   const expired = await db.pending_media_uploads.findMany({ where: { expires_at: { lt: now } } });
   if (expired.length === 0) return 0;
   console.log(`Found ${expired.length} expired pending upload(s)`);

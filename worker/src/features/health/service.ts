@@ -25,7 +25,14 @@ function withTimeout<T>(promise: Promise<T>, ms: number, onTimeout: T): Promise<
 
 export async function check(c: Context<AppEnv>) {
   const probe = (p: Promise<unknown>): Promise<Status> =>
-    withTimeout(p.then(() => 'healthy' as const, () => 'unhealthy' as const), HEALTH_CHECK_TIMEOUT_MS, 'unhealthy');
+    withTimeout(
+      p.then(
+        () => 'healthy' as const,
+        () => 'unhealthy' as const,
+      ),
+      HEALTH_CHECK_TIMEOUT_MS,
+      'unhealthy',
+    );
   const [database, storage] = await Promise.all([
     probe(getDb(c).$queryRaw`SELECT 1`),
     probe(c.env.R2.list({ limit: 1 })),

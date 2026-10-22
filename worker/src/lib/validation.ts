@@ -17,10 +17,13 @@ export function issueMessages(issue: Issue): string[] {
   // `@IsString({ each: true })` and friends: class-validator names the array, not the element, and
   // Nest puts the parent path (`translations.0.`) in front of the whole message.
   const last = issue.path[issue.path.length - 1];
-  const isElement = typeof last === 'number' && issue.code !== 'unrecognized_keys' && i.expected !== 'object';
+  const isElement =
+    typeof last === 'number' && issue.code !== 'unrecognized_keys' && i.expected !== 'object';
   const array = issue.path.slice(0, -1);
   const parent = dotted(array.slice(0, -1));
-  const p = isElement ? `${parent ? `${parent}.` : ''}each value in ${String(array[array.length - 1])}` : dotted(issue.path);
+  const p = isElement
+    ? `${parent ? `${parent}.` : ''}each value in ${String(array[array.length - 1])}`
+    : dotted(issue.path);
   switch (issue.code) {
     // Nested messages are the child's own text behind its parent path: `translations.0.property x should not exist`.
     case 'unrecognized_keys':
@@ -51,7 +54,8 @@ export function issueMessages(issue: Issue): string[] {
     }
     case 'invalid_format':
       // @Matches(/x/): Zod's `pattern` is the regex's source form, which is what class-validator prints.
-      if (i.format === 'regex') return [`${p} must match ${i.pattern as string} regular expression`];
+      if (i.format === 'regex')
+        return [`${p} must match ${i.pattern as string} regular expression`];
       return [
         {
           email: `${p} must be an email`,
@@ -63,7 +67,10 @@ export function issueMessages(issue: Issue): string[] {
       return [`${p} must be one of the following values: ${(i.values as unknown[]).join(', ')}`];
     case 'custom':
       // @MaxBytes: its text carries the field path like the built-in ones, so the schema passes only the limit.
-      if (typeof i.params === 'object' && i.params && 'maxBytes' in i.params) return [`${p} must be at most ${(i.params as { maxBytes: number }).maxBytes} bytes (UTF-8)`];
+      if (typeof i.params === 'object' && i.params && 'maxBytes' in i.params)
+        return [
+          `${p} must be at most ${(i.params as { maxBytes: number }).maxBytes} bytes (UTF-8)`,
+        ];
       return [issue.message];
     default:
       return [issue.message];
@@ -85,7 +92,10 @@ export function whitelistFirst(issues: Issue[]): Issue[] {
 }
 
 /** `defaultHook` for OpenAPIHono: 400 `Validation failed` with the Nest-style `errors` array. */
-export function zodHook(result: { success: boolean; error?: z.ZodError }, _c: Context<AppEnv>): void {
+export function zodHook(
+  result: { success: boolean; error?: z.ZodError },
+  _c: Context<AppEnv>,
+): void {
   if (result.success || !result.error) return;
   const errors = whitelistFirst(result.error.issues).flatMap(issueMessages);
   throw new ApiError(400, 'Validation failed', { code: 'VALIDATION_FAILED', errors });

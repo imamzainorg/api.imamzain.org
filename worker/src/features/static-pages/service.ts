@@ -10,7 +10,11 @@ import { buildPaginationMeta, resolvePagination } from '../../lib/pagination';
 import { assertSlugRenameAllowed } from '../../lib/publish-rules';
 import { softDeleteSuffix, stripSoftDeleteSuffix } from '../../lib/soft-delete';
 import type { AppEnv } from '../../lib/types';
-import type { CreateStaticPageInput, StaticPageTranslationInput, UpdateStaticPageInput } from './schemas';
+import type {
+  CreateStaticPageInput,
+  StaticPageTranslationInput,
+  UpdateStaticPageInput,
+} from './schemas';
 
 type Ctx = Context<AppEnv>;
 
@@ -37,14 +41,21 @@ const PUBLIC_LIST_SELECT = {
   static_page_translations: { select: LIST_TRANSLATION_SELECT },
 } satisfies Prisma.static_pagesSelect;
 
-const DETAIL_INCLUDE = { static_page_translations: { include: { og_image: { select: OG_IMAGE_SELECT } } } } satisfies Prisma.static_pagesInclude;
+const DETAIL_INCLUDE = {
+  static_page_translations: { include: { og_image: { select: OG_IMAGE_SELECT } } },
+} satisfies Prisma.static_pagesInclude;
 
 /** Message per violated unique index; only the slug index may say "slug already used". */
-function pageConflictMessages(slug: string | null | undefined): { fallback: string; byTarget: Record<string, string> } {
+function pageConflictMessages(slug: string | null | undefined): {
+  fallback: string;
+  byTarget: Record<string, string>;
+} {
   return {
     fallback: 'A value in this request is already in use by another record',
     byTarget: {
-      slug: slug ? `Slug "${slug}" is already used by another static page` : 'The slug is already used by another static page',
+      slug: slug
+        ? `Slug "${slug}" is already used by another static page`
+        : 'The slug is already used by another static page',
       static_page_translations: 'The same language appears more than once in translations',
       lang: 'The same language appears more than once in translations',
     },
@@ -56,7 +67,13 @@ export async function findAllPublic(c: Ctx, page: number, limit: number) {
   const { skip } = resolvePagination({ page, limit });
   const where = { deleted_at: null, is_published: true };
   const [pages, total, active] = await Promise.all([
-    db.static_pages.findMany({ where, select: PUBLIC_LIST_SELECT, orderBy: [{ display_order: 'asc' }, { id: 'asc' }], skip, take: limit }),
+    db.static_pages.findMany({
+      where,
+      select: PUBLIC_LIST_SELECT,
+      orderBy: [{ display_order: 'asc' }, { id: 'asc' }],
+      skip,
+      take: limit,
+    }),
     db.static_pages.count({ where }),
     loadActiveLanguages(db),
   ]);
@@ -64,58 +81,114 @@ export async function findAllPublic(c: Ctx, page: number, limit: number) {
     ...p,
     translation: resolveTranslation(static_page_translations, c.get('lang'), { active }),
   }));
-  return { message: 'Static pages fetched', data: { items, pagination: buildPaginationMeta(page, limit, total) } };
+  return {
+    message: 'Static pages fetched',
+    data: { items, pagination: buildPaginationMeta(page, limit, total) },
+  };
 }
 
 /** Admin list: includes drafts; optional `is_published` filter. */
-export async function findAllAdmin(c: Ctx, page: number, limit: number, isPublished: boolean | undefined) {
+export async function findAllAdmin(
+  c: Ctx,
+  page: number,
+  limit: number,
+  isPublished: boolean | undefined,
+) {
   const db = getDb(c);
   const { skip } = resolvePagination({ page, limit });
   const where: Prisma.static_pagesWhereInput = { deleted_at: null };
   if (isPublished !== undefined) where.is_published = isPublished;
   const [pages, total, active] = await Promise.all([
-    db.static_pages.findMany({ where, include: { static_page_translations: true }, orderBy: [{ display_order: 'asc' }, { id: 'asc' }], skip, take: limit }),
+    db.static_pages.findMany({
+      where,
+      include: { static_page_translations: true },
+      orderBy: [{ display_order: 'asc' }, { id: 'asc' }],
+      skip,
+      take: limit,
+    }),
     db.static_pages.count({ where }),
     loadActiveLanguages(db),
   ]);
-  const items = pages.map((p) => ({ ...p, translation: resolveTranslation(p.static_page_translations, c.get('lang'), { active }) }));
-  return { message: 'Static pages fetched', data: { items, pagination: buildPaginationMeta(page, limit, total) } };
+  const items = pages.map((p) => ({
+    ...p,
+    translation: resolveTranslation(p.static_page_translations, c.get('lang'), { active }),
+  }));
+  return {
+    message: 'Static pages fetched',
+    data: { items, pagination: buildPaginationMeta(page, limit, total) },
+  };
 }
 
 /**
  * Public callers only ever see published pages (an unpublished draft isn't readable by its UUID);
  * the admin route and the post-write reads pass `allowUnpublished`.
  */
-export async function findOne(c: Ctx, id: string, lang: string | null, opts: { allowUnpublished?: boolean } = {}) {
+export async function findOne(
+  c: Ctx,
+  id: string,
+  lang: string | null,
+  opts: { allowUnpublished?: boolean } = {},
+) {
   const db = getDb(c);
   const where: Prisma.static_pagesWhereInput = { id, deleted_at: null };
   if (!opts.allowUnpublished) where.is_published = true;
-  const [page, active] = await Promise.all([db.static_pages.findFirst({ where, include: DETAIL_INCLUDE }), loadActiveLanguages(db)]);
+  const [page, active] = await Promise.all([
+    db.static_pages.findFirst({ where, include: DETAIL_INCLUDE }),
+    loadActiveLanguages(db),
+  ]);
   if (!page) throw notFound('Static page not found');
-  return { message: 'Static page fetched', data: { ...page, translation: resolveTranslation(page.static_page_translations, lang, { active }) } };
+  return {
+    message: 'Static page fetched',
+    data: {
+      ...page,
+      translation: resolveTranslation(page.static_page_translations, lang, { active }),
+    },
+  };
 }
 
 /** Public detail by canonical slug: one language-agnostic slug per page. */
 export async function findBySlug(c: Ctx, slug: string, lang: string | null) {
   const db = getDb(c);
   const [page, active] = await Promise.all([
-    db.static_pages.findFirst({ where: { slug, deleted_at: null, is_published: true }, include: DETAIL_INCLUDE }),
+    db.static_pages.findFirst({
+      where: { slug, deleted_at: null, is_published: true },
+      include: DETAIL_INCLUDE,
+    }),
     loadActiveLanguages(db),
   ]);
   if (!page) throw notFound('Static page not found');
-  return { message: 'Static page fetched', data: { ...page, translation: resolveTranslation(page.static_page_translations, lang, { active }) } };
+  return {
+    message: 'Static page fetched',
+    data: {
+      ...page,
+      translation: resolveTranslation(page.static_page_translations, lang, { active }),
+    },
+  };
 }
 
 /** A bad og_image_id is a 404 (same text and status as posts), not a Prisma FK error. */
-async function assertOgImagesExist(c: Ctx, translations: { og_image_id?: string | null }[]): Promise<void> {
-  const ogImageIds = translations.map((t) => t.og_image_id).filter((v): v is string => typeof v === 'string');
+async function assertOgImagesExist(
+  c: Ctx,
+  translations: { og_image_id?: string | null }[],
+): Promise<void> {
+  const ogImageIds = translations
+    .map((t) => t.og_image_id)
+    .filter((v): v is string => typeof v === 'string');
   if (ogImageIds.length === 0) return;
-  const found = await getDb(c).media.findMany({ where: { id: { in: ogImageIds } }, select: { id: true } });
-  if (found.length !== new Set(ogImageIds).size) throw notFound('One or more og_image_id values do not match any media record');
+  const found = await getDb(c).media.findMany({
+    where: { id: { in: ogImageIds } },
+    select: { id: true },
+  });
+  if (found.length !== new Set(ogImageIds).size)
+    throw notFound('One or more og_image_id values do not match any media record');
 }
 
 /** Rejects a slug that collides with another static page's slug. */
-async function assertSlugAvailable(c: Ctx, slug: string, excludePageId: string | null): Promise<void> {
+async function assertSlugAvailable(
+  c: Ctx,
+  slug: string,
+  excludePageId: string | null,
+): Promise<void> {
   const clash = await getDb(c).static_pages.findFirst({
     where: { slug, ...(excludePageId ? { NOT: { id: excludePageId } } : {}) },
     select: { id: true },
@@ -142,10 +215,18 @@ export async function create(c: Ctx, input: CreateStaticPageInput) {
   try {
     created = await db.$transaction(async (tx) => {
       const row = await tx.static_pages.create({
-        data: { slug: input.slug, display_order: input.display_order ?? 0, is_published: input.is_published ?? true },
+        data: {
+          slug: input.slug,
+          display_order: input.display_order ?? 0,
+          is_published: input.is_published ?? true,
+        },
       });
       await tx.static_page_translations.createMany({
-        data: input.translations.map((t) => ({ page_id: row.id, lang: t.lang, ...translationData(t) })),
+        data: input.translations.map((t) => ({
+          page_id: row.id,
+          lang: t.lang,
+          ...translationData(t),
+        })),
       });
       return row;
     });
@@ -186,9 +267,12 @@ export async function update(c: Ctx, id: string, input: UpdateStaticPageInput) {
       // A JSON null on a scalar reaches Prisma as null (Nest's `!== undefined` checks) and fails there, as in Nest.
       const scalarPatch: Prisma.static_pagesUpdateInput = { updated_at: new Date() };
       if (input.slug !== undefined) scalarPatch.slug = input.slug as string;
-      if (input.display_order !== undefined) scalarPatch.display_order = input.display_order as number;
-      if (input.is_published !== undefined) scalarPatch.is_published = input.is_published as boolean;
-      if (Object.keys(scalarPatch).length > 1) await tx.static_pages.update({ where: { id }, data: scalarPatch });
+      if (input.display_order !== undefined)
+        scalarPatch.display_order = input.display_order as number;
+      if (input.is_published !== undefined)
+        scalarPatch.is_published = input.is_published as boolean;
+      if (Object.keys(scalarPatch).length > 1)
+        await tx.static_pages.update({ where: { id }, data: scalarPatch });
 
       if (input.translations && input.translations.length > 0) {
         for (const t of input.translations) {
@@ -202,7 +286,9 @@ export async function update(c: Ctx, id: string, input: UpdateStaticPageInput) {
 
         // The single-default invariant is re-checked on the full set once every upsert has landed: a
         // partial update flipping is_default on one row must not leave 0 or 2+ defaults.
-        const defaults = await tx.static_page_translations.count({ where: { page_id: id, is_default: true } });
+        const defaults = await tx.static_page_translations.count({
+          where: { page_id: id, is_default: true },
+        });
         if (defaults !== 1) throw badRequest('Exactly one translation must have is_default: true');
       }
     });
@@ -232,13 +318,22 @@ export async function togglePublish(c: Ctx, id: string, isPublished: boolean) {
     return { message: 'Static page already in requested state', data };
   }
 
-  await db.static_pages.update({ where: { id }, data: { is_published: isPublished, updated_at: new Date() } });
+  await db.static_pages.update({
+    where: { id },
+    data: { is_published: isPublished, updated_at: new Date() },
+  });
 
   audit(c, {
-    action: isPublished ? AUDIT_ACTIONS.STATIC_PAGE_PUBLISHED : AUDIT_ACTIONS.STATIC_PAGE_UNPUBLISHED,
+    action: isPublished
+      ? AUDIT_ACTIONS.STATIC_PAGE_PUBLISHED
+      : AUDIT_ACTIONS.STATIC_PAGE_UNPUBLISHED,
     resourceType: 'static_page',
     resourceId: id,
-    changes: { method: 'PATCH', path: `/api/v1/static-pages/${id}/publish`, is_published: isPublished },
+    changes: {
+      method: 'PATCH',
+      path: `/api/v1/static-pages/${id}/publish`,
+      is_published: isPublished,
+    },
   });
 
   const { data } = await findOne(c, id, null, { allowUnpublished: true });
@@ -265,7 +360,10 @@ export async function findTrash(c: Ctx, page: number, limit: number) {
     slug: stripSoftDeleteSuffix(row.slug),
     translation: resolveTranslation(row.static_page_translations, null, { active }),
   }));
-  return { message: 'Trash fetched', data: { items, pagination: buildPaginationMeta(page, limit, total) } };
+  return {
+    message: 'Trash fetched',
+    data: { items, pagination: buildPaginationMeta(page, limit, total) },
+  };
 }
 
 /** Reverses softDelete's slug suffix; 409 if a live page has taken the original slug since. */
@@ -278,13 +376,23 @@ export async function restore(c: Ctx, id: string) {
 
   try {
     await db.$transaction(async (tx) => {
-      const clash = await tx.static_pages.findFirst({ where: { slug: originalSlug, deleted_at: null, NOT: { id } }, select: { id: true } });
-      if (clash) throw conflict(`Cannot restore: slug "${originalSlug}" is now used by another static page`);
-      await tx.static_pages.update({ where: { id }, data: { deleted_at: null, updated_at: new Date(), slug: originalSlug } });
+      const clash = await tx.static_pages.findFirst({
+        where: { slug: originalSlug, deleted_at: null, NOT: { id } },
+        select: { id: true },
+      });
+      if (clash)
+        throw conflict(`Cannot restore: slug "${originalSlug}" is now used by another static page`);
+      await tx.static_pages.update({
+        where: { id },
+        data: { deleted_at: null, updated_at: new Date(), slug: originalSlug },
+      });
     });
   } catch (err) {
     // At READ COMMITTED a concurrent insert can still claim the slug after the check: the unique index is the backstop.
-    rethrowP2002AsConflict(err, 'Cannot restore: the original slug was claimed by another static page');
+    rethrowP2002AsConflict(
+      err,
+      'Cannot restore: the original slug was claimed by another static page',
+    );
   }
 
   audit(c, {
@@ -304,7 +412,10 @@ export async function softDelete(c: Ctx, id: string) {
 
   // The suffix frees the slug's unique index so a new page can claim it while this one is in the trash.
   const deletedAt = new Date();
-  await db.static_pages.update({ where: { id }, data: { deleted_at: deletedAt, slug: `${page.slug}${softDeleteSuffix(deletedAt)}` } });
+  await db.static_pages.update({
+    where: { id },
+    data: { deleted_at: deletedAt, slug: `${page.slug}${softDeleteSuffix(deletedAt)}` },
+  });
 
   audit(c, {
     action: AUDIT_ACTIONS.STATIC_PAGE_DELETED,

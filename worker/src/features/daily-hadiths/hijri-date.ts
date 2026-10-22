@@ -24,7 +24,9 @@ export async function readAnchor(env: AppBindings): Promise<HijriAnchor | null> 
   try {
     return parseAnchor(await env.HIJRI_DATE_ANCHOR.get(ANCHOR_KEY, 'json'));
   } catch (err) {
-    console.warn(`Could not read the Hijri anchor: ${err instanceof Error ? err.message : String(err)}`);
+    console.warn(
+      `Could not read the Hijri anchor: ${err instanceof Error ? err.message : String(err)}`,
+    );
     return null;
   }
 }
@@ -46,10 +48,13 @@ export async function fetchSistaniDate(env: AppBindings): Promise<HijriReading |
       return null;
     }
     const reading = parseSistaniHomeDate(await res.text());
-    if (!reading) console.error(`Hijri date: no date found in ${url}'s #home-date; has the page changed?`);
+    if (!reading)
+      console.error(`Hijri date: no date found in ${url}'s #home-date; has the page changed?`);
     return reading;
   } catch (err) {
-    console.warn(`Hijri date: could not fetch ${url}: ${err instanceof Error ? err.message : String(err)}`);
+    console.warn(
+      `Hijri date: could not fetch ${url}: ${err instanceof Error ? err.message : String(err)}`,
+    );
     return null;
   }
 }
@@ -59,15 +64,23 @@ export async function fetchSistaniDate(env: AppBindings): Promise<HijriReading |
  * none a provisional Umm al-Qura one is stored so later requests don't each try again: the hourly check
  * replaces it.
  */
-export async function refreshAnchor(env: AppBindings, existing: HijriAnchor | null, today: string): Promise<HijriAnchor> {
+export async function refreshAnchor(
+  env: AppBindings,
+  existing: HijriAnchor | null,
+  today: string,
+): Promise<HijriAnchor> {
   const reading = await fetchSistaniDate(env);
-  const next = reading ? anchorFromReading(reading, 'sistani') : (existing ?? calendarAnchor(today));
+  const next = reading
+    ? anchorFromReading(reading, 'sistani')
+    : (existing ?? calendarAnchor(today));
   const merged = mergeAnchor(existing, next);
   if (JSON.stringify(merged) !== JSON.stringify(existing)) {
     try {
       await writeAnchor(env, merged);
     } catch (err) {
-      console.warn(`Could not store the Hijri anchor: ${err instanceof Error ? err.message : String(err)}`);
+      console.warn(
+        `Could not store the Hijri anchor: ${err instanceof Error ? err.message : String(err)}`,
+      );
     }
   }
   return merged;
@@ -84,7 +97,11 @@ export async function hijriToday(env: AppBindings, today: string): Promise<Hijri
 }
 
 /** Sets today's Hijri date by hand, for when Najaf's announcement and sistani.org disagree. */
-export async function setHijriToday(env: AppBindings, today: string, date: HijriDate): Promise<HijriAnchor> {
+export async function setHijriToday(
+  env: AppBindings,
+  today: string,
+  date: HijriDate,
+): Promise<HijriAnchor> {
   const anchor = anchorFromReading({ ...date, gregorian: today }, 'manual');
   await writeAnchor(env, anchor);
   return anchor;
@@ -96,7 +113,9 @@ export async function checkHijriDate(env: AppBindings, today: string): Promise<v
   if (!needsCheck(anchor, today)) return;
   const fresh = await refreshAnchor(env, anchor, today);
   const hijri = hijriOn(fresh, today);
-  console.log(`Hijri date checked: ${hijri ? `${hijri.day}/${hijri.month}/${hijri.year}` : 'none'} (${fresh.source}${hijri?.provisional ? ', provisional' : ''})`);
+  console.log(
+    `Hijri date checked: ${hijri ? `${hijri.day}/${hijri.month}/${hijri.year}` : 'none'} (${fresh.source}${hijri?.provisional ? ', provisional' : ''})`,
+  );
 }
 
 function calendarAnchor(today: string): HijriAnchor {

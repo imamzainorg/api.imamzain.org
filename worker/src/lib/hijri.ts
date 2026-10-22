@@ -124,7 +124,8 @@ export function mergeAnchor(existing: HijriAnchor | null, next: HijriAnchor): Hi
 export function parseAnchor(value: unknown): HijriAnchor | null {
   if (!value || typeof value !== 'object') return null;
   const a = value as Record<string, unknown>;
-  const int = (v: unknown, min: number, max: number) => typeof v === 'number' && Number.isInteger(v) && v >= min && v <= max;
+  const int = (v: unknown, min: number, max: number) =>
+    typeof v === 'number' && Number.isInteger(v) && v >= min && v <= max;
   if (!int(a.year, 1300, 1700) || !int(a.month, 1, 12)) return null;
   if (typeof a.start !== 'string' || !isDateOnly(a.start)) return null;
   if (a.length !== undefined && a.length !== 29 && a.length !== 30) return null;
@@ -139,16 +140,26 @@ export function parseAnchor(value: unknown): HijriAnchor | null {
 }
 
 function isDateOnly(s: string): boolean {
-  return /^\d{4}-\d{2}-\d{2}$/.test(s) && !Number.isNaN(toUtc(s)) && new Date(toUtc(s)).toISOString().startsWith(s);
+  return (
+    /^\d{4}-\d{2}-\d{2}$/.test(s) &&
+    !Number.isNaN(toUtc(s)) &&
+    new Date(toUtc(s)).toISOString().startsWith(s)
+  );
 }
 
 let umalqura: Intl.DateTimeFormat | undefined;
 
 /** Umm al-Qura's date for `date`: the fallback while sistani.org has never been read. */
 export function calendarDateOn(date: string): HijriDate {
-  umalqura ??= new Intl.DateTimeFormat('en-u-ca-islamic-umalqura-nu-latn', { timeZone: 'UTC', year: 'numeric', month: 'numeric', day: 'numeric' });
+  umalqura ??= new Intl.DateTimeFormat('en-u-ca-islamic-umalqura-nu-latn', {
+    timeZone: 'UTC',
+    year: 'numeric',
+    month: 'numeric',
+    day: 'numeric',
+  });
   const parts = umalqura.formatToParts(new Date(toUtc(date)));
-  const part = (type: string) => Number.parseInt(parts.find((p) => p.type === type)?.value ?? '', 10);
+  const part = (type: string) =>
+    Number.parseInt(parts.find((p) => p.type === type)?.value ?? '', 10);
   return { year: part('year'), month: part('month'), day: part('day') };
 }
 
@@ -197,10 +208,25 @@ export function hijriMonthNumber(name: string): number | null {
   return hit ? hit[1] : null;
 }
 
-const GREGORIAN_MONTHS = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec'];
+const GREGORIAN_MONTHS = [
+  'jan',
+  'feb',
+  'mar',
+  'apr',
+  'may',
+  'jun',
+  'jul',
+  'aug',
+  'sep',
+  'oct',
+  'nov',
+  'dec',
+];
 
 const toLatinDigits = (s: string) =>
-  s.replace(/[٠-٩]/g, (d) => String(d.charCodeAt(0) - 0x0660)).replace(/[۰-۹]/g, (d) => String(d.charCodeAt(0) - 0x06f0));
+  s
+    .replace(/[٠-٩]/g, (d) => String(d.charCodeAt(0) - 0x0660))
+    .replace(/[۰-۹]/g, (d) => String(d.charCodeAt(0) - 0x06f0));
 
 /**
  * The date in sistani.org's `#home-date` block, e.g.
@@ -210,7 +236,9 @@ const toLatinDigits = (s: string) =>
 export function parseSistaniHomeDate(html: string): HijriReading | null {
   const block = /id=["']home-date["'][^>]*>([\s\S]*?)<\/div>/i.exec(html)?.[1];
   if (!block) return null;
-  const text = toLatinDigits(block.replace(/<[^>]*>/g, ' ').replace(/&nbsp;|&#160;/gi, ' ')).replace(/\s+/g, ' ');
+  const text = toLatinDigits(
+    block.replace(/<[^>]*>/g, ' ').replace(/&nbsp;|&#160;/gi, ' '),
+  ).replace(/\s+/g, ' ');
 
   const hijri = /(\d{1,2})\s*-?\s*([^\d|-]+?)\s*-?\s*(\d{4})\s*هـ/.exec(text);
   const gregorian = /(\d{1,2})\s+([A-Za-z]{3})[A-Za-z]*\.?,?\s+(\d{4})/.exec(text);
@@ -220,7 +248,8 @@ export function parseSistaniHomeDate(html: string): HijriReading | null {
   const month = hijriMonthNumber(hijri[2]!);
   const year = Number(hijri[3]);
   const gMonth = GREGORIAN_MONTHS.indexOf(gregorian[2]!.toLowerCase());
-  if (month === null || day < 1 || day > 30 || year < 1300 || year > 1700 || gMonth < 0) return null;
+  if (month === null || day < 1 || day > 30 || year < 1300 || year > 1700 || gMonth < 0)
+    return null;
 
   const date = `${gregorian[3]}-${String(gMonth + 1).padStart(2, '0')}-${gregorian[1]!.padStart(2, '0')}`;
   if (!isDateOnly(date)) return null;

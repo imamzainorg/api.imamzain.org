@@ -4,8 +4,15 @@ import * as service from './service';
 
 const app = createApp();
 
-defineRoute(app, { method: 'get', path: '/stats', summary: 'Aggregated counts for the CMS home screen', auth: ['dashboard:read'] }, (c) =>
-  service.getStats(c),
+defineRoute(
+  app,
+  {
+    method: 'get',
+    path: '/stats',
+    summary: 'Aggregated counts for the CMS home screen',
+    auth: ['dashboard:read'],
+  },
+  (c) => service.getStats(c),
 );
 
 export const dashboard = app;
