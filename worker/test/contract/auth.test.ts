@@ -43,12 +43,19 @@ describe('POST /auth/login', () => {
     expectSuccess(await me(res.body.data.accessToken));
   });
 
-  it('refuses a wrong password, a wrong letter case, an unknown or a deleted user alike', async () => {
+  it('matches the username regardless of letter case and answers with the stored spelling', async () => {
+    const user = await createUser();
+    const res = await login(user.username.toUpperCase());
+    expectSuccess(res);
+    expect(res.body.data.user.username).toBe(user.username);
+  });
+
+  it('refuses a wrong password, an unknown or a deleted user alike', async () => {
     const user = await createUser();
     const gone = await createUser();
     expectSuccess(await api(`/api/v1/users/${gone.id}`, { method: 'DELETE', token: await adminToken() }));
 
-    for (const [name, password] of [[user.username, 'wrong-password'], [user.username.toUpperCase(), PASSWORD], [uid('nobody'), PASSWORD], [gone.username, PASSWORD]]) {
+    for (const [name, password] of [[user.username, 'wrong-password'], [uid('nobody'), PASSWORD], [gone.username, PASSWORD]]) {
       expectError(await login(name, password), 401, 'UNAUTHORIZED', 'Invalid credentials');
     }
   });
