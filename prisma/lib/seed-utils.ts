@@ -4,7 +4,7 @@
  * no top-level side effects beyond resolving DATA_DIR.
  */
 
-import { PrismaClient } from '@prisma/client';
+import { Prisma, PrismaClient } from '@prisma/client';
 import * as path from 'path';
 import * as fs from 'fs';
 
@@ -68,6 +68,10 @@ export function normalizeUrl(url: string): string {
 export function safeParseDate(dateStr: string | null | undefined): Date | null {
   if (!dateStr) return null;
   const cleaned = dateStr.trim().replace(/\s+/g, '');
+  // A calendar date is UTC midnight. `new Date('2025-11-4')` (no zero padding)
+  // parses as LOCAL midnight, which in +03 lands on the previous UTC day.
+  const ymd = cleaned.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/);
+  if (ymd) return new Date(Date.UTC(+ymd[1], +ymd[2] - 1, +ymd[3]));
   const d = new Date(cleaned);
   return isNaN(d.getTime()) ? null : d;
 }
@@ -177,7 +181,7 @@ export type AudioJson = {
  * near-duplicate spellings produce distinct speakers an admin can merge later.
  */
 export async function getOrCreateSpeaker(
-  prisma: PrismaClient,
+  prisma: PrismaClient | Prisma.TransactionClient,
   cache: Map<string, string>,
   rawName: string | null | undefined,
 ): Promise<string | null> {
