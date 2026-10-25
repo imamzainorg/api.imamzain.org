@@ -42,6 +42,7 @@ defineRoute(
       country: query.country,
       from: query.from,
       to: query.to,
+      order: query.order,
     }),
 );
 

@@ -67,6 +67,8 @@ export const proxyVisitQuery = z.object({
   from: isoDate('from').optional(),
   /** Submitted on/before this instant. */
   to: isoDate('to').optional(),
+  /** Sort by submission time; newest first by default. */
+  order: z.enum(['asc', 'desc']).optional(),
 });
 export const contactQuery = z.object({
   ...paginationShape,

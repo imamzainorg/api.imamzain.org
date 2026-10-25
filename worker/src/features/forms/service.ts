@@ -202,7 +202,7 @@ export async function findAllProxyVisits(
   page: number,
   limit: number,
   status?: proxy_visit_status,
-  filters: { search?: string; country?: string; from?: string; to?: string } = {},
+  filters: { search?: string; country?: string; from?: string; to?: string; order?: 'asc' | 'desc' } = {},
 ) {
   const db = getDb(c);
   const { search, country, from, to } = filters;
@@ -225,7 +225,7 @@ export async function findAllProxyVisits(
   const [items, total] = await Promise.all([
     db.proxy_visit_requests.findMany({
       where,
-      orderBy: [{ submitted_at: 'desc' }, { id: 'asc' }],
+      orderBy: [{ submitted_at: filters.order ?? 'desc' }, { id: 'asc' }],
       skip: (page - 1) * limit,
       take: limit,
     }),
