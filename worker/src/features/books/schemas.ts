@@ -4,6 +4,7 @@ import { paginationShape } from '../../lib/pagination';
 import { queryBoolean } from '../../lib/query-boolean';
 import { searchTerm } from '../../lib/search-term';
 import { SLUG_PATTERN } from '../../lib/translatable-category/schemas';
+import { PDF_ACCESS } from './pdf-access';
 
 /** DTO_LIMITS in src/common/validators/dto-limits.ts, plus the book DTO's own constants. */
 export const LIMITS = {
@@ -59,6 +60,7 @@ export const createBookBody = z.object({
   pages: positiveInt.nullish(),
   publish_year: z.string().max(LIMITS.code).nullish(),
   pdf_url: pdfUrl.nullish(),
+  pdf_access: z.enum(PDF_ACCESS).optional(),
   document_languages: docLanguages.nullish(),
   part_number: positiveInt.nullish(),
   parts: positiveInt.nullish(),
@@ -76,6 +78,7 @@ export const updateBookBody = z.object({
   pages: positiveInt.nullish(),
   publish_year: z.string().max(LIMITS.code).nullish(),
   pdf_url: pdfUrl.nullish(),
+  pdf_access: z.enum(PDF_ACCESS).optional(),
   document_languages: docLanguages.nullish(),
   part_number: positiveInt.nullish(),
   parts: positiveInt.nullish(),

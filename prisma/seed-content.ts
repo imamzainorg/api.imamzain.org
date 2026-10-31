@@ -257,7 +257,15 @@ async function seedBooks(): Promise<void> {
   // the cover image, narrowed by title when several leaves share a cover.
   const matchOf = new Map<BookJson, (typeof existing)[number]>();
   const claimed = new Set<string>();
+  // The slug is the surest key once seeded, and the only one that still finds a record that has since
+  // become a series parent (it has children and no PDF or cover of its own to match on).
+  const existingBySlug = new Map(existing.filter((x) => x.slug).map((x) => [x.slug!, x]));
   for (const b of books) {
+    const hit = b.slug ? existingBySlug.get(b.slug) : undefined;
+    if (hit && !claimed.has(hit.id)) { matchOf.set(b, hit); claimed.add(hit.id); }
+  }
+  for (const b of books) {
+    if (matchOf.has(b)) continue;
     const pdf = b.pdf?.trim() ? normalizeUrl(b.pdf) : null;
     const hit = pdf ? leaves.find((x) => !claimed.has(x.id) && x.pdf_url === pdf) : undefined;
     if (hit) { matchOf.set(b, hit); claimed.add(hit.id); }
@@ -360,7 +368,10 @@ async function seedBooks(): Promise<void> {
       record(E, 'create', key, trFields.title);
       continue;
     }
-    await syncFields(E, key, d, fields, (data) => db.books.update({ where: { id: d.id }, data }));
+    // A book whose PDF is not public (pdf_access 'app') keeps the link the database holds: the website's JSON
+    // has no such link, and syncing it would wipe the app's download.
+    const { pdf_url: _jsonPdf, ...fieldsWithoutPdf } = fields;
+    await syncFields(E, key, d, d.pdf_access === 'public' ? fields : fieldsWithoutPdf, (data) => db.books.update({ where: { id: d.id }, data }));
     await syncFields(E, `${key} (ar)`, arTr(d), trFields, (data) =>
       db.book_translations.upsert({
         where: { book_id_lang: { book_id: d.id, lang: 'ar' } },

@@ -62,6 +62,7 @@ Whenever a migration adds one of these, add a row here in the same PR.
 | `books_views_check` | `books` | `00000000000000_baseline` | `CHECK (views >= 0)`. |
 | `books_parent_id_not_self_check` | `books` | `20260908120000_book_parts_and_publication_flag` | `CHECK (parent_id IS NULL OR parent_id != id)` — a book can't be its own series parent. |
 | `chk_books_parts` | `books` | `20260917110000_books_series_integrity` | `CHECK` (both `part_number`/`parts` NULL, or both set with `part_number <= parts`) — mirrored in `books.service.ts` for a readable 400; see the comment on `books.part_number` in schema.prisma. Added `NOT VALID`. |
+| `chk_books_pdf_access` | `books` | `20261031100000_books_pdf_access` | `CHECK (pdf_access IN ('public', 'app'))`. |
 | `contact_submissions_country_check` | `contact_submissions` | `00000000000000_baseline` | `CHECK (country ~ '^[A-Z]{2}$')` — regex CHECK. |
 | `media_mime_type_check` | `media` | `00000000000000_baseline` | `CHECK (mime_type LIKE 'image/%')`. |
 | `media_file_size_check` | `media` | `00000000000000_baseline` | `CHECK (file_size > 0)`. |

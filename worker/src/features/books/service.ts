@@ -14,6 +14,7 @@ import { buildPaginationMeta } from '../../lib/pagination';
 import { assertSlugRenameAllowed } from '../../lib/publish-rules';
 import { softDeleteSuffix, stripSoftDeleteSuffix } from '../../lib/soft-delete';
 import type { AppEnv } from '../../lib/types';
+import { gatePdf } from './pdf-access';
 import type { CreateBookInput, UpdateBookInput } from './schemas';
 
 type Ctx = Context<AppEnv>;
@@ -38,6 +39,7 @@ const BOOK_LIST_SELECT = {
   pages: true,
   publish_year: true,
   pdf_url: true,
+  pdf_access: true,
   document_languages: true,
   part_number: true,
   views: true,
@@ -108,6 +110,7 @@ const BOOK_PART_SELECT = {
   part_number: true,
   pages: true,
   pdf_url: true,
+  pdf_access: true,
   media: { select: PUBLIC_MEDIA_SELECT },
   book_translations: { select: RELATED_BOOK_TRANSLATION_SELECT },
 } satisfies Prisma.booksSelect;
@@ -159,6 +162,7 @@ const BOOK_PUBLIC_DETAIL_SELECT = {
   pages: true,
   publish_year: true,
   pdf_url: true,
+  pdf_access: true,
   part_number: true,
   parts: true,
   views: true,
@@ -209,9 +213,11 @@ export async function findAll(c: Ctx, f: ListFilters, lang: string | null, isAdm
     loadActiveLanguages(db),
   ]);
 
+  const isApp = c.get('isApp');
   const items = rows.map((b) => {
     const flat = withPartsCount(b);
-    return { ...flat, translation: resolveTranslation(flat.book_translations, lang, { active }) };
+    const shown = isAdmin ? flat : gatePdf(flat, isApp);
+    return { ...shown, translation: resolveTranslation(flat.book_translations, lang, { active }) };
   });
   return {
     message: 'Books fetched',
@@ -239,8 +245,9 @@ export async function findOne(c: Ctx, id: string, lang: string | null, isAdmin =
 
   // The internal `parent_id` FK is stripped; the resolved `parent` object is its public form.
   const { parts_rel, parent, parent_id: _parentId, ...rest } = book;
+  const isApp = c.get('isApp');
   const parts = parts_rel.map((p) => ({
-    ...p,
+    ...(isAdmin ? p : gatePdf(p, isApp)),
     translation: resolveTranslation(p.book_translations, lang, { active }),
   }));
 
@@ -248,7 +255,7 @@ export async function findOne(c: Ctx, id: string, lang: string | null, isAdmin =
   return {
     message: 'Book fetched',
     data: {
-      ...rest,
+      ...(isAdmin ? rest : gatePdf(rest, isApp)),
       translation: resolveTranslation(book.book_translations, lang, { active }),
       parts_count: parts_rel.length,
       parts: parts.length > 0 ? parts : undefined,
@@ -412,6 +419,7 @@ export async function create(c: Ctx, input: CreateBookInput, lang: string | null
           pages: input.pages ?? null,
           publish_year: input.publish_year ?? null,
           pdf_url: input.pdf_url ?? null,
+          pdf_access: input.pdf_access ?? 'public',
           document_languages: input.document_languages ?? [],
           part_number: input.part_number ?? null,
           parts: input.parts ?? null,
@@ -535,6 +543,7 @@ export async function update(c: Ctx, id: string, input: UpdateBookInput, lang: s
       if (input.pages !== undefined) data.pages = input.pages;
       if (input.publish_year !== undefined) data.publish_year = input.publish_year;
       if (input.pdf_url !== undefined) data.pdf_url = input.pdf_url;
+      if (input.pdf_access !== undefined) data.pdf_access = input.pdf_access;
       if (input.document_languages !== undefined)
         data.document_languages = input.document_languages as string[];
       if (input.part_number !== undefined) data.part_number = input.part_number;

@@ -4101,3 +4101,16 @@ then apply `20261021110000_drop_hadith_gregorian_schedule`, which drops
 `display_date` and `daily_hadith_random_picks` (the previous Worker reads
 both). The `HIJRI_DATE_ANCHOR` KV namespace already exists; the first
 request after the deploy reads sistani.org and fills it.
+
+## 31 Oct 2026: books.pdf_access (app-only PDF downloads)
+
+A book can now say who may download its PDF: `pdf_access` is `"public"` (default, everyone) or `"app"`
+(only the mobile app). The books stay visible everywhere; only the link is withheld.
+
+- `POST /books` and `PATCH /books/:id` accept `pdf_access` (`"public"` | `"app"`). Anything else, or `null`, is a 400.
+- Admin responses (`/books/admin`, `/books/admin/:id`, create, update, publish, restore) always carry the real
+  `pdf_url` and `pdf_access`. Public responses carry `pdf_url: null` for an `"app"` book unless the request has the
+  app's `X-App-Key`; `pdf_access` is `null` when the book has no PDF. See `docs/WEBSITE-INTEGRATION.md` section 2b.
+- The CMS form needs a "PDF access: everyone / app only" selector next to the PDF upload.
+- Migration `20261031100000_books_pdf_access` is additive and safe to apply before the Worker is deployed.
+  The Worker needs the secret `APP_CLIENT_KEY` (`npx wrangler secret put APP_CLIENT_KEY`); without it nobody is the app.

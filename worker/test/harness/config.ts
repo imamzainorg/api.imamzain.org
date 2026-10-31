@@ -15,6 +15,9 @@ export const PORTS = { worker: Number(process.env.CONTRACT_PORT ?? 8797) } as co
 /** Signs harness and contract tokens. Never a real secret: it only exists in local and CI stacks. */
 export const HARNESS_JWT_SECRET = 'harness-only-jwt-secret-not-for-production-0000';
 
+/** The mobile app's key for the harness stack (X-App-Key). Never a real secret. */
+export const HARNESS_APP_KEY = 'harness-only-app-key-not-for-production';
+
 /** Fake R2 credentials: presigning is pure computation, and the Worker's storage calls go to wrangler's local bucket. */
 export const HARNESS_R2 = { R2_ACCOUNT_ID: 'harness-account', R2_ACCESS_KEY_ID: 'harness-key', R2_SECRET_ACCESS_KEY: 'harness-secret' };
 

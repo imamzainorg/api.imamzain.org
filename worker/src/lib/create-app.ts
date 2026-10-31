@@ -3,6 +3,7 @@ import type { Context, MiddlewareHandler } from 'hono';
 import { bodyLimit } from 'hono/body-limit';
 import { HTTPException } from 'hono/http-exception';
 import { matchedRoutes } from 'hono/route';
+import { appClient } from './app-client';
 import { closeDb } from './db';
 import { cors } from './cors';
 import { etag } from './etag';
@@ -57,6 +58,7 @@ export function createApp() {
       },
     }),
     language,
+    appClient,
     rateLimit('RL_GLOBAL'),
   ];
   app.use('*', ...shared.map(onlyForRoutes));
