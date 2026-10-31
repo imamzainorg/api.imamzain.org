@@ -35,6 +35,13 @@ export function publicCache(
   maxAgeSeconds = 60,
   sMaxAgeSeconds = maxAgeSeconds * 5,
 ): void {
-  c.header('Cache-Control', `public, max-age=${maxAgeSeconds}, s-maxage=${sMaxAgeSeconds}`);
-  c.header('Vary', 'Accept-Language');
+  // A response to the app can carry links the website must never get (books.pdf_access), so it is never
+  // held by a shared cache, and the key is part of every cached variant's identity.
+  c.header(
+    'Cache-Control',
+    c.get('isApp')
+      ? `private, max-age=${maxAgeSeconds}`
+      : `public, max-age=${maxAgeSeconds}, s-maxage=${sMaxAgeSeconds}`,
+  );
+  c.header('Vary', 'Accept-Language, X-App-Key');
 }

@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { HARNESS_APP_KEY } from '../harness/config';
 import { adminToken, api, expectError, expectSuccess, ISO_DATE, tokenWith, withDb } from './support/http';
 
 const BASE = '/api/v1/books';
@@ -639,5 +640,82 @@ describe('DELETE, trash and restore', () => {
   it('400s a malformed id on delete and restore', async () => {
     expectError(await del('nope'), 400, 'INVALID_IDENTIFIER', 'Invalid identifier format');
     expectError(await restore('nope'), 400, 'INVALID_IDENTIFIER', 'Invalid identifier format');
+  });
+});
+
+describe('books.pdf_access', () => {
+  const APP_KEY = { 'x-app-key': HARNESS_APP_KEY };
+  const PDF = (name: string) => `https://cdn.example.test/books/${name}.pdf`;
+  const shown = (b: { pdf_access: unknown; pdf_url: unknown }) => ({ pdf_access: b.pdf_access, pdf_url: b.pdf_url });
+  const rowOf = (res: { body: any }, id: string) => res.body.data.items.find((i: { id: string }) => i.id === id);
+
+  /** An app-only book, a public one, one with no PDF, and a series whose only part is app-only, all found by `tag`. */
+  async function fixtures() {
+    const tag = uid();
+    const named = (suffix: string) => ({ slug: `${tag}-${suffix}`, translations: [ar(`${tag}-${suffix}`)] });
+    const appOnly = await create({ ...named('app'), pdf_url: PDF(`${tag}-app`), pdf_access: 'app' });
+    const open = await create({ ...named('open'), pdf_url: PDF(`${tag}-open`) });
+    const none = await create(named('none'));
+    const parent = await create(named('series'));
+    const part = await create({ ...named('part'), category_id: parent.category_id, parent_id: parent.id, part_number: 1, parts: 1, pdf_url: PDF(`${tag}-part`), pdf_access: 'app' });
+    return { tag, appOnly, open, none, parent, part };
+  }
+
+  it('withholds an app-only link from the website on every public path, but not from the CMS', async () => {
+    const f = await fixtures();
+
+    const list = await api(`${BASE}?limit=100&search=${f.tag}`);
+    expectSuccess(list);
+    expect(shown(rowOf(list, f.appOnly.id))).toEqual({ pdf_access: 'app', pdf_url: null });
+    expect(shown(rowOf(list, f.open.id))).toEqual({ pdf_access: 'public', pdf_url: PDF(`${f.tag}-open`) });
+    expect(shown(rowOf(list, f.none.id))).toEqual({ pdf_access: null, pdf_url: null });
+
+    for (const path of [`/${f.appOnly.id}`, `/by-slug/${f.tag}-app`, `/${f.part.id}`]) {
+      const res = await api(`${BASE}${path}`);
+      expectSuccess(res);
+      expect(shown(res.body.data)).toEqual({ pdf_access: 'app', pdf_url: null });
+    }
+    const series = await api(`${BASE}/${f.parent.id}`);
+    expect(shown(series.body.data.parts[0])).toEqual({ pdf_access: 'app', pdf_url: null });
+
+    const cms = await admin(`/admin/${f.appOnly.id}`);
+    expect(shown(cms.body.data)).toEqual({ pdf_access: 'app', pdf_url: PDF(`${f.tag}-app`) });
+  });
+
+  it('gives the app its link and keeps a response to the app out of shared caches', async () => {
+    const f = await fixtures();
+
+    const detail = await api(`${BASE}/${f.appOnly.id}`, { headers: APP_KEY });
+    expectSuccess(detail);
+    expect(shown(detail.body.data)).toEqual({ pdf_access: 'app', pdf_url: PDF(`${f.tag}-app`) });
+    expect(detail.headers.get('cache-control')).toMatch(/^private, /);
+    expect(detail.headers.get('vary')).toContain('X-App-Key');
+
+    const list = await api(`${BASE}?limit=100&search=${f.tag}`, { headers: APP_KEY });
+    expect(rowOf(list, f.appOnly.id).pdf_url).toBe(PDF(`${f.tag}-app`));
+    const series = await api(`${BASE}/${f.parent.id}`, { headers: APP_KEY });
+    expect(series.body.data.parts[0].pdf_url).toBe(PDF(`${f.tag}-part`));
+
+    // Without the key, or with a wrong one, it is the website: no link, and the shared cache may hold the answer.
+    const notTheApp: Record<string, string>[] = [{}, { 'x-app-key': 'not-the-key' }];
+    for (const headers of notTheApp) {
+      const res = await api(`${BASE}/${f.appOnly.id}`, { headers });
+      expect(res.body.data.pdf_url).toBeNull();
+      expect(res.headers.get('cache-control')).toMatch(/^public, /);
+      expect(res.headers.get('vary')).toContain('X-App-Key');
+    }
+  });
+
+  it('lets the CMS change pdf_access, defaults it to public and rejects other values', async () => {
+    const book = await create({ pdf_url: PDF(uid()) });
+    expect(book.pdf_access).toBe('public');
+
+    expectSuccess(await patch(book.id, { pdf_access: 'app' }));
+    expect((await api(`${BASE}/${book.id}`)).body.data.pdf_url).toBeNull();
+    expectSuccess(await patch(book.id, { pdf_access: 'public' }));
+    expect((await api(`${BASE}/${book.id}`)).body.data.pdf_url).toBe(book.pdf_url);
+
+    expect((await patch(book.id, { pdf_access: 'members' })).status).toBe(400);
+    expect((await post({ category_id: book.category_id, cover_image_id: await cover(), translations: [ar(uid())], pdf_access: null })).status).toBe(400);
   });
 });
