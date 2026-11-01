@@ -64,7 +64,7 @@ audios. Call it from the browser.
 Some books are visible everywhere but their PDF may only be downloaded in the mobile app. Every book response
 (list, detail, by-slug, and each entry of a series' `parts[]`) carries two fields:
 
-| Case | Website (no key) | Mobile app (sends `X-App-Key`) |
+| Case | Website | Mobile app (recognised by its User-Agent) |
 |---|---|---|
 | `public` PDF | `pdf_access: "public"`, `pdf_url: "…"` | same |
 | `app` PDF | `pdf_access: "app"`, **`pdf_url: null`** | `pdf_access: "app"`, `pdf_url: "…"` |
@@ -78,15 +78,17 @@ Website button states, from `pdf_access` alone:
 
 Rules:
 
-- The website must **never** send `X-App-Key`, and the key must never appear in the website's repo or pages.
-- A request that carries a valid key gets `Cache-Control: private` and every public response varies on
-  `X-App-Key`, so a shared cache cannot hand an app-only link to the website.
-- This is a soft gate: the key ships inside the app, and the file sits on the public CDN. It keeps the link
+- The API recognises the mobile app by its fixed `User-Agent` (`APP_USER_AGENTS` in `worker/src/lib/app-client.ts`,
+  the app's `kBrowserUserAgent`). The website must **never** send that User-Agent, from the browser or from server code.
+- A request from the app gets `Cache-Control: private` and every public response varies on `User-Agent`, so a
+  shared cache cannot hand an app-only link to the website.
+- If the app's User-Agent string ever changes, add the new one to `APP_USER_AGENTS` and keep the old one while the
+  old app version is still installed.
+- This is a soft gate: the User-Agent is in the app's public repo, and the file sits on the public CDN. It keeps the link
   off the website and out of casual reach; it is not DRM. If it ever has to be enforced, the contract stays and
   the link becomes a short-lived signed URL behind the same check.
 - The CMS (admin endpoints) always sees the real `pdf_url` and `pdf_access`, and sets it with `pdf_access`
   (`"public"` | `"app"`) on `POST /books` and `PATCH /books/:id`.
-- The worker secret is `APP_CLIENT_KEY`; unset means nobody is the app.
 
 ## 3. Endpoint map (website feature → API)
 

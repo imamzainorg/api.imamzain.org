@@ -4,7 +4,6 @@ import type { PrismaClient } from '../generated/prisma/client';
 export type AppBindings = Env & {
   JWT_SECRET: string;
   /** The mobile app's key (secret). Unset: no caller is the app. See lib/app-client.ts. */
-  APP_CLIENT_KEY?: string;
   ENFORCE_PASSWORD_CHANGE_AFTER_RESET?: string;
   BCRYPT_ROUNDS?: string;
   JWT_EXPIRES_IN?: string;
@@ -50,7 +49,7 @@ export type AppEnv = {
     lang: string | null;
     /** Client IP from CF-Connecting-IP (Nest's `req.ip`). */
     ip: string;
-    /** True when the request carried a valid X-App-Key (lib/app-client.ts). */
+    /** True when the request came from the mobile app, by its User-Agent (lib/app-client.ts). */
     isApp: boolean;
     /** Background work started with `defer`; closeDb waits for it before closing the pool. */
     deferred: Promise<unknown>[];

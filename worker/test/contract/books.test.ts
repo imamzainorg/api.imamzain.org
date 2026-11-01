@@ -1,5 +1,4 @@
 import { describe, expect, it } from 'vitest';
-import { HARNESS_APP_KEY } from '../harness/config';
 import { adminToken, api, expectError, expectSuccess, ISO_DATE, tokenWith, withDb } from './support/http';
 
 const BASE = '/api/v1/books';
@@ -644,7 +643,7 @@ describe('DELETE, trash and restore', () => {
 });
 
 describe('books.pdf_access', () => {
-  const APP_KEY = { 'x-app-key': HARNESS_APP_KEY };
+  const APP = { 'user-agent': 'Mozilla/5.0 (Linux; Android 13; Mobile) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36' };
   const PDF = (name: string) => `https://cdn.example.test/books/${name}.pdf`;
   const shown = (b: { pdf_access: unknown; pdf_url: unknown }) => ({ pdf_access: b.pdf_access, pdf_url: b.pdf_url });
   const rowOf = (res: { body: any }, id: string) => res.body.data.items.find((i: { id: string }) => i.id === id);
@@ -685,24 +684,24 @@ describe('books.pdf_access', () => {
   it('gives the app its link and keeps a response to the app out of shared caches', async () => {
     const f = await fixtures();
 
-    const detail = await api(`${BASE}/${f.appOnly.id}`, { headers: APP_KEY });
+    const detail = await api(`${BASE}/${f.appOnly.id}`, { headers: APP });
     expectSuccess(detail);
     expect(shown(detail.body.data)).toEqual({ pdf_access: 'app', pdf_url: PDF(`${f.tag}-app`) });
     expect(detail.headers.get('cache-control')).toMatch(/^private, /);
-    expect(detail.headers.get('vary')).toContain('X-App-Key');
+    expect(detail.headers.get('vary')).toContain('User-Agent');
 
-    const list = await api(`${BASE}?limit=100&search=${f.tag}`, { headers: APP_KEY });
+    const list = await api(`${BASE}?limit=100&search=${f.tag}`, { headers: APP });
     expect(rowOf(list, f.appOnly.id).pdf_url).toBe(PDF(`${f.tag}-app`));
-    const series = await api(`${BASE}/${f.parent.id}`, { headers: APP_KEY });
+    const series = await api(`${BASE}/${f.parent.id}`, { headers: APP });
     expect(series.body.data.parts[0].pdf_url).toBe(PDF(`${f.tag}-part`));
 
-    // Without the key, or with a wrong one, it is the website: no link, and the shared cache may hold the answer.
-    const notTheApp: Record<string, string>[] = [{}, { 'x-app-key': 'not-the-key' }];
+    // Without the app's User-Agent (none, or a real browser's) it is the website: no link, and the shared cache may hold the answer.
+    const notTheApp: Record<string, string>[] = [{}, { 'user-agent': 'Mozilla/5.0 (Linux; Android 10; K) Chrome/120.0.0.0 Mobile Safari/537.36' }];
     for (const headers of notTheApp) {
       const res = await api(`${BASE}/${f.appOnly.id}`, { headers });
       expect(res.body.data.pdf_url).toBeNull();
       expect(res.headers.get('cache-control')).toMatch(/^public, /);
-      expect(res.headers.get('vary')).toContain('X-App-Key');
+      expect(res.headers.get('vary')).toContain('User-Agent');
     }
   });
 

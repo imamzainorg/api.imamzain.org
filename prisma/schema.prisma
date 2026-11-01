@@ -152,7 +152,7 @@ model books {
   publish_year      String?
   pdf_url           String?
   // Who may download pdf_url (migration 20261031100000): 'public' = everyone, 'app' = only callers that send
-  // the mobile app's key (X-App-Key). Limited to those two by the CHECK chk_books_pdf_access (raw SQL in the
+  // the mobile app (recognised by its User-Agent). Limited to those two by the CHECK chk_books_pdf_access (raw SQL in the
   // migration). Only meaningful while pdf_url is set; the rule lives in worker/src/features/books/pdf-access.ts.
   pdf_access        String              @default("public")
   // Set together or not at all, and part_number <= parts — CHECK
