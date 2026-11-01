@@ -43,5 +43,5 @@ export function publicCache(
       ? `private, max-age=${maxAgeSeconds}`
       : `public, max-age=${maxAgeSeconds}, s-maxage=${sMaxAgeSeconds}`,
   );
-  c.header('Vary', 'Accept-Language, X-App-Key');
+  c.header('Vary', 'Accept-Language, User-Agent');
 }

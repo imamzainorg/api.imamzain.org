@@ -4109,8 +4109,8 @@ A book can now say who may download its PDF: `pdf_access` is `"public"` (default
 
 - `POST /books` and `PATCH /books/:id` accept `pdf_access` (`"public"` | `"app"`). Anything else, or `null`, is a 400.
 - Admin responses (`/books/admin`, `/books/admin/:id`, create, update, publish, restore) always carry the real
-  `pdf_url` and `pdf_access`. Public responses carry `pdf_url: null` for an `"app"` book unless the request has the
-  app's `X-App-Key`; `pdf_access` is `null` when the book has no PDF. See `docs/WEBSITE-INTEGRATION.md` section 2b.
+  `pdf_url` and `pdf_access`. Public responses carry `pdf_url: null` for an `"app"` book unless the request comes
+  from the mobile app (recognised by its User-Agent); `pdf_access` is `null` when the book has no PDF. See
+  `docs/WEBSITE-INTEGRATION.md` section 2b.
 - The CMS form needs a "PDF access: everyone / app only" selector next to the PDF upload.
 - Migration `20261031100000_books_pdf_access` is additive and safe to apply before the Worker is deployed.
-  The Worker needs the secret `APP_CLIENT_KEY` (`npx wrangler secret put APP_CLIENT_KEY`); without it nobody is the app.
