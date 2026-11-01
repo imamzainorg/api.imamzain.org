@@ -40,6 +40,7 @@ const BOOK_LIST_SELECT = {
   publish_year: true,
   pdf_url: true,
   pdf_access: true,
+  display_order: true,
   document_languages: true,
   part_number: true,
   views: true,
@@ -86,6 +87,13 @@ function bookListSelect(isAdmin: boolean) {
     _count: { select: { parts_rel: { where: visiblePartsWhere(isAdmin) } } },
   } satisfies Prisma.booksSelect;
 }
+
+// display_order is 0 until the CMS places a book, so unplaced books keep newest-first among themselves.
+const BOOK_ORDER: Prisma.booksOrderByWithRelationInput[] = [
+  { display_order: 'asc' },
+  { created_at: 'desc' },
+  { id: 'asc' },
+];
 
 type BookListRow = Prisma.booksGetPayload<{ select: ReturnType<typeof bookListSelect> }>;
 
@@ -201,19 +209,42 @@ export async function findAll(c: Ctx, f: ListFilters, lang: string | null, isAdm
   if (f.search)
     where.book_translations = { some: { title: { contains: f.search, mode: 'insensitive' } } };
 
-  const [rows, total, active] = await Promise.all([
-    db.books.findMany({
-      where,
-      select: bookListSelect(isAdmin),
-      orderBy: [{ created_at: 'desc' }, { id: 'asc' }],
-      skip: (f.page - 1) * f.limit,
-      take: f.limit,
-    }),
+  const isApp = c.get('isApp');
+  const skip = (f.page - 1) * f.limit;
+  const page = (extra: Prisma.booksWhereInput, from: number, take: number) =>
+    take > 0
+      ? db.books.findMany({
+          where: { AND: [where, extra] },
+          select: bookListSelect(isAdmin),
+          orderBy: BOOK_ORDER,
+          skip: from,
+          take,
+        })
+      : Promise.resolve([]);
+
+  // Public lists show the books a reader can open (a PDF of their own, or parts) before the ones with nothing
+  // to open, each group in the CMS's manual order. The CMS list is the plain manual order, so it is the thing
+  // the editor drags around.
+  const openable: Prisma.booksWhereInput = {
+    OR: [{ pdf_url: { not: null } }, { parts_rel: { some: visiblePartsWhere(false) } }],
+  };
+  const sortOpenableFirst = !isAdmin;
+  const [openableCount, total, active] = await Promise.all([
+    sortOpenableFirst ? db.books.count({ where: { AND: [where, openable] } }) : Promise.resolve(0),
     db.books.count({ where }),
     loadActiveLanguages(db),
   ]);
+  const rows = sortOpenableFirst
+    ? [
+        ...(await page(openable, Math.min(skip, openableCount), Math.max(0, Math.min(f.limit, openableCount - skip)))),
+        ...(await page(
+          { NOT: openable },
+          Math.max(0, skip - openableCount),
+          f.limit - Math.max(0, Math.min(f.limit, openableCount - skip)),
+        )),
+      ]
+    : await page({}, skip, f.limit);
 
-  const isApp = c.get('isApp');
   const items = rows.map((b) => {
     const flat = withPartsCount(b);
     const shown = isAdmin ? flat : gatePdf(flat, isApp);
@@ -734,6 +765,29 @@ export async function restore(c: Ctx, id: string) {
   });
 
   return { message: 'Book restored', data: null };
+}
+
+// The CMS sends the order it shows (top-level books only: a part's place is its part_number). Position n is
+// index + 1, so a book left out of the list keeps its old value and can interleave; the CMS sends them all.
+export async function reorder(c: Ctx, ids: string[]) {
+  if (new Set(ids).size !== ids.length) throw badRequest('ids must not contain duplicates');
+  const db = getDb(c);
+  const found = await db.books.count({ where: { id: { in: ids }, deleted_at: null, parent_id: null } });
+  if (found !== ids.length) {
+    throw badRequest('Every id must be a live book that is not a part of a series');
+  }
+
+  await db.$transaction(
+    ids.map((id, index) => db.books.update({ where: { id }, data: { display_order: index + 1 } })),
+  );
+
+  audit(c, {
+    action: AUDIT_ACTIONS.BOOKS_REORDERED,
+    resourceType: 'book',
+    changes: { method: 'PUT', path: '/api/v1/books/admin/order', count: ids.length },
+  });
+
+  return { message: 'Books reordered', data: { count: ids.length } };
 }
 
 export async function softDelete(c: Ctx, id: string) {

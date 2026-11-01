@@ -4114,3 +4114,23 @@ A book can now say who may download its PDF: `pdf_access` is `"public"` (default
   `docs/WEBSITE-INTEGRATION.md` section 2b.
 - The CMS form needs a "PDF access: everyone / app only" selector next to the PDF upload.
 - Migration `20261031100000_books_pdf_access` is additive and safe to apply before the Worker is deployed.
+
+## 1 Nov 2026: manual order of the library (books.display_order)
+
+The public book list now puts the books a reader can open first and the ones with nothing to open (no PDF
+and no parts) last. Inside each group it follows an order the CMS sets by hand.
+
+- **New field:** every book response carries `display_order` (integer, ascending; `0` = not placed yet).
+  Books with the same value come newest first, so nothing changes until someone reorders the list, and a new
+  book sits on top of its group until it is placed.
+- **New endpoint:** `PUT /api/v1/books/admin/order`, permission `books:update`, body
+  `{ "ids": ["<book id>", ...] }`. Send the **whole** list of top-level books in the order the editor wants;
+  book number n gets `display_order` n. Answers `{ message: "Books reordered", data: { count } }`. A 400 means
+  a repeated id, an empty list, an unknown or deleted book, or a part of a series (a part keeps its place
+  through `part_number`).
+- **CMS list:** `GET /books/admin` is the plain manual order (no readable-first grouping), so the drag-and-drop
+  screen shows exactly what it will send back. Load every page (max 100 per page) before saving.
+- **Public order differs on purpose:** a book without a PDF or parts still shows last on the website and in
+  the app, wherever the editor drags it. Tell editors this on the screen.
+- Public responses are cached for up to 5 minutes, so a new order reaches the website after that.
+- Migration `20261101100000_books_display_order` is additive and safe to apply before the Worker is deployed.

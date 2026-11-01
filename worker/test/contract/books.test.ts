@@ -705,6 +705,56 @@ describe('books.pdf_access', () => {
     }
   });
 
+  it('lists the books a reader can open first, keeping newest-first order inside each group and across pages', async () => {
+    const f = await fixtures(); // created in order: appOnly, open, none, parent (its part is app-only)
+    const idsOf = async (query: string, headers?: Record<string, string>) =>
+      (await api(`${BASE}?search=${f.tag}&${query}`, { headers })).body.data.items.map((i: { id: string }) => i.id);
+
+    // The parent (has a part) and the PDF books first, the book with nothing to open last; the same for the website and the app.
+    expect(await idsOf('limit=100')).toEqual([f.parent.id, f.open.id, f.appOnly.id, f.none.id]);
+    expect(await idsOf('limit=100', APP)).toEqual([f.parent.id, f.open.id, f.appOnly.id, f.none.id]);
+
+    // Paging walks the same order without skipping or repeating a book at the boundary between the groups.
+    expect(await idsOf('limit=3&page=1', APP)).toEqual([f.parent.id, f.open.id, f.appOnly.id]);
+    expect(await idsOf('limit=3&page=2', APP)).toEqual([f.none.id]);
+    expect(await idsOf('limit=2&page=2', APP)).toEqual([f.appOnly.id, f.none.id]);
+  });
+
+  it('lets the CMS set the manual order: the CMS list follows it exactly, public lists keep readable books first', async () => {
+    const f = await fixtures(); // created in order: appOnly, open, none, parent
+    const order = async (ids: string[], token?: string) =>
+      api(`${BASE}/admin/order`, { method: 'PUT', token: token ?? (await adminToken()), body: { ids } });
+    const adminIds = async () => idsOf(await admin(`/admin?search=${f.tag}&limit=100`));
+    const publicIds = async () => idsOf(await api(`${BASE}?search=${f.tag}&limit=100`));
+
+    // Nothing placed yet: newest first.
+    expect(await adminIds()).toEqual([f.parent.id, f.none.id, f.open.id, f.appOnly.id]);
+
+    const placed = [f.none.id, f.appOnly.id, f.parent.id, f.open.id];
+    expectSuccess(await order(placed));
+    expect(await adminIds()).toEqual(placed);
+    // The book with nothing to open stays last for readers; the others follow the manual order.
+    expect(await publicIds()).toEqual([f.appOnly.id, f.parent.id, f.open.id, f.none.id]);
+
+    // A new book is unplaced (0), so it sits on top of its group until the CMS places it.
+    const fresh = await create({ slug: `${f.tag}-fresh`, translations: [ar(`${f.tag}-fresh`)], pdf_url: `https://cdn.example.test/books/${f.tag}-fresh.pdf` });
+    expect((await publicIds())[0]).toBe(fresh.id);
+  });
+
+  it('rejects an invalid order and the wrong caller', async () => {
+    const f = await fixtures();
+    const put = async (body: unknown, token?: string) => api(`${BASE}/admin/order`, { method: 'PUT', token, body });
+    const token = await adminToken();
+
+    expect((await put({ ids: [f.open.id] })).status).toBe(401);
+    expect((await put({ ids: [f.open.id] }, await tokenWith(['books:read']))).status).toBe(403);
+    expect((await put({ ids: [] }, token)).status).toBe(400);
+    expect((await put({ ids: [f.open.id, f.open.id] }, token)).status).toBe(400);
+    // A part keeps its place in its series (part_number), and a deleted or unknown book has no place at all.
+    expect((await put({ ids: [f.part.id] }, token)).status).toBe(400);
+    expect((await put({ ids: [f.open.id, '00000000-0000-4000-8000-000000000000'] }, token)).status).toBe(400);
+  });
+
   it('lets the CMS change pdf_access, defaults it to public and rejects other values', async () => {
     const book = await create({ pdf_url: PDF(uid()) });
     expect(book.pdf_access).toBe('public');
