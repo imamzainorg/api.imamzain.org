@@ -82,6 +82,9 @@ Rules:
   the app's `kBrowserUserAgent`). The website must **never** send that User-Agent, from the browser or from server code.
 - A request from the app gets `Cache-Control: private` and every public response varies on `User-Agent`, so a
   shared cache cannot hand an app-only link to the website.
+- `GET /books` (website and app alike) lists the books a reader can open (a PDF of their own, or parts) before
+  the ones with nothing to open. Inside each group the order is the CMS's manual order (`display_order`,
+  ascending), and books not yet placed (`0`) come newest first. Render the list in the order received.
 - If the app's User-Agent string ever changes, add the new one to `APP_USER_AGENTS` and keep the old one while the
   old app version is still installed.
 - This is a soft gate: the User-Agent is in the app's public repo, and the file sits on the public CDN. It keeps the link

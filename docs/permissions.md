@@ -33,7 +33,7 @@ the API emits.
 | `post-categories:delete` | Soft-delete + restore + list trash for post categories |
 | `books:read` | List / read drafts and unpublished books (admin) |
 | `books:create` | Add new books |
-| `books:update` | Edit book records |
+| `books:update` | Edit book records, and set the library's manual order (`PUT /books/admin/order`) |
 | `books:delete` | Soft-delete + restore + list trash for books |
 | `book-categories:create` | Create book categories |
 | `book-categories:update` | Edit book categories |
@@ -337,6 +337,7 @@ change.
 | `POST_RESTORED` | `POST /posts/:id/restore` |
 | `BOOK_CREATED` / `BOOK_UPDATED` / `BOOK_DELETED` / `BOOK_RESTORED` | Books CRUD |
 | `BOOK_PUBLISHED` / `BOOK_UNPUBLISHED` | `PATCH /books/:id/publish` |
+| `BOOKS_REORDERED` | `PUT /books/admin/order` |
 | `ACADEMIC_PAPER_CREATED` / `ACADEMIC_PAPER_UPDATED` / `ACADEMIC_PAPER_DELETED` / `ACADEMIC_PAPER_RESTORED` | Academic papers CRUD |
 | `ACADEMIC_PAPER_PUBLISHED` / `ACADEMIC_PAPER_UNPUBLISHED` | `PATCH /academic-papers/:id/publish` |
 | `GALLERY_IMAGE_CREATED` / `GALLERY_IMAGE_UPDATED` / `GALLERY_IMAGE_DELETED` / `GALLERY_IMAGE_RESTORED` | Gallery images CRUD |

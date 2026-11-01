@@ -90,6 +90,9 @@ export const updateBookBody = z.object({
 
 export const togglePublishBody = z.object({ is_published: z.boolean() });
 
+// The library is a few hundred books; the cap keeps one request's transaction bounded.
+export const reorderBooksBody = z.object({ ids: z.array(z.string()).min(1).max(1000) });
+
 export type CreateBookInput = z.output<typeof createBookBody>;
 export type UpdateBookInput = z.output<typeof updateBookBody>;
 

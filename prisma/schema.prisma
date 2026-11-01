@@ -155,6 +155,9 @@ model books {
   // the mobile app (recognised by its User-Agent). Limited to those two by the CHECK chk_books_pdf_access (raw SQL in the
   // migration). Only meaningful while pdf_url is set; the rule lives in worker/src/features/books/pdf-access.ts.
   pdf_access        String              @default("public")
+  // Manual position in the library (migration 20261101100000): ascending, 0 = not placed yet. Ties fall back to
+  // newest first, so a new book sits at the top of its group until the CMS places it (PUT /books/admin/order).
+  display_order     Int                 @default(0)
   // Set together or not at all, and part_number <= parts — CHECK
   // chk_books_parts (migration 20260917110000; mirrored in books.service.ts so
   // the editor gets a readable 400). Among the LIVE parts of one series

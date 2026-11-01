@@ -8,6 +8,7 @@ import {
   createBookBody,
   idParams,
   listQuery,
+  reorderBooksBody,
   slugParams,
   togglePublishBody,
   updateBookBody,
@@ -35,6 +36,18 @@ defineRoute(
     query: bookQuery,
   },
   (c, { query }) => service.findAll(c, query, c.get('lang'), true),
+);
+
+defineRoute(
+  app,
+  {
+    method: 'put',
+    path: '/admin/order',
+    summary: 'Set the manual order of the library (admin)',
+    auth: ['books:update'],
+    body: reorderBooksBody,
+  },
+  (c, { body }) => service.reorder(c, body.ids),
 );
 
 defineRoute(
