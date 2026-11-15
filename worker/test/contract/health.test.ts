@@ -55,6 +55,17 @@ describe('GET /api/v1/health', () => {
       expect(res.headers.get('access-control-allow-origin')).toBeNull();
     });
 
+    // A website PR preview reads public data, but must never get an editor's credentials.
+    it('echoes a website preview origin without credentials, and not a lookalike', async () => {
+      const preview = 'https://pr-140-imamzain-org.imamzainalabdeen1.workers.dev';
+      const res = await api('/api/v1/health', { headers: { origin: preview } });
+      expect(res.headers.get('access-control-allow-origin')).toBe(preview);
+      expect(res.headers.get('access-control-allow-credentials')).toBeNull();
+
+      const lookalike = await api('/api/v1/health', { headers: { origin: 'https://pr-140-imamzain-org.evil.workers.dev' } });
+      expect(lookalike.headers.get('access-control-allow-origin')).toBeNull();
+    });
+
     it('answers a preflight with 200', async () => {
       const res = await api('/api/v1/health', {
         method: 'OPTIONS',

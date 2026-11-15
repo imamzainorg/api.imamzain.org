@@ -29,7 +29,8 @@ interface ListFilters {
   locations?: string[];
 }
 
-// List queries drop the description from translations.
+// Lists carry the description (short text): the website shows and searches it for every image, and
+// without it the build would fetch each image's detail.
 const GALLERY_LIST_SELECT = {
   media_id: true,
   category_id: true,
@@ -47,6 +48,7 @@ const GALLERY_LIST_SELECT = {
       media_id: true,
       lang: true,
       title: true,
+      description: true,
       meta_title: true,
       meta_description: true,
       og_image_id: true,

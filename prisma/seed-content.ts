@@ -282,6 +282,16 @@ async function seedBooks(): Promise<void> {
   // Series parents: the parent the matched parts already point at, else a
   // top-level book with the series title in the same category, else a new one.
   const parentIdBySeries = new Map<string, string>();
+  // A parent's slug is what its parts' slugs share ("x-part-1", "x-part-2" → "x"), lowercased as the
+  // API's slug rule requires. Set only while the parent has none: once set, it is the editor's.
+  const seriesSlug = (group: BookJson[]) => {
+    const slugs = group.map((b) => b.slug?.trim()).filter((s): s is string => !!s);
+    if (slugs.length < 2) return null;
+    let prefix = slugs[0]!;
+    for (const s of slugs) while (!s.startsWith(prefix)) prefix = prefix.slice(0, -1);
+    const slug = prefix.replace(/[-_]+$/, '').replace(/-(part|volume|vol)$/i, '').toLowerCase();
+    return /^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(slug) && !existingBySlug.has(slug) ? slug : null;
+  };
   for (const [seriesName, group] of seriesGroups) {
     if (group.length < 2) continue;
     const first = [...group].sort((a, b) => (a.partNumber ?? 0) - (b.partNumber ?? 0))[0]!;
@@ -308,8 +318,9 @@ async function seedBooks(): Promise<void> {
     };
     const trFields = { title: seriesName, author: first.author?.trim() ? first.author : null, publisher: first.printHouse?.trim() ? first.printHouse : null, is_default: true };
 
+    const slug = seriesSlug(group);
     if (!parent) {
-      const created = await db.books.create({ data: { ...fields, book_translations: { create: { lang: 'ar', ...trFields } } } });
+      const created = await db.books.create({ data: { ...fields, slug, book_translations: { create: { lang: 'ar', ...trFields } } } });
       record(E, 'create', `series parent "${seriesName}"`);
       parentIdBySeries.set(seriesName, created.id);
       continue;
@@ -317,6 +328,10 @@ async function seedBooks(): Promise<void> {
     claimed.add(parent.id);
     parentIdBySeries.set(seriesName, parent.id);
     const key = `series parent "${seriesName}"`;
+    if (!parent.slug && slug) {
+      record(E, 'update', `${key} slug: null → ${slug}`);
+      await db.books.update({ where: { id: parent.id }, data: { slug } });
+    }
     await syncFields(E, key, parent, fields, (data) => db.books.update({ where: { id: parent!.id }, data }));
     await syncFields(E, `${key} (ar)`, arTr(parent), trFields, (data) =>
       db.book_translations.upsert({
@@ -868,6 +883,10 @@ function downsamplePeaks(peaks: number[] | undefined): number[] | null {
   return out;
 }
 
+// Readable English slugs for the website's audios, by JSON id (`<topic>-<speaker>[-part-N]`, with the
+// Hijri year or a number when one speaker has several recordings of the same title).
+const AUDIO_SLUGS: Record<string, string> = JSON.parse(fs.readFileSync(path.join(__dirname, 'data', 'audio-slugs.json'), 'utf8'));
+
 async function seedAudios(): Promise<void> {
   const E = 'audios';
   const items = loadJson<AudioJson[]>('AudioItemAnalyzed.json');
@@ -878,6 +897,10 @@ async function seedAudios(): Promise<void> {
   const urlOf = (a: AudioJson) => (a.audio?.trim() ? normalizeUrl(a.audio) : '');
   // Two JSON rows sharing one mp3 are one recording: the last row wins.
   const lastRowOfUrl = new Map(items.map((a) => [urlOf(a), a]));
+  // The website's old share links are /media/audio?id=<JSON id>; every JSON id of a recording is kept
+  // in legacy_ids so both rows of a shared mp3 still resolve.
+  const legacyIdsOfUrl = new Map<string, number[]>();
+  for (const a of items) legacyIdsOfUrl.set(urlOf(a), [...(legacyIdsOfUrl.get(urlOf(a)) ?? []), Number(a.id)].sort((x, y) => x - y));
 
   for (const a of items) {
     const audioUrl = urlOf(a);
@@ -895,15 +918,24 @@ async function seedAudios(): Promise<void> {
     const peaks = downsamplePeaks(a.peaks);
     const trFields = { title: a.title.trim(), is_default: true };
 
+    const legacyIds = legacyIdsOfUrl.get(audioUrl)!;
+    // Titles are Arabic and slugs ASCII, so slugs are hand-written in prisma/data/audio-slugs.json,
+    // keyed by JSON id. Set only while the audio has none: once set, it is the editor's.
+    const slug = AUDIO_SLUGS[String(a.id)] ?? null;
+
     const d = byUrl.get(audioUrl);
     if (!d) {
       await db.audios.create({
-        data: { audio_url: audioUrl, is_published: true, ...fields, peaks: peaks ?? Prisma.DbNull, audio_translations: { create: { lang: 'ar', ...trFields } } },
+        data: { audio_url: audioUrl, is_published: true, ...fields, legacy_ids: legacyIds, slug, peaks: peaks ?? Prisma.DbNull, audio_translations: { create: { lang: 'ar', ...trFields } } },
       });
       record(E, 'create', key);
       continue;
     }
-    await syncFields(E, key, d, fields, (data) => db.audios.update({ where: { id: d.id }, data }));
+    await syncFields(E, key, d, { ...fields, legacy_ids: legacyIds }, (data) => db.audios.update({ where: { id: d.id }, data }));
+    if (!d.slug && slug) {
+      record(E, 'update', `${key} slug: null → ${slug}`);
+      await db.audios.update({ where: { id: d.id }, data: { slug } });
+    }
     if (JSON.stringify(d.peaks ?? null) !== JSON.stringify(peaks)) {
       record(E, 'update', `${key} peaks`);
       await db.audios.update({ where: { id: d.id }, data: { peaks: peaks ?? Prisma.DbNull } });
