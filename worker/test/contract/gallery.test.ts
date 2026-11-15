@@ -198,7 +198,7 @@ describe('GET /gallery (public list)', () => {
       'gallery_categories',
       'translation',
     ]);
-    expect(Object.keys(item.gallery_image_translations[0])).toEqual(['media_id', 'lang', 'title', 'meta_title', 'meta_description', 'og_image_id']);
+    expect(Object.keys(item.gallery_image_translations[0])).toEqual(['media_id', 'lang', 'title', 'description', 'meta_title', 'meta_description', 'og_image_id']);
     expect(item.translation.lang).toBe('en');
     expect(res.body.data.pagination).toMatchObject({ page: 1, limit: 100 });
   });

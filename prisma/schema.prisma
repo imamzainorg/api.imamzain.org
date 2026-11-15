@@ -872,6 +872,8 @@ model audios {
   audio_url          String               @unique(map: "uq_audios_audio_url")
   pdf_url            String?
   slug               String?
+  /// The website's old numeric audio ids (/media/audio?id=N share links); two when two old rows shared one mp3.
+  legacy_ids         Int[]                @default([])
   duration_seconds   Int?
   size_mb            Float?
   peaks              Json?

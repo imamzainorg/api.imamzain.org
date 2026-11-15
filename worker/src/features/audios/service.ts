@@ -29,6 +29,8 @@ const AUDIO_LIST_SELECT = {
   audio_url: true,
   pdf_url: true,
   slug: true,
+  // The website's old numeric ids, so its /media/audio?id=N share links keep resolving.
+  legacy_ids: true,
   duration_seconds: true,
   size_mb: true,
   is_published: true,
