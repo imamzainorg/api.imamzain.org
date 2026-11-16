@@ -174,6 +174,14 @@ describe('GET /academic-papers', () => {
     expect(res.body.data.items[0].translation).toMatchObject({ lang: 'en', title: `${title}-en` });
   });
 
+  it('keeps the conference-proceedings fields and shows them in the list', async () => {
+    const category = await newCategory();
+    const fields = { section: 'المحور الأول', topic: 'علم النفس التربوي', volume: 'المجلد الأول', author_description: 'أستاذ جامعي' };
+    const mine = await create({ category_id: category, translations: [ar(uid(), fields)] });
+    expect(mine.translation).toMatchObject(fields);
+    expect((await api(`${BASE}?category_id=${category}`)).body.data.items[0].translation).toMatchObject(fields);
+  });
+
   it('searches titles and abstracts, case-insensitively', async () => {
     const needle = uid();
     const byTitle = await create({ translations: [ar(`Title ${needle.toUpperCase()}`)] });

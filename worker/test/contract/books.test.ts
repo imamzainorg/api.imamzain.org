@@ -149,10 +149,17 @@ describe('POST /books', () => {
   describe('series fields', () => {
     const body = async (extra: Record<string, unknown>) => ({ category_id: await newCategory(), cover_image_id: await cover(), translations: [ar(uid())], ...extra });
 
-    it('requires part_number and parts together, and part_number within parts', async () => {
-      expectError(await post(await body({ part_number: 1 })), 400, 'BAD_REQUEST', 'part_number and parts must be set together — send both, or neither');
-      expectError(await post(await body({ parts: 2 })), 400, 'BAD_REQUEST', 'part_number and parts must be set together — send both, or neither');
+    it('requires parts with part_number, and part_number within parts', async () => {
+      expectError(await post(await body({ part_number: 1 })), 400, 'BAD_REQUEST', 'part_number needs parts — send the number of parts too');
       expectError(await post(await body({ part_number: 3, parts: 2 })), 400, 'BAD_REQUEST', 'part_number (3) cannot exceed parts (2)');
+    });
+
+    it('accepts parts alone for a standalone book in several volumes, and shows it as parts_total', async () => {
+      const res = await post(await body({ parts: 3 }));
+      expectSuccess(res, 201);
+      expect(res.body.data).toMatchObject({ part_number: null, parts_total: 3, parts_count: 0 });
+      const listed = (await admin('/admin?limit=100')).body.data.items.find((i: { id: string }) => i.id === res.body.data.id);
+      expect(listed.parts_total).toBe(3);
     });
 
     it('404s an unknown parent and 400s a parent that is itself a part', async () => {
@@ -257,6 +264,32 @@ describe('GET /books', () => {
     expect(res.body.data.items[0].translation).toMatchObject({ lang: 'en', title: `${title}-en` });
     expect(idsOf(await api(`${BASE}?category_id=${category}&is_publication=false`))).toEqual([plain.id]);
     expect(idsOf(await api(`${BASE}?category_id=${category}`)).sort()).toEqual([mine.id, plain.id].sort());
+  });
+
+  it('lists a book under its extra categories too, and filters by conference', async () => {
+    const [primary, second] = [await newCategory(), await newCategory()];
+    const conference = `مهرجان ${uid()}`;
+    const book = await create({
+      category_id: primary,
+      extra_category_ids: [second, primary, second],
+      translations: [ar(uid(), { other_names: ['محقق', 'مترجم'], conferences: [conference] })],
+    });
+    expect(book.extra_category_ids).toEqual([second]);
+
+    for (const category of [primary, second]) expect(idsOf(await api(`${BASE}?category_id=${category}`))).toEqual([book.id]);
+    const res = await api(`${BASE}?conference=${encodeURIComponent(conference)}`);
+    expect(idsOf(res)).toEqual([book.id]);
+    expect(res.body.data.items[0]).toMatchObject({
+      extra_category_ids: [second],
+      translation: { other_names: ['محقق', 'مترجم'], conferences: [conference] },
+    });
+
+    // Making the extra category the primary drops it from the extras; [] clears them.
+    expect((await patch(book.id, { category_id: second })).body.data.extra_category_ids).toEqual([]);
+    expectSuccess(await patch(book.id, { extra_category_ids: [primary] }));
+    expect((await patch(book.id, { extra_category_ids: [] })).body.data.extra_category_ids).toEqual([]);
+    expect(idsOf(await api(`${BASE}?category_id=${primary}`))).toEqual([]);
+    expectError(await patch(book.id, { extra_category_ids: [MISSING] }), 404, 'NOT_FOUND', 'One or more extra_category_ids do not match a category');
   });
 
   it('searches titles case-insensitively', async () => {
@@ -473,7 +506,7 @@ describe('PATCH /books/:id', () => {
   describe('series fields', () => {
     it('validates part_number and parts as they will be after the patch', async () => {
       const { parts } = await newSeries([true, true]);
-      expectError(await patch(parts[0].id, { part_number: null }), 400, 'BAD_REQUEST', 'part_number and parts must be set together — send both, or neither');
+      expectError(await patch(parts[0].id, { parts: null }), 400, 'BAD_REQUEST', 'part_number needs parts — send the number of parts too');
       expectError(await patch(parts[0].id, { part_number: 3 }), 400, 'BAD_REQUEST', 'part_number (3) cannot exceed parts (2)');
       expectError(await patch(parts[0].id, { part_number: 2 }), 409, 'CONFLICT', 'That part number is already used by another part of this series');
       expectSuccess(await patch(parts[0].id, { part_number: null, parts: null }));

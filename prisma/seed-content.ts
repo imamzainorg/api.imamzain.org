@@ -103,6 +103,11 @@ async function syncFields<T extends Record<string, unknown>>(
 }
 
 const loose = (s: string | null | undefined) => (s ?? '').replace(/\s+/g, ' ').trim();
+/** A free-text JSON value as stored: whitespace collapsed, empty → null. */
+const tidy = (s: string | null | undefined) => loose(s) || null;
+/** A JSON string list as stored: tidied, without empties or repeats. */
+const tidyList = (list: string[] | null | undefined) =>
+  [...new Set((list ?? []).map(tidy).filter((s): s is string => !!s))];
 
 // ── Media ─────────────────────────────────────────────────────────────────────
 
@@ -229,7 +234,9 @@ async function seedBooks(): Promise<void> {
   const books = loadJson<BookJson[]>('books.json');
   const getBookCatId = categoryResolver('book', BOOK_CAT_SLUG);
 
-  const existing = await db.books.findMany({ include: { book_translations: true, media: { select: { url: true } } } });
+  const existing = await db.books.findMany({
+    include: { book_translations: true, media: { select: { url: true } }, extra_categories: { select: { category_id: true } } },
+  });
   const parentIds = new Set(existing.map((b) => b.parent_id).filter((id): id is string => id !== null));
   const leaves = existing.filter((b) => !parentIds.has(b.id));
   const arTr = (b: (typeof existing)[number]) => b.book_translations.find((t) => t.lang === 'ar') ?? null;
@@ -279,6 +286,21 @@ async function seedBooks(): Promise<void> {
     if (cands.length === 1) { matchOf.set(b, cands[0]); claimed.add(cands[0].id); }
   }
 
+  // A book listed under several library categories: the first is category_id, the rest are its extra categories.
+  const extraCategoryIds = async (b: BookJson) => {
+    const [primary, ...rest] = bookCats(b).map((c) => c.trim()).filter(Boolean);
+    const ids = await Promise.all(rest.filter((c) => c !== primary).map(getBookCatId));
+    return [...new Set(ids)].sort();
+  };
+  const syncExtraCategories = async (key: string, bookId: string, current: string[], wanted: string[]) => {
+    const have = [...current].sort();
+    if (JSON.stringify(have) === JSON.stringify(wanted)) return;
+    record(E, 'update', key, `extra categories: ${have.length} → ${wanted.length}`);
+    await db.book_extra_categories.deleteMany({ where: { book_id: bookId } });
+    await db.book_extra_categories.createMany({ data: wanted.map((category_id) => ({ book_id: bookId, category_id })) });
+  };
+  const translationLists = (b: BookJson) => ({ other_names: tidyList(b.otherNames), conferences: tidyList(b.Conferences) });
+
   // Series parents: the parent the matched parts already point at, else a
   // top-level book with the series title in the same category, else a new one.
   const parentIdBySeries = new Map<string, string>();
@@ -316,11 +338,25 @@ async function seedBooks(): Promise<void> {
       is_publication: isPublicationCategory(rawCats),
       document_languages: bookLangs(first),
     };
-    const trFields = { title: seriesName, author: first.author?.trim() ? first.author : null, publisher: first.printHouse?.trim() ? first.printHouse : null, is_default: true };
+    const trFields = {
+      title: seriesName,
+      author: first.author?.trim() ? first.author : null,
+      publisher: first.printHouse?.trim() ? first.printHouse : null,
+      ...translationLists(first),
+      is_default: true,
+    };
+    const extras = await extraCategoryIds(first);
 
     const slug = seriesSlug(group);
     if (!parent) {
-      const created = await db.books.create({ data: { ...fields, slug, book_translations: { create: { lang: 'ar', ...trFields } } } });
+      const created = await db.books.create({
+        data: {
+          ...fields,
+          slug,
+          book_translations: { create: { lang: 'ar', ...trFields } },
+          extra_categories: { create: extras.map((category_id) => ({ category_id })) },
+        },
+      });
       record(E, 'create', `series parent "${seriesName}"`);
       parentIdBySeries.set(seriesName, created.id);
       continue;
@@ -333,6 +369,7 @@ async function seedBooks(): Promise<void> {
       await db.books.update({ where: { id: parent.id }, data: { slug } });
     }
     await syncFields(E, key, parent, fields, (data) => db.books.update({ where: { id: parent!.id }, data }));
+    await syncExtraCategories(key, parent.id, parent.extra_categories.map((e) => e.category_id), extras);
     await syncFields(E, `${key} (ar)`, arTr(parent), trFields, (data) =>
       db.book_translations.upsert({
         where: { book_id_lang: { book_id: parent!.id, lang: 'ar' } },
@@ -360,9 +397,9 @@ async function seedBooks(): Promise<void> {
       pdf_url: b.pdf?.trim() ? normalizeUrl(b.pdf) : null,
       slug: b.slug?.trim() || null,
       part_number: seriesKey ? (b.partNumber != null ? parseInt(String(b.partNumber), 10) || null : null) : lonePart ? b.partNumber! : null,
-      // chk_books_parts requires part_number and parts to be both-null or
-      // both-set; for a real series parts mirrors the group size.
-      parts: seriesKey ? seriesGroups.get(seriesKey)!.length : lonePart ? b.totalParts! : null,
+      // For a real series parts mirrors the group size; a standalone book printed in several volumes keeps
+      // its own count (chk_books_parts allows parts without part_number).
+      parts: seriesKey ? seriesGroups.get(seriesKey)!.length : lonePart ? b.totalParts! : b.parts && b.parts > 1 ? b.parts : null,
       parent_id: seriesKey ? (parentIdBySeries.get(seriesKey) ?? null) : null,
       is_publication: isPublicationCategory(bookCats(b)),
       // views intentionally NOT seeded from JSON — the legacy counts aren't
@@ -374,12 +411,20 @@ async function seedBooks(): Promise<void> {
       author: b.author?.trim() ? b.author : null,
       publisher: b.printHouse?.trim() ? b.printHouse : null,
       series: b.series ?? null,
+      ...translationLists(b),
       is_default: true,
     };
+    const extras = await extraCategoryIds(b);
 
     const d = matchOf.get(b);
     if (!d) {
-      await db.books.create({ data: { ...fields, book_translations: { create: { lang: 'ar', ...trFields } } } });
+      await db.books.create({
+        data: {
+          ...fields,
+          book_translations: { create: { lang: 'ar', ...trFields } },
+          extra_categories: { create: extras.map((category_id) => ({ category_id })) },
+        },
+      });
       record(E, 'create', key, trFields.title);
       continue;
     }
@@ -387,6 +432,7 @@ async function seedBooks(): Promise<void> {
     // has no such link, and syncing it would wipe the app's download.
     const { pdf_url: _jsonPdf, ...fieldsWithoutPdf } = fields;
     await syncFields(E, key, d, d.pdf_access === 'public' ? fields : fieldsWithoutPdf, (data) => db.books.update({ where: { id: d.id }, data }));
+    await syncExtraCategories(key, d.id, d.extra_categories.map((e) => e.category_id), extras);
     await syncFields(E, `${key} (ar)`, arTr(d), trFields, (data) =>
       db.book_translations.upsert({
         where: { book_id_lang: { book_id: d.id, lang: 'ar' } },
@@ -555,6 +601,11 @@ type PaperTranslation = {
   publication_venue: string | null;
   page_count: number | null;
   is_default: boolean;
+  // Conference proceedings only; left out for the other corpora, so a sync never clears what the CMS set.
+  section?: string | null;
+  topic?: string | null;
+  volume?: string | null;
+  author_description?: string | null;
 };
 
 type PaperSpec = {
@@ -664,6 +715,11 @@ async function seedResearchPapers(categoryId: string): Promise<void> {
       publication_venue: p.conference ?? null,
       page_count: null,
       is_default: true,
+      section: tidy(p.section),
+      // Some topics start with the dash of a list item («– علم النفس التربوي»).
+      topic: tidy(p.topic?.replace(/^[\s–—-]+/, '')),
+      volume: tidy(p.part),
+      author_description: tidy(p.authorDescription),
     }],
   }));
   await syncPapers('papers:conference', [categoryId], specs);

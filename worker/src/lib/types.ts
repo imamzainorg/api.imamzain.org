@@ -32,6 +32,8 @@ export type AppBindings = Env & {
   NEWSLETTER_CONFIRM_URL_BASE?: string;
   NEWSLETTER_UNSUBSCRIBE_URL_BASE?: string;
   NEWSLETTER_CONFIRM_MAX_PER_HOUR?: string;
+  /** Fine-grained GitHub token (Contents: write on the website repo) for lib/site-rebuild.ts. Unset: no rebuilds. */
+  GITHUB_DISPATCH_TOKEN?: string;
 };
 
 export interface CurrentUser {

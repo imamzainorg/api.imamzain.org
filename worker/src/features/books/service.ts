@@ -25,6 +25,24 @@ interface ListFilters {
   category_id?: string;
   search?: string;
   is_publication?: boolean;
+  conference?: string;
+}
+
+const EXTRA_CATEGORIES_SELECT = {
+  select: { category_id: true },
+  orderBy: { category_id: 'asc' as const },
+} as const;
+
+/**
+ * The response shape of the book's own columns: `extra_category_ids` for the join rows, and the `parts`
+ * column as `parts_total` (how many volumes the book or its series has), because a detail's `parts` is the
+ * array of volume records.
+ */
+function bookColumns<T extends { extra_categories: { category_id: string }[]; parts: number | null }>(
+  book: T,
+) {
+  const { extra_categories, parts, ...rest } = book;
+  return { ...rest, parts_total: parts, extra_category_ids: extra_categories.map((e) => e.category_id) };
 }
 
 // List queries drop the full description from translations. Parts are hidden from every public/admin
@@ -43,12 +61,14 @@ const BOOK_LIST_SELECT = {
   display_order: true,
   document_languages: true,
   part_number: true,
+  parts: true,
   views: true,
   is_published: true,
   is_publication: true,
   created_at: true,
   updated_at: true,
   deleted_at: true,
+  extra_categories: EXTRA_CATEGORIES_SELECT,
   book_translations: {
     select: {
       book_id: true,
@@ -57,6 +77,8 @@ const BOOK_LIST_SELECT = {
       author: true,
       publisher: true,
       series: true,
+      other_names: true,
+      conferences: true,
       meta_title: true,
       meta_description: true,
       og_image_id: true,
@@ -99,7 +121,7 @@ type BookListRow = Prisma.booksGetPayload<{ select: ReturnType<typeof bookListSe
 
 function withPartsCount(book: BookListRow) {
   const { _count, ...rest } = book;
-  return { ...rest, parts_count: _count.parts_rel };
+  return { ...bookColumns(rest), parts_count: _count.parts_rel };
 }
 
 const RELATED_BOOK_TRANSLATION_SELECT = {
@@ -136,6 +158,7 @@ function bookDetailRelations(isAdmin: boolean) {
   return {
     book_translations: { include: { og_image: { select: OG_IMAGE_SELECT } } },
     book_categories: { include: { book_category_translations: true } },
+    extra_categories: EXTRA_CATEGORIES_SELECT,
     parts_rel: {
       where: visiblePartsWhere(isAdmin),
       orderBy: [
@@ -190,10 +213,11 @@ const OG_IMAGE_NOT_FOUND = 'One or more og_image_id values do not match any medi
 
 const PART_NUMBER_TAKEN = 'That part number is already used by another part of this series';
 
-// Mirror of the database CHECK chk_books_parts, so the editor gets a 400 that says what is wrong.
+// Mirror of the database CHECK chk_books_parts, so the editor gets a 400 that says what is wrong. `parts`
+// alone is allowed: a standalone book printed in several volumes.
 function assertPartFieldsConsistent(partNumber: number | null, parts: number | null): void {
-  if ((partNumber === null) !== (parts === null)) {
-    throw badRequest('part_number and parts must be set together — send both, or neither');
+  if (partNumber !== null && parts === null) {
+    throw badRequest('part_number needs parts — send the number of parts too');
   }
   if (partNumber !== null && parts !== null && partNumber > parts) {
     throw badRequest(`part_number (${partNumber}) cannot exceed parts (${parts})`);
@@ -204,10 +228,16 @@ export async function findAll(c: Ctx, f: ListFilters, lang: string | null, isAdm
   const db = getDb(c);
   const where: Prisma.booksWhereInput = { deleted_at: null, parent_id: null };
   if (!isAdmin) where.is_published = true;
-  if (f.category_id) where.category_id = f.category_id;
+  const filters: Prisma.booksWhereInput[] = [];
+  if (f.category_id)
+    filters.push({
+      OR: [{ category_id: f.category_id }, { extra_categories: { some: { category_id: f.category_id } } }],
+    });
   if (f.is_publication !== undefined) where.is_publication = f.is_publication;
   if (f.search)
-    where.book_translations = { some: { title: { contains: f.search, mode: 'insensitive' } } };
+    filters.push({ book_translations: { some: { title: { contains: f.search, mode: 'insensitive' } } } });
+  if (f.conference) filters.push({ book_translations: { some: { conferences: { has: f.conference } } } });
+  if (filters.length) where.AND = filters;
 
   const isApp = c.get('isApp');
   const skip = (f.page - 1) * f.limit;
@@ -275,14 +305,14 @@ export async function findOne(c: Ctx, id: string, lang: string | null, isAdmin =
   if (!isAdmin && book.parent_id && !book.parent) throw notFound('Book not found');
 
   // The internal `parent_id` FK is stripped; the resolved `parent` object is its public form.
-  const { parts_rel, parent, parent_id: _parentId, ...rest } = book;
+  const { parts_rel, parent, parent_id: _parentId, ...own } = book;
+  const rest = bookColumns(own);
   const isApp = c.get('isApp');
   const parts = parts_rel.map((p) => ({
     ...(isAdmin ? p : gatePdf(p, isApp)),
     translation: resolveTranslation(p.book_translations, lang, { active }),
   }));
 
-  // `parts` below shadows the `parts` column (the series total), so no detail response carries it, as in Nest.
   return {
     message: 'Book fetched',
     data: {
@@ -358,6 +388,35 @@ async function assertOgImagesExist(
   if (found.length !== new Set(ids).size) throw notFound(OG_IMAGE_NOT_FOUND);
 }
 
+// The extra categories as stored: live ones only, without duplicates or the primary category.
+async function extraCategoryRows(c: Ctx, ids: string[], primaryId: string) {
+  const wanted = [...new Set(ids.map((id) => id.toLowerCase()))].filter(
+    (id) => id !== primaryId.toLowerCase(),
+  );
+  if (wanted.length === 0) return [];
+  const found = await getDb(c).book_categories.count({
+    where: { id: { in: wanted }, deleted_at: null },
+  });
+  if (found !== wanted.length) throw notFound('One or more extra_category_ids do not match a category');
+  return wanted.map((category_id) => ({ category_id }));
+}
+
+function translationRow(t: CreateBookInput['translations'][number]) {
+  return {
+    title: t.title,
+    author: t.author ?? null,
+    publisher: t.publisher ?? null,
+    description: t.description ?? null,
+    series: t.series ?? null,
+    other_names: t.other_names ?? [],
+    conferences: t.conferences ?? [],
+    meta_title: t.meta_title ?? null,
+    meta_description: t.meta_description ?? null,
+    og_image_id: t.og_image_id ?? null,
+    is_default: t.is_default ?? false,
+  };
+}
+
 export async function trackView(c: Ctx, id: string) {
   const result = await getDb(c).books.updateMany({
     // Same visibility as findOne: a part of a hidden series is not public.
@@ -423,6 +482,7 @@ export async function create(c: Ctx, input: CreateBookInput, lang: string | null
   await assertOgImagesExist(c, input.translations);
 
   assertPartFieldsConsistent(input.part_number ?? null, input.parts ?? null);
+  const extras = await extraCategoryRows(c, input.extra_category_ids ?? [], input.category_id);
 
   const parent = input.parent_id ? await assertUsableParent(c, input.parent_id) : null;
   if (parent && input.part_number != null)
@@ -460,22 +520,11 @@ export async function create(c: Ctx, input: CreateBookInput, lang: string | null
           is_publication: input.is_publication ?? false,
           parent_id: input.parent_id ?? null,
           added_by: currentUser(c).id,
+          extra_categories: { create: extras },
         },
       });
       await tx.book_translations.createMany({
-        data: input.translations.map((t) => ({
-          book_id: created.id,
-          lang: t.lang,
-          title: t.title,
-          author: t.author ?? null,
-          publisher: t.publisher ?? null,
-          description: t.description ?? null,
-          series: t.series ?? null,
-          meta_title: t.meta_title ?? null,
-          meta_description: t.meta_description ?? null,
-          og_image_id: t.og_image_id ?? null,
-          is_default: t.is_default ?? false,
-        })),
+        data: input.translations.map((t) => ({ book_id: created.id, lang: t.lang, ...translationRow(t) })),
       });
       return created;
     });
@@ -552,6 +601,13 @@ export async function update(c: Ctx, id: string, input: UpdateBookInput, lang: s
     await assertPartNumberAvailable(c, nextParentId, nextPartNumber, id);
   }
 
+  // The set is replaced when sent; otherwise only a category that just became the primary leaves it.
+  const nextCategoryId = (input.category_id ?? book.category_id) as string;
+  const extras =
+    input.extra_category_ids != null
+      ? await extraCategoryRows(c, input.extra_category_ids, nextCategoryId)
+      : null;
+
   assertSlugRenameAllowed({
     resourceLabel: 'book',
     currentSlug: book.slug,
@@ -587,19 +643,18 @@ export async function update(c: Ctx, id: string, input: UpdateBookInput, lang: s
 
       await tx.books.update({ where: { id }, data });
 
+      if (extras) {
+        await tx.book_extra_categories.deleteMany({ where: { book_id: id } });
+        await tx.book_extra_categories.createMany({
+          data: extras.map((e) => ({ book_id: id, ...e })),
+        });
+      } else if (nextCategoryId !== book.category_id) {
+        await tx.book_extra_categories.deleteMany({ where: { book_id: id, category_id: nextCategoryId } });
+      }
+
       if (input.translations) {
         for (const t of input.translations) {
-          const row = {
-            title: t.title,
-            author: t.author ?? null,
-            publisher: t.publisher ?? null,
-            description: t.description ?? null,
-            series: t.series ?? null,
-            meta_title: t.meta_title ?? null,
-            meta_description: t.meta_description ?? null,
-            og_image_id: t.og_image_id ?? null,
-            is_default: t.is_default ?? false,
-          };
+          const row = translationRow(t);
           await tx.book_translations.upsert({
             where: { book_id_lang: { book_id: id, lang: t.lang } },
             create: { book_id: id, lang: t.lang, ...row },
