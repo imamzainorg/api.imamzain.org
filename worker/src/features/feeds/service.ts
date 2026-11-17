@@ -31,7 +31,7 @@ export async function buildSitemap(c: Ctx): Promise<string> {
     db.posts.findMany({
       where: PUBLIC,
       select: { slug: true, updated_at: true, published_at: true, created_at: true },
-      orderBy: { published_at: 'desc' },
+      orderBy: { published_at: { sort: 'desc', nulls: 'last' } },
     }),
     db.static_pages.findMany({
       where: PUBLIC,
@@ -81,7 +81,7 @@ export async function buildPostsRss(c: Ctx, limit = 50): Promise<string> {
       where: PUBLIC,
       // Only the default translation is emitted, so the other languages' bodies aren't fetched.
       include: { post_translations: { where: { is_default: true } } },
-      orderBy: [{ published_at: 'desc' }, { created_at: 'desc' }, { id: 'asc' }],
+      orderBy: [{ published_at: { sort: 'desc', nulls: 'last' } }, { created_at: 'desc' }, { id: 'asc' }],
       take: limit,
     }),
     loadActiveLanguages(db),

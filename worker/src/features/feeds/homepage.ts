@@ -56,7 +56,7 @@ async function getNews(c: Ctx, lang: string | null, active: Active) {
       post_translations: { select: { lang: true, is_default: true, summary: true, title: true } },
       media: { select: MEDIA_URL_WITH_VARIANTS_SELECT },
     },
-    orderBy: [{ is_featured: 'desc' }, { published_at: 'desc' }, { id: 'asc' }],
+    orderBy: [{ is_featured: 'desc' }, { published_at: { sort: 'desc', nulls: 'last' } }, { id: 'asc' }],
     take: NEWS_COUNT,
   });
 

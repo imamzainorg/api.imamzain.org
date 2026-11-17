@@ -42,6 +42,8 @@ export const bookTranslationSchema = z.strictObject({
   publisher: z.string().max(LIMITS.person).nullish(),
   description: z.string().max(LIMITS.summary).nullish(),
   series: z.string().max(LIMITS.title).nullish(),
+  other_names: z.array(z.string().max(LIMITS.person).min(1)).max(LIMITS.listItems).nullish(),
+  conferences: z.array(z.string().max(LIMITS.title).min(1)).max(LIMITS.listItems).nullish(),
   meta_title: z.string().max(LIMITS.metaTitle).nullish(),
   meta_description: z.string().max(LIMITS.metaDescription).nullish(),
   og_image_id: z.uuid().nullish(),
@@ -52,8 +54,12 @@ export type BookTranslationInput = z.output<typeof bookTranslationSchema>;
 
 const docLanguages = documentLanguages(LIMITS.listItems);
 
+// Categories besides the primary one. The list replaces the book's current set; [] clears it.
+const extraCategoryIds = z.array(z.uuid()).max(LIMITS.listItems);
+
 export const createBookBody = z.object({
   category_id: requiredUuid('category_id'),
+  extra_category_ids: extraCategoryIds.nullish(),
   cover_image_id: requiredUuid('cover_image_id'),
   slug: slug.nullish(),
   isbn: isbn.nullish(),
@@ -72,6 +78,7 @@ export const createBookBody = z.object({
 
 export const updateBookBody = z.object({
   category_id: z.uuid().nullish(),
+  extra_category_ids: extraCategoryIds.nullish(),
   cover_image_id: z.uuid().nullish(),
   slug: slug.nullish(),
   isbn: isbn.nullish(),
@@ -103,6 +110,7 @@ export const bookQuery = z.object({
   category_id: z.uuid().optional(),
   search: searchTerm,
   is_publication: queryBoolean,
+  conference: z.string().max(LIMITS.title).optional(),
 });
 
 export const slugParams = z.object({ slug: z.string() });

@@ -98,9 +98,9 @@ Rules:
 | Website today | API |
 |---|---|
 | `posts.json` (news list, `news/[slug]`, archives, home) | `GET /posts` (`category_id`, `search`, `featured`, `sort=newest\|views`); `GET /posts/by-slug/:slug` (adds `translation.body`, `post_attachments[].media`, SEO fields, `reading_time_minutes`). Categories: `GET /post-categories` |
-| `books.json` (library, publications, `library/books/[bookSlug]`, `publications/[slug]`) | `GET /books` (`category_id`, `search`, `is_publication`); `GET /books/by-slug/:slug`; `GET /books/:id`. Categories: `GET /book-categories` |
+| `books.json` (library, publications, `library/books/[bookSlug]`, `publications/[slug]`) | `GET /books` (`category_id` matches the primary or an extra category, `search`, `is_publication`, `conference`); `GET /books/by-slug/:slug`; `GET /books/:id`. Each book has `extra_category_ids`, `parts_total`, and `other_names` / `conferences` on its translations. Categories: `GET /book-categories` |
 | `gallery.json` (media/images, home slider, gallery index) | `GET /gallery` (`category_id`, `tags`, `locations`); `GET /gallery/:id`. Categories: `GET /gallery-categories` |
-| `research.json`, `journals.json`, `student.json` (scientific platform) | `GET /academic-papers` (`category_id`, `search`); `GET /academic-papers/:id` (adds `abstract`). Categories: `GET /academic-paper-categories` (5: conference, journals, bachelor, master, PhD) |
+| `research.json`, `journals.json`, `student.json` (scientific platform) | `GET /academic-papers` (`category_id`, `search`); `GET /academic-papers/:id` (adds `abstract`). Conference papers' translations carry `section`, `topic`, `volume` (the JSON's `part`), `author_description`, and the conference name in `publication_venue`. Categories: `GET /academic-paper-categories` (5: conference, journals, bachelor, master, PhD) |
 | `AudioItemAnalyzed.json` (media/audio, `/api/audio-peaks/[id]`) | `GET /audios` (`speaker_id`, `search`); `GET /audios/:id` (adds `peaks`, 300 points); `GET /speakers` (`audio_count`) |
 | `imamzain.json` (his-life pages) | `GET /static-pages`; `GET /static-pages/by-slug/:slug` (adds `translation.body`) |
 | `store-locations.json` | `GET /stores` (cities with `store_locations[]`) |
@@ -117,13 +117,16 @@ Rules:
   series is one parent with `parts_count`. The parent's detail has `parts[]` (each with `slug`,
   `part_number`, `pages`, `pdf_url`, `media`). Every volume still resolves by its own slug, and its
   detail has `parent`.
-- **Series parents have `slug: null`** (the 9 synthesized parents). `/homepage` falls back to the id as
-  the slug. Decide how a parent is addressed (by id, or ask for parent slugs; see section 7).
+- **Series parents have slugs** (derived from their volumes' shared slug prefix). The 39 «الإصدارات» rows
+  of the JSON are 22 top-level books: 18 standalone and 4 series parents.
+- **A book's categories** are `category_id` (the JSON's first category) plus `extra_category_ids` (the rest).
+- **`parts_total`** is the `parts` column: a series' volume count on a part, or the volume count of a
+  standalone multi-volume book (2 such books).
 - **The 16 website book slugs with capitals or parentheses** (e.g.
   `Visiting-Imam-al-Sajjad-(peace-be-upon-him)`) are stored as-is, so existing URLs keep working.
 - **List responses drop heavy fields:** post `body`, paper `abstract`, audio `peaks`. Fetch the detail
   for those.
-- **`published_at` can be null:** one post has no date. `sort=newest` currently lists it first.
+- **`published_at` can be null:** one post has no date. It sorts last.
 - **`published_year` is free text** (`" 2026 م"`, `"1958م"`), copied verbatim from the JSON.
 - **Gallery categories differ from the JSON for 13 images** (#295 to #307): the DB says «مجالس», the JSON
   says «مناسبات». The DB value is deliberate.
@@ -157,24 +160,23 @@ These pages must keep reading JSON (or drop the feature) until the API gains the
 | Website feature | Missing in API |
 |---|---|
 | `media/videos` and `media/videos/[slug]`, home video section | everything curated: per-video `slug`, custom `thumbnail`, curated title and HTML `desc`, `displayLocation`, `categories`, the website's own playlist grouping, 14 Abu Hamza videos from another channel |
-| library `Conferences` filter, book cards' `otherNames` | no columns (68 and 91 books use them) |
-| books' secondary category (4 books), `parts` on 2 standalone books | no columns |
-| conference papers' `section` / `topic` badges and search, `part`, `authorDescription` | no columns |
 | `hadiths.json` (32 old hadiths) | replaced on purpose by 360 Hijri-dated hadiths; use `/daily-hadiths/today` |
 | books' and posts' legacy `views` | reset to 0 on purpose |
 
-## 7. API-side work this depends on (not done yet)
+## 7. Publishing: the website rebuilds itself
 
-1. **On-demand revalidation:** the API Worker calls the website when content is published, updated or
-   deleted. Proposed contract:
-   - Route: `POST /api/revalidate` on the website, reached through a service binding from
-     `imamzain-api` to `imamzain-org`.
-   - Header: `x-revalidate-secret: <shared secret>`.
-   - Body: `{ "tags": ["posts", "post:<slug>"] }`.
+The website stays a static export. After every successful editor write to content the site renders
+(posts, books, gallery, academic papers, audios, speakers, static pages, stores and their categories),
+and whenever the every-minute cron publishes a scheduled post, the API sends
 
-   The website side handles it with `revalidateTag()`. Build the receiving end against this contract;
-   the API side is pending.
-2. **Schema additions for section 6:** YouTube curation, book `other_names` and conferences, research
-   section, topic, volume and affiliation.
-3. **Slugs for series parents**, if parents get their own pages.
-4. **`sort=newest` should put null `published_at` last.**
+```
+POST https://api.github.com/repos/imamzainorg/imamzain.org/dispatches
+{ "event_type": "content-changed", "client_payload": { "entity": "posts", "id": "<uuid>" } }
+```
+
+in the background (`worker/src/lib/site-rebuild.ts`). View counters and upload URLs don't trigger it, a
+GitHub failure is only logged, and nothing is sent until the `GITHUB_DISPATCH_TOKEN` secret is set. The
+website's deploy workflow must listen for `repository_dispatch` with type `content-changed`.
+
+Still open: the YouTube curation layer (section 6), and a numeric year next to the free-text
+`published_year` / `publish_year`.

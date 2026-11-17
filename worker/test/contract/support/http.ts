@@ -38,6 +38,22 @@ export interface ApiResponse {
   body: any;
 }
 
+/**
+ * Statuses of `limit` requests from one fresh client, then of the requests after them up to and including the
+ * first 429 (at most limit + 1 more). The limiter counts in fixed one-minute windows, so a burst that crosses a
+ * window boundary starts counting again: the 429 can come up to `limit` requests late, but it does come.
+ */
+export async function burstUntilThrottled(limit: number, send: () => Promise<ApiResponse>) {
+  const within: number[] = [];
+  for (let i = 0; i < limit; i++) within.push((await send()).status);
+  let throttled: ApiResponse | undefined;
+  for (let i = 0; i <= limit && !throttled; i++) {
+    const res = await send();
+    if (res.status === 429) throttled = res;
+  }
+  return { within, throttled };
+}
+
 export const randomIp = () => `10.${(Math.random() * 256) | 0}.${(Math.random() * 256) | 0}.${(Math.random() * 256) | 0}`;
 
 export async function api(path: string, opts: ApiOptions = {}): Promise<ApiResponse> {

@@ -182,10 +182,11 @@ export async function findAll(c: Ctx, query: PostQuery, lang: string | null, isA
     };
   }
 
+  // Postgres puts NULLs first in a descending sort; an undated post belongs at the end, not on top.
   const orderBy: Prisma.postsOrderByWithRelationInput[] =
     query.sort === 'views'
       ? [{ views: 'desc' }, { id: 'asc' }]
-      : [{ published_at: 'desc' }, { created_at: 'desc' }, { id: 'asc' }];
+      : [{ published_at: { sort: 'desc', nulls: 'last' } }, { created_at: 'desc' }, { id: 'asc' }];
 
   const [items, total, active] = await Promise.all([
     db.posts.findMany({

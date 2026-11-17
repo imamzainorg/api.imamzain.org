@@ -10,6 +10,7 @@ import { cleanupOrphanUploads } from './orphan-uploads';
 import { runRetention } from './retention';
 import { runScheduledPublish } from './scheduled-publish';
 import { runGuardedSync } from './youtube-sync';
+import { requestSiteRebuild } from '../lib/site-rebuild';
 
 /** The schedules in wrangler.jsonc's `triggers.crons`; keep both in step. */
 export const CRONS = {
@@ -23,7 +24,13 @@ type Job = (db: PrismaClient, env: AppBindings, scheduled: Date) => Promise<unkn
 
 const JOBS: Record<string, [name: string, job: Job][]> = {
   [CRONS.everyMinute]: [
-    ['scheduled-publish', (db) => runScheduledPublish(db)],
+    // A post going live on schedule changes the site like an editor's publish does.
+    [
+      'scheduled-publish',
+      async (db, env) => {
+        if ((await runScheduledPublish(db)) > 0) await requestSiteRebuild(env, { entity: 'posts' });
+      },
+    ],
     ['form-notifications', (db, env) => drainOutbox(db, env)],
   ],
   [CRONS.hourly]: [

@@ -85,6 +85,7 @@ export type BookJson = {
   parts?: number; views?: number; image?: string; pdf?: string;
   series?: string | null; partNumber?: number | null; totalParts?: number | null;
   category?: string | string[];
+  otherNames?: string[]; Conferences?: string[];
 };
 
 export type PostJson = {
@@ -103,6 +104,7 @@ export type GalleryJson = {
 export type ResearchJson = {
   id: string; slug?: string; title: string; abstract?: string;
   author?: string; publishedYear?: string; pdfUrl?: string; conference?: string;
+  part?: string; section?: string; topic?: string; authorDescription?: string;
 };
 
 export type JournalJson = {

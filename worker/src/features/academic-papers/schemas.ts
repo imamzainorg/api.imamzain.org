@@ -39,6 +39,11 @@ export const paperTranslationSchema = z.strictObject({
   keywords: z.array(z.string().max(LIMITS.label)).max(LIMITS.listItems).nullish(),
   publication_venue: z.string().max(LIMITS.title).nullish(),
   page_count: z.number().min(1).int().nullish(),
+  // Conference proceedings: the axis or week, the topic, the volume it is printed in, a line about the author.
+  section: z.string().max(LIMITS.label).nullish(),
+  topic: z.string().max(LIMITS.title).nullish(),
+  volume: z.string().max(LIMITS.label).nullish(),
+  author_description: z.string().max(LIMITS.summary).nullish(),
   is_default: z.boolean().nullish(),
 });
 

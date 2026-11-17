@@ -69,7 +69,9 @@
     "R2_PUBLIC_BASE_URL": "https://cdn.imamzain.org",
     "EMAIL_FROM": "imamzain.org <info@imamzain.org>",
     // Website PR previews (https://pr-<N>-imamzain-org.<this host>) may read the API, without credentials (lib/cors.ts).
-    "PREVIEW_ORIGIN_HOST": "imamzainalabdeen1.workers.dev"
+    "PREVIEW_ORIGIN_HOST": "imamzainalabdeen1.workers.dev",
+    // Rebuilt after every content write (lib/site-rebuild.ts); the token is the GITHUB_DISPATCH_TOKEN secret.
+    "SITE_REBUILD_REPO": "imamzainorg/imamzain.org"
   }
 
   // Secrets: set with `npx wrangler secret put <NAME>`, or in .dev.vars for `wrangler dev`.

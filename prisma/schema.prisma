@@ -40,17 +40,23 @@ model academic_paper_category_translations {
 
 /// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
 model academic_paper_translations {
-  paper_id          String          @db.Uuid
-  lang              String          @db.Char(2)
-  title             String
-  abstract          String?
-  authors           String[]        @default([])
-  keywords          String[]        @default([])
-  publication_venue String?
-  page_count        Int?
-  is_default        Boolean         @default(false)
-  languages         languages       @relation(fields: [lang], references: [code], onDelete: Cascade, onUpdate: NoAction)
-  academic_papers   academic_papers @relation(fields: [paper_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  paper_id           String          @db.Uuid
+  lang               String          @db.Char(2)
+  title              String
+  abstract           String?
+  authors            String[]        @default([])
+  keywords           String[]        @default([])
+  publication_venue  String?
+  page_count         Int?
+  // Conference proceedings (migration 20261116100000): the conference's axis or week («المحور الأول»), the
+  // paper's topic, the proceedings volume it is printed in («المجلد الأول»), and a line about the author.
+  section            String?
+  topic              String?
+  volume             String?
+  author_description String?
+  is_default         Boolean         @default(false)
+  languages          languages       @relation(fields: [lang], references: [code], onDelete: Cascade, onUpdate: NoAction)
+  academic_papers    academic_papers @relation(fields: [paper_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
 
   @@id([paper_id, lang])
   @@index([abstract(ops: raw("gin_trgm_ops"))], map: "idx_academic_paper_translations_abstract_trgm", type: Gin)
@@ -104,6 +110,19 @@ model book_categories {
   deleted_at                 DateTime?                    @db.Timestamptz(6)
   book_category_translations book_category_translations[]
   books                      books[]
+  extra_books                book_extra_categories[]
+}
+
+// Categories a book is listed under besides its primary category_id (migration 20261116100000): the website
+// shows some books under two library categories. The primary is never repeated here (books service).
+model book_extra_categories {
+  book_id         String          @db.Uuid
+  category_id     String          @db.Uuid
+  books           books           @relation(fields: [book_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  book_categories book_categories @relation(fields: [category_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@id([book_id, category_id])
+  @@index([category_id], map: "idx_book_extra_categories_category")
 }
 
 model book_category_translations {
@@ -127,6 +146,10 @@ model book_translations {
   publisher        String?
   description      String?
   series           String?
+  // Other names on the book (editors, translators, the institution), shown as «أسماء أخرى»; and the
+  // conferences or festivals the book came out of. Migration 20261116100000.
+  other_names      String[]  @default([])
+  conferences      String[]  @default([])
   is_default       Boolean   @default(false)
   meta_title       String?
   meta_description String?
@@ -144,63 +167,65 @@ model book_translations {
 
 /// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
 model books {
-  id                String              @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  category_id       String              @db.Uuid
-  cover_image_id    String              @db.Uuid
-  isbn              String?             @unique
-  pages             Int?
-  publish_year      String?
-  pdf_url           String?
+  id                 String                  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  category_id        String                  @db.Uuid
+  cover_image_id     String                  @db.Uuid
+  isbn               String?                 @unique
+  pages              Int?
+  publish_year       String?
+  pdf_url            String?
   // Who may download pdf_url (migration 20261031100000): 'public' = everyone, 'app' = only callers that send
   // the mobile app (recognised by its User-Agent). Limited to those two by the CHECK chk_books_pdf_access (raw SQL in the
   // migration). Only meaningful while pdf_url is set; the rule lives in worker/src/features/books/pdf-access.ts.
-  pdf_access        String              @default("public")
+  pdf_access         String                  @default("public")
   // Manual position in the library (migration 20261101100000): ascending, 0 = not placed yet. Ties fall back to
   // newest first, so a new book sits at the top of its group until the CMS places it (PUT /books/admin/order).
-  display_order     Int                 @default(0)
-  // Set together or not at all, and part_number <= parts — CHECK
-  // chk_books_parts (migration 20260917110000; mirrored in books.service.ts so
-  // the editor gets a readable 400). Among the LIVE parts of one series
+  display_order      Int                     @default(0)
+  // part_number needs parts, and part_number <= parts; parts alone is a
+  // standalone book printed in several volumes (one PDF). CHECK
+  // chk_books_parts (migration 20261116100000, first 20260917110000; mirrored
+  // in books.service.ts so the editor gets a readable 400). Among the LIVE parts of one series
   // part_number is unique: partial index uq_books_parent_part_number
   // (parent_id, part_number) WHERE parent_id IS NOT NULL AND part_number IS
   // NOT NULL AND deleted_at IS NULL — not expressible in Prisma's DSL, so it
   // lives in that migration only.
-  part_number       Int?
-  parts             Int?
+  part_number        Int?
+  parts              Int?
   // Content-slug consolidation complete (Phase A: migration 20260818130000;
   // Phase B unique index: migration 20260819100000; Phase C cutover + drop of the
   // old book_translations.slug column: migration 20260819110000). Single,
   // language-agnostic, optional editor slug — see uq_books_slug.
-  slug              String?
-  views             BigInt              @default(0)
-  is_published      Boolean             @default(true)
+  slug               String?
+  views              BigInt                  @default(0)
+  is_published       Boolean                 @default(true)
   // What language(s) the actual PDF is written in (migration 20260819120000)
   // — distinct from book_translations.lang, which is the title/author text's
   // language. Array: bilingual editions are real in this library.
-  document_languages String[]           @default([])
+  document_languages String[]                @default([])
   // Multi-part series support (migration 20260908120000). NULL for a normal
   // standalone book. When set, this row is one part of the series whose
   // "cover" record (title/author/category/cover image, no PDF of its own) is
   // the parent — see the self-relation below. Exactly one level deep: a part
   // can never itself be a parent (enforced in books.service.ts, not the DB).
-  parent_id          String?             @db.Uuid
+  parent_id          String?                 @db.Uuid
   // True when this book belongs to the institution's "الإصدارات" (flagship
   // Publications) release list — a cross-cutting flag, independent of
   // category_id's topical classification. Added because the legacy source
   // data lets a book carry BOTH a topic and "الإصدارات" (e.g. a Sahifa
   // Sajjadiya commentary that is also one of the institution's Publications),
   // which category_id alone can't represent.
-  is_publication     Boolean             @default(false)
-  created_at        DateTime            @default(now()) @db.Timestamptz(6)
-  updated_at        DateTime            @default(now()) @db.Timestamptz(6)
-  added_by          String?             @db.Uuid
-  deleted_at        DateTime?           @db.Timestamptz(6)
-  book_translations book_translations[]
-  users             users?              @relation(fields: [added_by], references: [id], onUpdate: NoAction)
-  book_categories   book_categories     @relation(fields: [category_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
-  media             media               @relation(fields: [cover_image_id], references: [id], onUpdate: NoAction)
-  parent            books?              @relation("BookParts", fields: [parent_id], references: [id], onDelete: SetNull, onUpdate: NoAction)
-  parts_rel         books[]             @relation("BookParts")
+  is_publication     Boolean                 @default(false)
+  created_at         DateTime                @default(now()) @db.Timestamptz(6)
+  updated_at         DateTime                @default(now()) @db.Timestamptz(6)
+  added_by           String?                 @db.Uuid
+  deleted_at         DateTime?               @db.Timestamptz(6)
+  book_translations  book_translations[]
+  users              users?                  @relation(fields: [added_by], references: [id], onUpdate: NoAction)
+  book_categories    book_categories         @relation(fields: [category_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  media              media                   @relation(fields: [cover_image_id], references: [id], onUpdate: NoAction)
+  parent             books?                  @relation("BookParts", fields: [parent_id], references: [id], onDelete: SetNull, onUpdate: NoAction)
+  parts_rel          books[]                 @relation("BookParts")
+  extra_categories   book_extra_categories[]
 
   @@index([added_by], map: "idx_books_added_by")
   @@index([category_id], map: "idx_books_category")

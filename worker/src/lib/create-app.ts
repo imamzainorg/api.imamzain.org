@@ -11,6 +11,7 @@ import { errorHandler } from './errors';
 import { language } from './i18n';
 import { rateLimit } from './rate-limit';
 import { secureHeaders } from './secure-headers';
+import { siteRebuild } from './site-rebuild';
 import type { AppEnv } from './types';
 import { zodHook } from './validation';
 import './bigint';
@@ -48,6 +49,7 @@ export function createApp() {
   const shared: MiddlewareHandler<AppEnv>[] = [
     setIp,
     closeDb,
+    siteRebuild,
     secureHeaders,
     cors,
     etag,

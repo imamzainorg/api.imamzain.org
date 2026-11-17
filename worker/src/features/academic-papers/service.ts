@@ -33,6 +33,10 @@ const PAPER_LIST_SELECT = {
       keywords: true,
       publication_venue: true,
       page_count: true,
+      section: true,
+      topic: true,
+      volume: true,
+      author_description: true,
       is_default: true,
     },
   },
@@ -217,6 +221,10 @@ export async function create(c: Ctx, input: CreatePaperInput, lang: string | nul
           keywords: t.keywords ?? [],
           publication_venue: t.publication_venue ?? null,
           page_count: t.page_count ?? null,
+          section: t.section ?? null,
+          topic: t.topic ?? null,
+          volume: t.volume ?? null,
+          author_description: t.author_description ?? null,
           is_default: t.is_default ?? false,
         })),
       });
@@ -274,6 +282,10 @@ export async function update(c: Ctx, id: string, input: UpdatePaperInput, lang: 
             keywords: t.keywords ?? [],
             publication_venue: t.publication_venue ?? null,
             page_count: t.page_count ?? null,
+            section: t.section ?? null,
+            topic: t.topic ?? null,
+            volume: t.volume ?? null,
+            author_description: t.author_description ?? null,
             is_default: t.is_default ?? false,
           };
           await tx.academic_paper_translations.upsert({
