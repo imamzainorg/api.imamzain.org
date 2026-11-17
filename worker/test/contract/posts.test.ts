@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { adminToken, api, expectError, expectSuccess, ISO_DATE, randomIp, tokenWith, withDb } from './support/http';
+import { adminToken, api, burstUntilThrottled, expectError, expectSuccess, ISO_DATE, randomIp, tokenWith, withDb } from './support/http';
 
 const BASE = '/api/v1/posts';
 const CATEGORIES = '/api/v1/post-categories';
@@ -361,9 +361,9 @@ describe('POST /posts/:id/view', () => {
 
   it('is limited to 30 a minute per IP', async () => {
     const ip = randomIp();
-    let last = 0;
-    for (let i = 0; i < 31; i++) last = (await api(`${BASE}/${MISSING}/view`, { method: 'POST', ip })).status;
-    expect(last).toBe(429);
+    const { within, throttled } = await burstUntilThrottled(30, () => api(`${BASE}/${MISSING}/view`, { method: 'POST', ip }));
+    expect(within).not.toContain(429);
+    expect(throttled?.status).toBe(429);
   });
 });
 

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { api, expectError, expectSuccess, ISO_DATE, randomIp } from './support/http';
+import { api, burstUntilThrottled, expectError, expectSuccess, ISO_DATE, randomIp } from './support/http';
 
 const CMS = 'https://cms.imamzain.com';
 
@@ -21,11 +21,10 @@ describe('GET /api/v1/health', () => {
 
   it('is throttled at 60 requests a minute per client IP', async () => {
     const ip = randomIp();
-    const statuses: number[] = [];
-    for (let i = 0; i < 60; i++) statuses.push((await api('/api/v1/health', { ip })).status);
+    const { within, throttled } = await burstUntilThrottled(60, () => api('/api/v1/health', { ip }));
 
-    expect(statuses.every((s) => s === 200)).toBe(true);
-    expectError(await api('/api/v1/health', { ip }), 429, 'RATE_LIMITED', 'ThrottlerException: Too Many Requests');
+    expect(within.every((s) => s === 200)).toBe(true);
+    expectError(throttled!, 429, 'RATE_LIMITED', 'ThrottlerException: Too Many Requests');
     // Another client is unaffected.
     expect((await api('/api/v1/health')).status).toBe(200);
   });
