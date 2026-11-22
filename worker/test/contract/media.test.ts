@@ -37,7 +37,7 @@ const r2Exists = async (key: string) =>
 async function uploadUrl(filename = 'Shrine Photo.JPG', mime_type = 'image/jpeg') {
   const res = await api(`${BASE}/upload-url`, { method: 'POST', token: await adminToken(), body: { filename, mime_type } });
   expectSuccess(res, 201);
-  return res.body.data as { uploadUrl: string; key: string; publicUrl: string; mediaId: string; maxBytes: number };
+  return res.body.data as { uploadUrl: string; key: string; publicUrl: string; mediaId: string; maxBytes: number; headers: Record<string, string> };
 }
 
 const confirm = async (key: string, extra: Record<string, unknown> = {}) =>
@@ -56,11 +56,16 @@ async function insertMedia(opts: { mime?: string; width?: number | null; minutes
 }
 
 describe('POST /media/upload-url', () => {
-  it('presigns a PUT under the planned media id, with Content-Type signed, and records the pending upload', async () => {
-    const data = await uploadUrl('Shrine Photo.JPG');
+  it('presigns a PUT under the planned media id, with Content-Type, Cache-Control and Content-Disposition signed, and records the pending upload', async () => {
+    const data = await uploadUrl('صورة الحرم.JPG');
 
-    expect(Object.keys(data)).toEqual(['uploadUrl', 'key', 'publicUrl', 'mediaId', 'maxBytes']);
-    expect(data.key).toBe(`media/originals/${data.mediaId}/shrine-photo.jpg`);
+    expect(Object.keys(data)).toEqual(['uploadUrl', 'key', 'publicUrl', 'mediaId', 'maxBytes', 'headers']);
+    expect(data.key).toBe(`media/${data.mediaId}.jpg`);
+    expect(data.headers).toEqual({
+      'Content-Type': 'image/jpeg',
+      'Cache-Control': 'public, max-age=31536000, immutable',
+      'Content-Disposition': `inline; filename*=UTF-8''${encodeURIComponent('صورة الحرم.jpg')}`,
+    });
     expect(data.publicUrl).toBe(`https://cdn.imamzain.org/${data.key}`);
     expect(data.maxBytes).toBe(25 * 1024 * 1024);
 
@@ -68,7 +73,7 @@ describe('POST /media/upload-url', () => {
     expect(url.host).toBe('imamzain-media.harness-account.r2.cloudflarestorage.com');
     expect(url.pathname).toBe(`/${data.key}`);
     expect(url.searchParams.get('X-Amz-Expires')).toBe('900');
-    expect(url.searchParams.get('X-Amz-SignedHeaders')).toBe('content-type;host');
+    expect(url.searchParams.get('X-Amz-SignedHeaders')).toBe('cache-control;content-disposition;content-type;host');
     expect(url.searchParams.get('X-Amz-Credential')).toMatch(/^harness-key\/\d{8}\/auto\/s3\/aws4_request$/);
 
     const [pending] = await withDb((q) => q('SELECT requested_by FROM pending_media_uploads WHERE key = $1', [data.key]));
@@ -97,10 +102,10 @@ describe('POST /media/upload-url', () => {
 describe('POST /media/confirm', () => {
   it('checks the key, its owner and its expiry before touching storage', async () => {
     expectError(await confirm('posts/x.jpg'), 400, 'BAD_REQUEST', 'Invalid storage key');
-    expectError(await confirm(`media/originals/${MISSING}/nope.jpg`), 404, 'NOT_FOUND', 'No pending upload for that key — request a new upload URL');
+    expectError(await confirm(`media/${MISSING}.jpg`), 404, 'NOT_FOUND', 'No pending upload for that key — request a new upload URL');
 
-    const foreign = `media/originals/${crypto.randomUUID()}/x.jpg`;
-    const expired = `media/originals/${crypto.randomUUID()}/x.jpg`;
+    const foreign = `media/${crypto.randomUUID()}.jpg`;
+    const expired = `media/${crypto.randomUUID()}.jpg`;
     const admin = tokenSub(await adminToken());
     await withDb(async (q) => {
       await q('INSERT INTO pending_media_uploads (key, requested_by) VALUES ($1, NULL)', [foreign]);
@@ -302,19 +307,21 @@ describe('POST /media/:id/regenerate-variants', () => {
 
 describe('upload-url of audios, books and academic papers', () => {
   it.each([
-    ['/api/v1/audios/upload-url', { filename: 'Lecture One.MP3', content_type: 'audio/mpeg' }, /^audio\/[0-9a-f-]{36}\/lecture-one\.mp3$/, 300],
-    ['/api/v1/audios/upload-url', { filename: 'notes.pdf', content_type: 'application/pdf' }, /^audio\/pdf\/[0-9a-f-]{36}\/notes\.pdf$/, 50],
-    ['/api/v1/books/upload-url', { filename: 'الصحيفة.pdf' }, /^books\/pdf\/[0-9a-f-]{36}\/file\.pdf$/, 150],
-    ['/api/v1/academic-papers/upload-url', { filename: 'Thesis 2024.pdf' }, /^academic-papers\/pdf\/[0-9a-f-]{36}\/thesis-2024\.pdf$/, 150],
+    ['/api/v1/audios/upload-url', { filename: 'Lecture One.MP3', content_type: 'audio/mpeg' }, /^audio\/[0-9a-f-]{36}\.mp3$/, 300],
+    ['/api/v1/audios/upload-url', { filename: 'notes.pdf', content_type: 'application/pdf' }, /^audio\/pdf\/[0-9a-f-]{36}\.pdf$/, 50],
+    ['/api/v1/books/upload-url', { filename: 'الصحيفة.pdf' }, /^books\/pdf\/[0-9a-f-]{36}\.pdf$/, 150],
+    ['/api/v1/academic-papers/upload-url', { filename: 'Thesis 2024.pdf' }, /^academic-papers\/pdf\/[0-9a-f-]{36}\.pdf$/, 150],
   ])('%s presigns %j', async (url, body, keyPattern, mb) => {
     const res = await api(url, { method: 'POST', token: await adminToken(), body });
     expectSuccess(res, 201);
     expect(res.body.message).toBe('Upload URL generated');
-    expect(Object.keys(res.body.data)).toEqual(['uploadUrl', 'key', 'publicUrl', 'maxBytes']);
+    expect(Object.keys(res.body.data)).toEqual(['uploadUrl', 'key', 'publicUrl', 'maxBytes', 'headers']);
+    expect(res.body.data.headers['Cache-Control']).toBe('public, max-age=31536000, immutable');
+    expect(res.body.data.headers['Content-Disposition']).toMatch(/^inline; filename\*=UTF-8''/);
     expect(res.body.data.key).toMatch(keyPattern);
     expect(res.body.data.maxBytes).toBe(mb * 1024 * 1024);
     const signed = new URL(res.body.data.uploadUrl);
-    expect(signed.searchParams.get('X-Amz-SignedHeaders')).toBe('content-type;host');
+    expect(signed.searchParams.get('X-Amz-SignedHeaders')).toBe('cache-control;content-disposition;content-type;host');
     expect(signed.searchParams.get('X-Amz-Expires')).toBe('900');
   });
 

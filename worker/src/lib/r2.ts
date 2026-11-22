@@ -28,9 +28,18 @@ const IMAGE_MAX_BYTES = 25 * 1024 * 1024;
 export const PENDING_UPLOAD_TTL_SECONDS = 15 * 60;
 
 const KEY_PREFIX = 'media/';
-const ORIGINALS_PREFIX = `${KEY_PREFIX}originals/`;
-/** New-format original keys: `media/originals/<uuid>/<filename>`. */
-const ORIGINAL_KEY_PATTERN = /^media\/originals\/([0-9a-f-]{36})\//i;
+/**
+ * The media id baked into an original's key, for both shapes in the bucket: `media/<uuid>.<ext>` (flat,
+ * current) and `media/originals/<uuid>/<filename>` (older uploads). Variants live under `media/variants/`,
+ * which neither pattern matches.
+ */
+const ORIGINAL_KEY_PATTERNS = [
+  /^media\/([0-9a-f-]{36})\.[a-z0-9]+$/i,
+  /^media\/originals\/([0-9a-f-]{36})\//i,
+];
+
+/** Stored with every upload: keys are immutable UUIDs, so a URL's bytes never change. */
+export const UPLOAD_CACHE_CONTROL = 'public, max-age=31536000, immutable';
 
 type R2Env = Pick<
   AppBindings,
@@ -67,20 +76,40 @@ export const isManagedKey = (key: string) =>
 
 export const maxBytesFor = (_mime: string) => IMAGE_MAX_BYTES;
 
-/** The media id baked into a new-format original key; null for legacy keys. */
-export const mediaIdFromKey = (key: string): string | null =>
-  ORIGINAL_KEY_PATTERN.exec(key)?.[1] ?? null;
+/** The media id baked into an original's key; null for legacy keys that carry none. */
+export function mediaIdFromKey(key: string): string | null {
+  for (const pattern of ORIGINAL_KEY_PATTERNS) {
+    const id = pattern.exec(key)?.[1];
+    if (id) return id;
+  }
+  return null;
+}
 
 export const variantKey = (mediaId: string, width: number) =>
   `${KEY_PREFIX}variants/${mediaId}/w${width}.webp`;
 
-function slugifyFilename(filename: string): string {
-  return filename
-    .toLowerCase()
-    .replace(/\.[^.]+$/, '')
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-|-$/g, '')
-    .slice(0, 80);
+const KNOWN_EXTENSIONS = /\.(jpe?g|png|gif|webp|pdf|mp3|m4a)$/i;
+const LONE_SURROGATE =
+  /[\ud800-\udbff](?![\udc00-\udfff])|(?<![\ud800-\udbff])[\udc00-\udfff]/g;
+
+/**
+ * `inline; filename*=UTF-8''<name>` for the name a visitor's browser saves the file as. The key is a bare
+ * UUID, so this header is the only place the readable name (Arabic included) survives. RFC 5987 encoding
+ * keeps the header ASCII, which a signed header must be.
+ */
+export function contentDispositionFor(filename: string, extension: string): string {
+  const base = filename
+    .replace(/^.*[\\/]/, '')
+    .replace(/[\u0000-\u001f\u007f]/g, '')
+    .replace(LONE_SURROGATE, '\ufffd')
+    .replace(KNOWN_EXTENSIONS, '')
+    .trim();
+  const name = `${Array.from(base).slice(0, 120).join('').trim() || 'file'}.${extension}`;
+  const encoded = encodeURIComponent(name).replace(
+    /['()*]/g,
+    (ch) => `%${ch.charCodeAt(0).toString(16).toUpperCase()}`,
+  );
+  return `inline; filename*=UTF-8''${encoded}`;
 }
 
 /** R2_UPLOAD_URL_TTL_SECONDS (default 900), never longer than `maxSeconds`. */
@@ -89,15 +118,28 @@ function uploadUrlTtl(env: R2Env, maxSeconds: number): number {
   return Math.min(Number.isFinite(configured) && configured > 0 ? configured : 900, maxSeconds);
 }
 
+/** What the uploader must send on the PUT: every one of these is a signed header. */
+type UploadHeaders = Record<'Content-Type' | 'Cache-Control' | 'Content-Disposition', string>;
+
+const uploadHeaders = (
+  contentType: string,
+  filename: string,
+  extension: string,
+): UploadHeaders => ({
+  'Content-Type': contentType,
+  'Cache-Control': UPLOAD_CACHE_CONTROL,
+  'Content-Disposition': contentDispositionFor(filename, extension),
+});
+
 /**
- * A presigned PUT for `key`, as the AWS SDK presigner made it for Nest (virtual-hosted bucket URL).
- * Content-Type is signed: R2 then refuses a PUT whose type differs from the one declared here, so
- * `text/html` bytes can't land under a URL presigned for `image/jpeg`.
+ * A presigned PUT for `key` (virtual-hosted bucket URL). The headers are signed: R2 refuses a PUT whose
+ * Content-Type differs from the one declared here (so `text/html` bytes can't land under a URL presigned
+ * for `image/jpeg`), and the object is stored with exactly this Cache-Control and Content-Disposition.
  */
 async function presignPut(
   env: R2Env,
   key: string,
-  contentType: string,
+  headers: UploadHeaders,
   ttlSeconds: number,
 ): Promise<string> {
   const client = new AwsClient({
@@ -112,13 +154,13 @@ async function presignPut(
   url.searchParams.set('X-Amz-Expires', String(ttlSeconds));
   const signed = await client.sign(url.toString(), {
     method: 'PUT',
-    headers: { 'content-type': contentType },
+    headers,
     aws: { signQuery: true, allHeaders: true },
   });
   return signed.url;
 }
 
-/** Step 1 of an image upload: a fresh media id, its key under media/originals/, and the presigned PUT. */
+/** Step 1 of an image upload: a fresh media id, its flat key `media/<id>.<ext>`, and the presigned PUT. */
 export async function generateImageUploadUrl(env: R2Env, filename: string, mimeType: string) {
   if (!ALLOWED_IMAGE_MIMES.has(mimeType)) {
     throw badRequest(
@@ -126,11 +168,13 @@ export async function generateImageUploadUrl(env: R2Env, filename: string, mimeT
     );
   }
   const mediaId = crypto.randomUUID();
-  const key = `${ORIGINALS_PREFIX}${mediaId}/${slugifyFilename(filename) || 'file'}.${IMAGE_EXTENSIONS[mimeType]}`;
+  const extension = IMAGE_EXTENSIONS[mimeType];
+  const key = `${KEY_PREFIX}${mediaId}.${extension}`;
+  const headers = uploadHeaders(mimeType, filename, extension);
   const uploadUrl = await presignPut(
     env,
     key,
-    mimeType,
+    headers,
     uploadUrlTtl(env, PENDING_UPLOAD_TTL_SECONDS),
   );
   return {
@@ -139,6 +183,7 @@ export async function generateImageUploadUrl(env: R2Env, filename: string, mimeT
     publicUrl: publicUrlForKey(env, key),
     mediaId,
     maxBytes: maxBytesFor(mimeType),
+    headers,
   };
 }
 
@@ -156,14 +201,16 @@ export async function generateFileUploadUrl(
     maxBytes: number;
   },
 ) {
-  const key = `${opts.prefix}${crypto.randomUUID()}/${slugifyFilename(opts.filename) || 'file'}.${opts.extension}`;
-  const uploadUrl = await presignPut(
-    env,
+  const key = `${opts.prefix}${crypto.randomUUID()}.${opts.extension}`;
+  const headers = uploadHeaders(opts.contentType, opts.filename, opts.extension);
+  const uploadUrl = await presignPut(env, key, headers, uploadUrlTtl(env, Number.POSITIVE_INFINITY));
+  return {
+    uploadUrl,
     key,
-    opts.contentType,
-    uploadUrlTtl(env, Number.POSITIVE_INFINITY),
-  );
-  return { uploadUrl, key, publicUrl: publicUrlForKey(env, key), maxBytes: opts.maxBytes };
+    publicUrl: publicUrlForKey(env, key),
+    maxBytes: opts.maxBytes,
+    headers,
+  };
 }
 
 const AUDIO_EXTENSIONS: Record<string, string> = {
@@ -213,7 +260,7 @@ export function presignAudioUpload(env: R2Env, filename: string, contentType: st
   });
 }
 
-/** Stored type, size and cache header of an object, or null when it isn't there. */
+/** Stored type, size, cache header and download name of an object, or null when it isn't there. */
 export async function headObject(env: R2Env, key: string) {
   const head = await env.R2.head(key);
   if (!head) return null;
@@ -221,6 +268,7 @@ export async function headObject(env: R2Env, key: string) {
     contentType: head.httpMetadata?.contentType,
     contentLength: head.size,
     cacheControl: head.httpMetadata?.cacheControl,
+    contentDisposition: head.httpMetadata?.contentDisposition,
   };
 }
 
@@ -237,16 +285,23 @@ export async function getObjectBytes(env: R2Env, key: string): Promise<Uint8Arra
   return obj ? new Uint8Array(await obj.arrayBuffer()) : null;
 }
 
-/** Writes `body` and returns its public URL. `cacheControl` only when given, so an overwrite can keep its header. */
+/**
+ * Writes `body` and returns its public URL. An overwrite replaces the object's headers, so it passes
+ * the old ones back in `headers`; only the ones given are set.
+ */
 export async function putObject(
   env: R2Env,
   key: string,
   body: Uint8Array | ArrayBuffer,
   contentType: string,
-  cacheControl?: string,
+  headers: { cacheControl?: string; contentDisposition?: string } = {},
 ): Promise<string> {
   await env.R2.put(key, body, {
-    httpMetadata: { contentType, ...(cacheControl ? { cacheControl } : {}) },
+    httpMetadata: {
+      contentType,
+      ...(headers.cacheControl ? { cacheControl: headers.cacheControl } : {}),
+      ...(headers.contentDisposition ? { contentDisposition: headers.contentDisposition } : {}),
+    },
   });
   return publicUrlForKey(env, key);
 }

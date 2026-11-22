@@ -158,7 +158,7 @@ export async function confirmUpload(c: Ctx, dto: ConfirmInput, userId: string) {
   }
   const probed = parseImageHeader(prefix);
 
-  // A new-format key carries the planned media id, so originals and variants share one folder.
+  // An upload's key carries the planned media id (both key shapes), so the original and its variants share the id.
   const plannedMediaId = mediaIdFromKey(dto.key) ?? undefined;
   const media = await db.$transaction(async (tx) => {
     const created = await tx.media.create({

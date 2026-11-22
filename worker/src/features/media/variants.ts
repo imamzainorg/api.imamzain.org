@@ -8,7 +8,14 @@ import {
   VARIANT_WIDTHS,
   type VariantPassOutcome,
 } from '../../lib/media-variants';
-import { deleteObject, getObjectBytes, headObject, putObject, variantKey } from '../../lib/r2';
+import {
+  deleteObject,
+  getObjectBytes,
+  headObject,
+  putObject,
+  UPLOAD_CACHE_CONTROL,
+  variantKey,
+} from '../../lib/r2';
 import type { AppEnv } from '../../lib/types';
 
 type Ctx = Context<AppEnv>;
@@ -163,7 +170,9 @@ async function writeVariants(
         .transform({ width, fit: 'scale-down' })
         .output({ format: 'image/webp', quality: VARIANT_QUALITY });
       const bytes = new Uint8Array(await out.response().arrayBuffer());
-      const url = await putObject(c.env, variantKey(mediaId, width), bytes, 'image/webp');
+      const url = await putObject(c.env, variantKey(mediaId, width), bytes, 'image/webp', {
+        cacheControl: UPLOAD_CACHE_CONTROL,
+      });
       return getDb(c).media_variants.upsert({
         where: { media_id_width: { media_id: mediaId, width } },
         create: { media_id: mediaId, width, url, file_size: bytes.length, format: 'webp' },
@@ -218,7 +227,10 @@ async function sanitizeOriginal(
       console.warn(`Could not read headers of ${originalKey}; original left untouched`);
       return null;
     }
-    await putObject(c.env, originalKey, cleaned, head.contentType, head.cacheControl);
+    await putObject(c.env, originalKey, cleaned, head.contentType, {
+      cacheControl: head.cacheControl,
+      contentDisposition: head.contentDisposition,
+    });
 
     // Only a size that reached the row is reported (Nest reported it either way).
     try {

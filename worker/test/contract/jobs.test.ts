@@ -78,7 +78,7 @@ describe('every minute: form notification outbox', () => {
 
 describe('hourly: orphan-upload cleanup', () => {
   it('deletes the object and the row of an expired pending upload; an unexpired one keeps both', async () => {
-    const expired = `media/originals/${crypto.randomUUID()}/expired.jpg`;
+    const expired = `media/${crypto.randomUUID()}.jpg`;
     const live = `media/originals/${crypto.randomUUID()}/live.jpg`;
     await r2Put(expired);
     await r2Put(live);
