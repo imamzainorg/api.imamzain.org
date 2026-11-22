@@ -4134,3 +4134,41 @@ and no parts) last. Inside each group it follows an order the CMS sets by hand.
   the app, wherever the editor drags it. Tell editors this on the screen.
 - Public responses are cached for up to 5 minutes, so a new order reaches the website after that.
 - Migration `20261101100000_books_display_order` is additive and safe to apply before the Worker is deployed.
+
+---
+
+## 22 Nov 2026: flat upload keys and signed upload headers (CMS change required)
+
+New uploads match the layout the R2 bucket was standardised to. Old keys and URLs keep working.
+
+| Upload | Key before | Key now |
+| --- | --- | --- |
+| Image original | `media/originals/<mediaId>/<slug>.<ext>` | `media/<mediaId>.<ext>` |
+| Image variants | `media/variants/<mediaId>/w<width>.webp` | unchanged |
+| Book PDF | `books/pdf/<uuid>/<slug>.pdf` | `books/pdf/<uuid>.pdf` |
+| Academic paper PDF | `academic-papers/pdf/<uuid>/<slug>.pdf` | `academic-papers/pdf/<uuid>.pdf` |
+| Audio | `audio/<uuid>/<slug>.<ext>` | `audio/<uuid>.<ext>` (`mp3` or `m4a`) |
+| Audio companion PDF | `audio/pdf/<uuid>/<slug>.pdf` | `audio/pdf/<uuid>.pdf` |
+
+The slug is gone from the key (it dropped Arabic, so those uploads became `file.pdf`). The readable name
+(from the `filename` sent to upload-url, Arabic kept) is stored in the object's `Content-Disposition`.
+
+**What the CMS must change.** Every upload-url response (`POST /media/upload-url`, `/audios/upload-url`,
+`/books/upload-url`, `/academic-papers/upload-url`) has a new `headers` object:
+
+```jsonc
+"headers": {
+  "Content-Type": "application/pdf",
+  "Cache-Control": "public, max-age=31536000, immutable",
+  "Content-Disposition": "inline; filename*=UTF-8''%D8%A7%D9%84%D8%B5%D8%AD%D9%8A%D9%81%D8%A9.pdf"
+}
+```
+
+The PUT to `uploadUrl` must send **all three** with exactly these values. They are part of the signature, so a
+PUT that omits one or changes one fails with 403 `SignatureDoesNotMatch` (the CMS used to send only
+`Content-Type`). In code: `fetch(uploadUrl, { method: 'PUT', headers: data.headers, body: file })`.
+
+**Rollout order.** Ship the CMS first, reading `data.headers ?? { 'Content-Type': type }`, then deploy the API:
+an old CMS against the new API cannot upload.
+
+Nothing else changes: `key` and `publicUrl` stay opaque, `mediaId`, `maxBytes` and the confirm step are as before.
