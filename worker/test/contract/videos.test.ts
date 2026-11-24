@@ -36,7 +36,7 @@ beforeAll(async () => {
         `INSERT INTO youtube_videos (video_id, title, channel_id, published_at, kind) VALUES ($1, $2, 'UC-seed', $3, $4) RETURNING id::text AS id`,
         [id(name), `${PREFIX} ${name}`, at(day), kind],
       );
-      internal[name] = v.id;
+      internal[name] = String(v.id);
       await q(
         `INSERT INTO video_entries (youtube_video_id, slug, status, is_featured) VALUES ($1, $2, $3, $4)`,
         [id(name), name === 'ep1' ? LEGACY_SLUG : id(name), status, featured],
