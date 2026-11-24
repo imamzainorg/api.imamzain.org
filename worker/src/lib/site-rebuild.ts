@@ -20,6 +20,7 @@ const SITE_GROUPS = new Set([
   'speakers',
   'static-pages',
   'stores',
+  'videos',
 ]);
 
 // Writes under those groups that change nothing the site shows: view counters (anonymous anyway) and the

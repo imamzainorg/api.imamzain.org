@@ -4,7 +4,7 @@ import { loadActiveLanguages, resolveTranslation } from '../../lib/i18n';
 import { MEDIA_URL_WITH_VARIANTS_SELECT } from '../../lib/media-selects';
 import type { AppEnv } from '../../lib/types';
 import { getToday } from '../daily-hadiths/service';
-import { findRecentVideos } from '../youtube/service';
+import { findHomepageVideos } from '../videos/service';
 
 type Ctx = Context<AppEnv>;
 type Active = ReadonlySet<string>;
@@ -110,7 +110,7 @@ async function getPublications(c: Ctx, lang: string | null, active: Active) {
 
 /** From the local YouTube mirror, so the homepage survives YouTube outages. `url` is the 11-char video id. */
 async function getVideos(c: Ctx) {
-  const rows = await findRecentVideos(c, VIDEOS_COUNT);
+  const rows = await findHomepageVideos(c, VIDEOS_COUNT);
   return rows.map((v) => ({
     title: v.title,
     url: v.video_id,

@@ -17,6 +17,7 @@
     "prisma:attach-app-books": "ts-node -P tsconfig.base.json prisma/attach-app-books.ts",
     "prisma:purge-content": "ts-node -P tsconfig.base.json prisma/purge-content.ts",
     "prisma:hydrate-media": "ts-node -P tsconfig.base.json prisma/hydrate-media.ts",
+    "prisma:seed-videos": "ts-node -P tsconfig.base.json prisma/seed-videos.ts",
     "prisma:diagnose": "ts-node -P tsconfig.base.json prisma/seed-diagnose.ts",
     "format": "prettier --write .",
     "format:check": "prettier --check .",

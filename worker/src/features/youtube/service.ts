@@ -70,19 +70,6 @@ export async function findPlaylistVideos(c: Ctx, playlistId: string, limit: numb
   };
 }
 
-/**
- * The homepage's latest uploads. The mirror also holds other channels' videos that only sit in one of
- * the foundation's playlists, so with a channel configured only its own are "recent uploads".
- */
-export async function findRecentVideos(c: Ctx, limit: number) {
-  const channelId = c.env.YOUTUBE_CHANNEL_ID?.trim();
-  return getDb(c).youtube_videos.findMany({
-    where: channelId ? { channel_id: channelId } : undefined,
-    orderBy: [{ published_at: 'desc' }, { id: 'asc' }],
-    take: limit,
-  });
-}
-
 function serialiseVideo(v: youtube_videos) {
   return {
     video_id: v.video_id,

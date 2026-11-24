@@ -288,6 +288,22 @@ const PERMISSIONS: { name: string; translations: Translations }[] = [
     },
   },
   {
+    name: 'videos:read',
+    translations: {
+      ar: { title: 'عرض المرئيات', description: 'عرض الفيديوهات وحالتها والسلاسل وإعدادات النشر التلقائي' },
+      en: { title: 'Read Videos', description: 'View videos with their status, the series and the auto-publish setting' },
+      fa: { title: 'مشاهده ویدیوها', description: 'مشاهده ویدیوها و وضعیت آن‌ها، مجموعه‌ها و تنظیم انتشار خودکار' },
+    },
+  },
+  {
+    name: 'videos:update',
+    translations: {
+      ar: { title: 'تعديل المرئيات', description: 'إخفاء الفيديوهات ونشرها وتمييزها وترتيب السلاسل وتشغيل النشر التلقائي' },
+      en: { title: 'Update Videos', description: 'Hide, publish and feature videos, order series and switch auto-publish' },
+      fa: { title: 'ویرایش ویدیوها', description: 'پنهان، منتشر و ویژه کردن ویدیوها، ترتیب مجموعه‌ها و انتشار خودکار' },
+    },
+  },
+  {
     name: 'audios:delete',
     translations: {
       ar: { title: 'حذف الصوتيات', description: 'حذف الملفات الصوتية واستعادتها' },
@@ -724,6 +740,8 @@ const ROLES: { name: string; permissions: string[]; translations: RoleTranslatio
       'audios:create',
       'audios:update',
       'audios:delete',
+      'videos:read',
+      'videos:update',
       'media:create',
       'media:read',
       'media:update',
@@ -995,6 +1013,13 @@ async function main() {
     { key: 'social_twitter', value: '', description: 'X / Twitter URL (empty to hide).', is_public: true },
     { key: 'social_instagram', value: '', description: 'Instagram URL (empty to hide).', is_public: true },
     { key: 'social_youtube', value: '', description: 'YouTube channel URL (empty to hide).', is_public: true },
+    {
+      key: 'videos_auto_publish',
+      value: 'true',
+      type: 'boolean',
+      description: 'Whether new YouTube uploads go live on the site without an editor (CMS: Videos, settings).',
+      is_public: false,
+    },
     {
       key: 'contest_open',
       value: 'false',

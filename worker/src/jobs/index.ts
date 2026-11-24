@@ -40,8 +40,12 @@ const JOBS: Record<string, [name: string, job: Job][]> = {
     // Nest ran it at 0 */6 * * *; one hourly trigger covers both jobs.
     [
       'youtube-sync',
-      (db, env, scheduled) =>
-        scheduled.getUTCHours() % 6 === 0 ? runGuardedSync(db, env) : Promise.resolve(),
+      async (db, env, scheduled) => {
+        if (scheduled.getUTCHours() % 6 !== 0) return;
+        // New uploads published by the auto-publish switch only reach the static site with a rebuild.
+        const result = await runGuardedSync(db, env);
+        if (result && result.published > 0) await requestSiteRebuild(env, { entity: 'videos' });
+      },
     ],
   ],
   [CRONS.daily]: [['retention', (db) => runRetention(db)]],

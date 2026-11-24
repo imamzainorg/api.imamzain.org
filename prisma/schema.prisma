@@ -637,6 +637,8 @@ model youtube_videos {
   view_count             BigInt?
   like_count             BigInt?
   last_synced_at         DateTime                 @default(now()) @db.Timestamptz(6)
+  /// From the channel's format playlists (shorts, live); everything else is `video`.
+  kind                   youtube_video_kind       @default(video)
   youtube_playlist_items youtube_playlist_items[]
 
   @@index([published_at(sort: Desc)], map: "idx_youtube_videos_published")
@@ -666,6 +668,35 @@ model youtube_playlist_items {
 
   @@id([playlist_id, video_id])
   @@index([playlist_id, position], map: "idx_youtube_playlist_items_position")
+}
+
+/// The site's editorial record for a mirrored video. Keyed by YouTube's id with no foreign key: the sync
+/// deletes mirror rows that go private, and the slug must survive that.
+model video_entries {
+  youtube_video_id String       @id
+  slug             String       @unique(map: "uq_video_entries_slug")
+  status           video_status
+  is_featured      Boolean      @default(false)
+  featured_order   Int          @default(0)
+  speaker_id       String?      @db.Uuid
+  created_at       DateTime     @default(now()) @db.Timestamptz(6)
+  updated_at       DateTime     @default(now()) @db.Timestamptz(6)
+  speakers         speakers?    @relation(fields: [speaker_id], references: [id], onDelete: SetNull, onUpdate: NoAction)
+
+  @@index([status], map: "idx_video_entries_status")
+}
+
+/// The site's editorial record for a mirrored playlist (a series). Same no-foreign-key rule as video_entries.
+model video_series {
+  youtube_playlist_id String         @id
+  slug                String         @unique(map: "uq_video_series_slug")
+  section             video_section?
+  is_hidden           Boolean        @default(false)
+  display_order       Int            @default(0)
+  speaker_id          String?        @db.Uuid
+  created_at          DateTime       @default(now()) @db.Timestamptz(6)
+  updated_at          DateTime       @default(now()) @db.Timestamptz(6)
+  speakers            speakers?      @relation(fields: [speaker_id], references: [id], onDelete: SetNull, onUpdate: NoAction)
 }
 
 model site_settings {
@@ -936,6 +967,8 @@ model speakers {
   deleted_at           DateTime?              @db.Timestamptz(6)
   audios               audios[]
   speaker_translations speaker_translations[]
+  video_entries        video_entries[]
+  video_series         video_series[]
 }
 
 model speaker_translations {
@@ -948,6 +981,25 @@ model speaker_translations {
 
   @@id([speaker_id, lang])
   @@index([name(ops: raw("gin_trgm_ops"))], map: "idx_speaker_translations_name_trgm", type: Gin)
+}
+
+enum youtube_video_kind {
+  video
+  short
+  live
+}
+
+enum video_status {
+  published
+  pending
+  hidden
+}
+
+enum video_section {
+  programmes
+  commentaries
+  majalis
+  events
 }
 
 enum site_setting_type {
