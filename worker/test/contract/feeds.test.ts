@@ -31,19 +31,23 @@ beforeAll(async () => {
   await seedPost({ slug: draft, is_published: false, translations: [{ lang: 'ar', title: `${PREFIX} draft` }] });
   await seedPost({ slug: gone, deleted: true, translations: [{ lang: 'ar', title: `${PREFIX} gone` }] });
   await seedPost({ slug: ampersand, published_at: '2999-06-01T00:00:00Z', translations: [{ lang: 'ar', title: `${PREFIX} amp` }] });
-  await withDb((q) =>
-    q(`INSERT INTO youtube_videos (video_id, title, channel_id, published_at, description) VALUES ($1, $2, 'UC-seed', '3000-01-01T00:00:00Z', $3)`, [
+  await withDb(async (q) => {
+    await q(`INSERT INTO youtube_videos (video_id, title, channel_id, published_at, description) VALUES ($1, $2, 'UC-seed', '3000-01-01T00:00:00Z', $3)`, [
       VIDEO_ID,
       `${PREFIX} video`,
       `line one\n\n   line   two ${'x'.repeat(300)}`,
-    ]),
-  );
+    ]);
+    await q(`INSERT INTO video_entries (youtube_video_id, slug, status) VALUES ($1, $1, 'published')`, [VIDEO_ID]);
+  });
 });
 
 afterAll(async () => {
   await dropPosts(PREFIX);
   await dropLanguage(RETIRED);
-  await withDb((q) => q(`DELETE FROM youtube_videos WHERE video_id = $1`, [VIDEO_ID]));
+  await withDb(async (q) => {
+    await q(`DELETE FROM youtube_videos WHERE video_id = $1`, [VIDEO_ID]);
+    await q(`DELETE FROM video_entries WHERE youtube_video_id = $1`, [VIDEO_ID]);
+  });
 });
 
 describe('GET /sitemap.xml', () => {

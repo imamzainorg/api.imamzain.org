@@ -21,6 +21,7 @@ import { settings } from './features/settings/routes';
 import { speakers } from './features/speakers/routes';
 import { staticPages } from './features/static-pages/routes';
 import { stores } from './features/stores/routes';
+import { videos } from './features/videos/routes';
 import { youtube } from './features/youtube/routes';
 import { postCategories } from './features/post-categories/routes';
 import { posts } from './features/posts/routes';
@@ -63,6 +64,7 @@ export const routes: Record<string, Hono<AppEnv>> = {
   '/api/v1/speakers': speakers,
   '/api/v1/static-pages': staticPages,
   '/api/v1/stores': stores,
+  '/api/v1/videos': videos,
 };
 
 export const app = new Hono<AppEnv>();

@@ -1,6 +1,6 @@
 // Nest source: YoutubeSyncService (src/youtube/youtube-sync.service.ts). Mirrors the channel's videos and
 // playlists into local tables; /youtube/* and /homepage read only those. ~10–20 quota units per sync.
-import type { PrismaClient } from '../generated/prisma/client';
+import type { PrismaClient, youtube_video_kind } from '../generated/prisma/client';
 import type { AppBindings } from '../lib/types';
 
 const YOUTUBE_API_BASE = 'https://www.googleapis.com/youtube/v3';
@@ -12,6 +12,9 @@ const SYNC_MIN_INTERVAL_MS = 5 * 60 * 60 * 1000 + 30 * 60 * 1000;
 const MAX_RECENT_UPLOADS = 50;
 const MAX_PLAYLISTS_PER_CHANNEL = 50;
 const MAX_VIDEOS_PER_PLAYLIST = 200;
+const MAX_VIDEOS_PER_FORMAT = 1_000;
+/** site_settings key: whether a new upload goes live on the site without an editor. Missing = on. */
+export const AUTO_PUBLISH_SETTING = 'videos_auto_publish';
 /** Untouched rows re-checked by id per sync before anything is pruned (1 quota unit per 50). */
 const MAX_PRUNE_CHECKS_PER_SYNC = 2_000;
 // If one run wants to remove more than a quarter of the mirror (and more than a handful of rows),
@@ -53,11 +56,13 @@ type YouTubeApiPlaylist = {
 
 type SyncEnv = Pick<AppBindings, 'YOUTUBE_API_KEY' | 'YOUTUBE_CHANNEL_ID'>;
 
+export type SyncResult = { videos: number; playlists: number; published: number };
+
 /** The guarded entry point: skips while the last sync is still fresh. Never throws. */
 export async function runGuardedSync(
   db: PrismaClient,
   env: SyncEnv,
-): Promise<{ videos: number; playlists: number } | null> {
+): Promise<SyncResult | null> {
   try {
     const latest = await db.youtube_videos.findFirst({
       orderBy: { last_synced_at: 'desc' },
@@ -79,10 +84,7 @@ export async function runGuardedSync(
   }
 }
 
-async function sync(
-  db: PrismaClient,
-  env: SyncEnv,
-): Promise<{ videos: number; playlists: number } | null> {
+async function sync(db: PrismaClient, env: SyncEnv): Promise<SyncResult | null> {
   const apiKey = env.YOUTUBE_API_KEY;
   const channelId = env.YOUTUBE_CHANNEL_ID;
   if (!apiKey || !channelId) {
@@ -101,11 +103,12 @@ async function sync(
       return null;
     }
 
-    const recentUploadItems = await fetchPlaylistItems(
-      uploadsPlaylistId,
-      apiKey,
-      MAX_RECENT_UPLOADS,
-    );
+    // Every public upload with its format, from the channel's format playlists; without them, only the
+    // newest uploads and no kinds (the stored ones stay).
+    const formats = await fetchUploadsByFormat(uploadsPlaylistId, apiKey);
+    const recentUploadItems = formats
+      ? []
+      : await fetchPlaylistItems(uploadsPlaylistId, apiKey, MAX_RECENT_UPLOADS);
     const playlists = await fetchChannelPlaylists(channelId, apiKey);
 
     const playlistItemsByPlaylist = new Map<string, YouTubePlaylistItem[]>();
@@ -117,11 +120,12 @@ async function sync(
 
     const allVideoIds = new Set<string>();
     for (const item of recentUploadItems) allVideoIds.add(item.snippet.resourceId.videoId);
+    for (const id of formats?.keys() ?? []) allVideoIds.add(id);
     for (const items of playlistItemsByPlaylist.values())
       for (const item of items) allVideoIds.add(item.snippet.resourceId.videoId);
 
     const hydratedVideos = await fetchVideoDetails([...allVideoIds], apiKey);
-    const upsertedVideos = await upsertVideos(db, hydratedVideos);
+    const upsertedVideos = await upsertVideos(db, hydratedVideos, formats);
     const upsertedPlaylists = await upsertPlaylists(
       db,
       playlists,
@@ -129,14 +133,16 @@ async function sync(
       upsertedVideos,
     );
 
+    const published = await addEditorialRows(db, hydratedVideos, playlists, formats);
+
     // Only reached when every fetch and upsert succeeded: a partial sync must never decide what is gone.
     const pruned = await pruneVanished(db, syncStartedAt, apiKey);
 
     console.log(
       `YouTube sync complete (trigger=cron): ${upsertedVideos.size} videos, ${upsertedPlaylists} playlists` +
-        `; pruned ${pruned.videos} video(s), ${pruned.playlists} playlist(s)`,
+        `, ${published} new on the site; pruned ${pruned.videos} video(s), ${pruned.playlists} playlist(s)`,
     );
-    return { videos: upsertedVideos.size, playlists: upsertedPlaylists };
+    return { videos: upsertedVideos.size, playlists: upsertedPlaylists, published };
   } catch (err) {
     console.error(`YouTube sync failed: ${err instanceof Error ? err.message : String(err)}`);
     return null;
@@ -151,6 +157,72 @@ async function resolveUploadsPlaylistId(channelId: string, apiKey: string): Prom
   const items = data.items ?? [];
   if (items.length === 0) return null;
   return items[0].contentDetails?.relatedPlaylists?.uploads ?? null;
+}
+
+/**
+ * YouTube keeps format playlists next to the uploads one (UU…): UULF long-form, UUSH shorts, UULV live.
+ * They are undocumented, so any failure returns null and the caller falls back to the uploads playlist.
+ */
+async function fetchUploadsByFormat(
+  uploadsPlaylistId: string,
+  apiKey: string,
+): Promise<Map<string, youtube_video_kind> | null> {
+  const suffix = uploadsPlaylistId.slice(2);
+  const formats: [string, youtube_video_kind][] = [
+    ['UULF', 'video'],
+    ['UUSH', 'short'],
+    ['UULV', 'live'],
+  ];
+  try {
+    const kinds = new Map<string, youtube_video_kind>();
+    for (const [prefix, kind] of formats) {
+      const items = await fetchPlaylistItems(prefix + suffix, apiKey, MAX_VIDEOS_PER_FORMAT);
+      for (const item of items) kinds.set(item.snippet.resourceId.videoId, kind);
+    }
+    return kinds;
+  } catch (err) {
+    console.warn(
+      `YouTube format playlists unavailable, kinds left as stored: ${err instanceof Error ? err.message : String(err)}`,
+    );
+    return null;
+  }
+}
+
+/**
+ * Gives every new video and playlist its editorial row: slug = YouTube's id until an editor sets one,
+ * status from the auto-publish switch. Live items get none, so they never reach the site. Existing rows
+ * are left alone. Returns how many videos went live on the site.
+ */
+async function addEditorialRows(
+  db: PrismaClient,
+  videos: YouTubeApiVideo[],
+  playlists: YouTubeApiPlaylist[],
+  kinds: Map<string, youtube_video_kind> | null,
+): Promise<number> {
+  const setting = await db.site_settings.findUnique({ where: { key: AUTO_PUBLISH_SETTING } });
+  const status = setting?.value === 'false' ? 'pending' : 'published';
+  const stored = kinds
+    ? null
+    : new Map(
+        (
+          await db.youtube_videos.findMany({
+            where: { video_id: { in: videos.map((v) => v.id) } },
+            select: { video_id: true, kind: true },
+          })
+        ).map((v) => [v.video_id, v.kind]),
+      );
+  const fresh = videos.filter((v) => (kinds ?? stored)?.get(v.id) !== 'live');
+
+  const created = await db.video_entries.createManyAndReturn({
+    data: fresh.map((v) => ({ youtube_video_id: v.id, slug: v.id, status })),
+    skipDuplicates: true,
+    select: { youtube_video_id: true },
+  });
+  await db.video_series.createMany({
+    data: playlists.map((p) => ({ youtube_playlist_id: p.id, slug: p.id })),
+    skipDuplicates: true,
+  });
+  return status === 'published' ? created.length : 0;
 }
 
 async function fetchPlaylistItems(
@@ -209,10 +281,13 @@ async function fetchVideoDetails(videoIds: string[], apiKey: string): Promise<Yo
 async function upsertVideos(
   db: PrismaClient,
   videos: YouTubeApiVideo[],
+  kinds: Map<string, youtube_video_kind> | null = null,
 ): Promise<Map<string, string>> {
   const idMap = new Map<string, string>();
   for (const v of videos) {
+    const kind = kinds?.get(v.id);
     const fields = {
+      ...(kind ? { kind } : {}),
       title: v.snippet.title,
       description: v.snippet.description ?? null,
       thumbnail_url: pickThumbnail(v.snippet.thumbnails),
