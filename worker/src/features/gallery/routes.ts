@@ -2,6 +2,7 @@ import { createApp } from '../../lib/create-app';
 import { defineRoute } from '../../lib/define-route';
 import { publicCache } from '../../lib/envelope';
 import {
+  adminGalleryQuery,
   createGalleryBody,
   galleryQuery,
   idParams,
@@ -29,7 +30,7 @@ defineRoute(
     path: '/admin',
     summary: 'List all gallery images including unpublished (admin)',
     auth: ['gallery:read'],
-    query: galleryQuery,
+    query: adminGalleryQuery,
   },
   (c, { query }) => service.findAll(c, query, c.get('lang'), true),
 );
