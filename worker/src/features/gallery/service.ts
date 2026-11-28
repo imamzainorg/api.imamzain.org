@@ -27,6 +27,8 @@ interface ListFilters {
   category_id?: string;
   tags?: string[];
   locations?: string[];
+  /** Admin list only; the public list always means published. */
+  is_published?: boolean;
 }
 
 // Lists carry the description (short text): the website shows and searches it for every image, and
@@ -100,6 +102,7 @@ export async function findAll(c: Ctx, query: ListFilters, lang: string | null, i
 
   const where: Prisma.gallery_imagesWhereInput = { deleted_at: null };
   if (!isAdmin) where.is_published = true;
+  else if (query.is_published !== undefined) where.is_published = query.is_published;
   if (query.category_id) where.category_id = query.category_id;
   if (query.tags && query.tags.length > 0) where.tags = { hasEvery: query.tags };
   if (query.locations && query.locations.length > 0)

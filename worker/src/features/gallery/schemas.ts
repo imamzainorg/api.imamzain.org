@@ -1,6 +1,7 @@
 import { z } from '@hono/zod-openapi';
 import { isoDate } from '../../lib/iso-date';
 import { paginationShape } from '../../lib/pagination';
+import { queryBoolean } from '../../lib/query-boolean';
 
 /** DTO_LIMITS in src/common/validators/dto-limits.ts; the CMS forms use the same numbers. */
 export const LIMITS = {
@@ -68,6 +69,9 @@ export const galleryQuery = z.object({
   tags: queryList,
   locations: queryList,
 });
+
+// A separate schema, so the public list keeps refusing the parameter.
+export const adminGalleryQuery = galleryQuery.extend({ is_published: queryBoolean });
 
 /** No uuid check: a malformed id reaches Postgres and comes back as 400 INVALID_IDENTIFIER, as in Nest. */
 export const idParams = z.object({ id: z.string() });

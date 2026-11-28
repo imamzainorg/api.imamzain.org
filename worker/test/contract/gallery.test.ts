@@ -214,6 +214,17 @@ describe('GET /gallery (public list)', () => {
     expect(idsOf(await admin(`/admin?tags=${tag}`))).not.toContain(gone.media_id);
   });
 
+  it('filters the admin list by is_published, and the public list refuses the param', async () => {
+    const tag = uid();
+    const draft = await create({ is_published: false, tags: [tag] });
+    const live = await create({ tags: [tag] });
+    const drafts = await admin(`/admin?tags=${tag}&is_published=false`);
+    expect(idsOf(drafts)).toEqual([draft.media_id]);
+    expect(drafts.body.data.pagination.total).toBe(1);
+    expect(idsOf(await admin(`/admin?tags=${tag}&is_published=true`))).toEqual([live.media_id]);
+    expectError(await api(`${BASE}?tags=${tag}&is_published=false`), 400, 'VALIDATION_FAILED');
+  });
+
   it('filters by category, and requires ALL tags and ALL locations', async () => {
     const categoryId = await newCategory();
     const a = await create({ category_id: categoryId, tags: ['x1', 'x2'], locations: ['L1', 'L2'] });
